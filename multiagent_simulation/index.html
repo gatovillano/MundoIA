@@ -9,6 +9,7 @@
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         :root {
@@ -229,8 +230,8 @@
             position: fixed;
             bottom: 20px;
             left: 20px;
-            width: 400px;
-            max-height: 300px;
+            width: 500px;
+            max-height: 500px;
             background: rgba(0, 0, 0, 0.8);
             backdrop-filter: blur(20px);
             border-radius: 15px;
@@ -292,11 +293,75 @@
             border-color: var(--accent-warning);
         }
 
+        .log-entry.consenso {
+            border-color: var(--accent-secondary);
+            background: rgba(0, 230, 118, 0.05);
+        }
+
+        .log-entry.private {
+            border-style: dashed;
+            background: rgba(124, 77, 255, 0.05);
+            border-color: var(--accent-primary);
+        }
+
+        /* Colores por temática */
+        .log-entry.seguridad {
+            border-color: #ff9800;
+            background: rgba(255, 152, 0, 0.05);
+        }
+
+        .log-entry.alimentos {
+            border-color: #ff5722;
+            background: rgba(255, 87, 34, 0.05);
+        }
+
+        .log-entry.recursos {
+            border-color: #00bcd4;
+            background: rgba(0, 188, 212, 0.05);
+        }
+
+        .log-entry.intercambio {
+            border-color: #ffc107;
+            background: rgba(255, 193, 7, 0.05);
+        }
+
         .log-subtitles {
             font-size: 0.75rem;
             color: var(--text-muted);
             margin-top: 5px;
             font-style: italic;
+        }
+
+        .log-thought {
+            font-size: 0.75rem;
+            color: #888;
+            margin-top: 8px;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            border-left: 2px dashed #555;
+            display: none;
+            /* Hidden by default */
+        }
+
+        .show-thoughts .log-thought {
+            display: block;
+        }
+
+        .thought-toggle-container {
+            position: absolute;
+            top: 10px;
+            right: 40px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .thought-toggle-container input {
+            cursor: pointer;
         }
 
         @keyframes slideIn {
@@ -448,6 +513,18 @@
             stroke: var(--text-muted);
         }
 
+        .link.grupo {
+            stroke-width: 3px;
+            stroke-opacity: 0.4;
+        }
+
+        .link.alianza {
+            stroke: #FFD700;
+            stroke-dasharray: 5, 5;
+            stroke-width: 2px;
+            stroke-opacity: 0.8;
+        }
+
         /* Loading Animation */
         .loading {
             position: absolute;
@@ -470,6 +547,40 @@
             to {
                 transform: rotate(360deg);
             }
+        }
+
+        /* Estadísticas de Facciones */
+        .faction-card {
+            background: rgba(255, 255, 255, 0.03);
+            border-left: 4px solid var(--faction-color, var(--accent-primary));
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+
+        .faction-card:hover {
+            background: rgba(255, 255, 255, 0.06);
+            transform: translateX(5px);
+        }
+
+        .faction-name {
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 4px;
+        }
+
+        .faction-mission {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .faction-stats {
+            font-size: 0.8rem;
+            margin-top: 5px;
+            display: flex;
+            justify-content: space-between;
         }
     </style>
 </head>
@@ -507,6 +618,15 @@
                 <div class="stat-value" id="interaction-count">0</div>
                 <div class="stat-label">Interacciones</div>
             </div>
+
+            <div id="factions-container" style="margin-top: 20px;">
+                <h3
+                    style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; padding-left: 5px;">
+                    Facciones Activas</h3>
+                <div id="factions-list">
+                    <!-- Se llena dinámicamente -->
+                </div>
+            </div>
         </aside>
 
         <div id="charts-panel">
@@ -515,6 +635,10 @@
     </main>
 
     <div id="log-container">
+        <div class="thought-toggle-container">
+            <input type="checkbox" id="thoughtToggle">
+            <label for="thoughtToggle">🧠 Ver Pensamientos</label>
+        </div>
         <button class="log-toggle" id="logToggle">−</button>
         <!-- Logs will appear here -->
     </div>
@@ -538,17 +662,28 @@
             relationships: [],
             currentStep: 0,
             isPaused: false,
-            speed: 1,
+            speed: 0.5,
+            showThoughts: false,
             selectedAgent: null,
             interactionCount: 0,
-            metricsHistory: {
-                steps: [],
-                resources: [],
-                friends: [],
-                enemies: [],
-                groups: []
-            }
+            groupColors: JSON.parse(localStorage.getItem('groupColors') || '{}'),
+            metricsHistory: JSON.parse(localStorage.getItem('metricsHistory') || '{"steps":[],"resources":[],"friends":[],"enemies":[],"groups":[]}')
         };
+
+        const factionColors = [
+            '#FF3D00', '#00E676', '#2979FF', '#FFD600', '#7C4DFF',
+            '#00E5FF', '#FF4081', '#C6FF00', '#FF9100', '#64FFDA'
+        ];
+
+        function getGroupColor(groupId) {
+            if (!groupId) return 'var(--accent-primary)';
+            if (!state.groupColors[groupId]) {
+                const colorIdx = Object.keys(state.groupColors).length % factionColors.length;
+                state.groupColors[groupId] = factionColors[colorIdx];
+                localStorage.setItem('groupColors', JSON.stringify(state.groupColors));
+            }
+            return state.groupColors[groupId];
+        }
 
         // ============================================
         // WEBSOCKET CONNECTION
@@ -584,6 +719,7 @@
 
         function handleWebSocketMessage(data) {
             if (state.isPaused) return;
+            console.log('📡 WS:', data.type, data);
 
             switch (data.type) {
                 case 'log':
@@ -599,7 +735,7 @@
                 case 'relationships':
                     handleRelationships(data);
                     break;
-                case 'agent_state':
+                case 'agent_update':
                     updateAgentState(data);
                     break;
             }
@@ -611,13 +747,48 @@
                 state.agents.set(agent.id, {
                     id: agent.id,
                     resources: agent.resources,
-                    grupo: agent.grupo,
+                    money: agent.money,
+                    grupo_id: agent.grupo_id,
                     rango: agent.rango,
                     personalidad: agent.personalidad,
-                    necesidades: agent.necesidades
+                    necesidades: agent.necesidades,
+                    rol: agent.rol,
+                    mision_grupal: agent.mision_grupal,
+                    conocimientos: agent.conocimientos || {},
+                    planes: agent.planes || [],
+                    alianzas: agent.alianzas || []
                 });
             });
             updateNetwork();
+        }
+
+        function updateAgentState(data) {
+            data.agents.forEach(updatedAgent => {
+                const agent = state.agents.get(updatedAgent.id);
+                if (agent) {
+                    agent.resources = updatedAgent.resources;
+                    agent.money = updatedAgent.money;
+                    agent.necesidades = updatedAgent.necesidades;
+                    agent.rol = updatedAgent.rol;
+                    agent.grupo_id = updatedAgent.grupo_id;
+                    agent.mision_grupal = updatedAgent.mision_grupal;
+                    agent.conocimientos = updatedAgent.conocimientos || {};
+                    agent.planes = updatedAgent.planes || [];
+                    agent.alianzas = updatedAgent.alianzas || [];
+                }
+            });
+
+            // Actualizar visualización
+            updateNetwork();
+            renderFactionsList(); // Nueva función para refrescar la lista
+
+            // Si el agente seleccionado se actualizó, refrescar panel
+            if (state.selectedAgent) {
+                const updated = data.agents.find(a => a.id === state.selectedAgent.id);
+                if (updated) {
+                    showAgentDetail(state.agents.get(updated.id));
+                }
+            }
         }
 
         function handleRelationships(data) {
@@ -651,13 +822,52 @@
             logToggle.textContent = isLogMinimized ? '+' : '−';
         });
 
+        const thoughtToggle = document.getElementById('thoughtToggle');
+        thoughtToggle.addEventListener('change', (e) => {
+            state.showThoughts = e.target.checked;
+            logContainer.classList.toggle('show-thoughts', state.showThoughts);
+        });
+
         function addLog(data) {
             const entry = document.createElement('div');
-            entry.className = `log-entry ${data.category || ''}`;
 
-            let content = `<div>${data.message}</div>`;
-            if (data.subtitles) {
+            // Detectar temática por palabras clave
+            let thematicClass = '';
+            const text = (data.message + ' ' + (data.subtitles || '')).toLowerCase();
+            if (text.includes('seguridad') || text.includes('protección') || text.includes('defensa') || text.includes('ataque')) thematicClass = 'seguridad';
+            else if (text.includes('alimento') || text.includes('hambre') || text.includes('comida') || text.includes('recolectar')) thematicClass = 'alimentos';
+            else if (text.includes('recursos') || text.includes('energía')) thematicClass = 'recursos';
+            else if (text.includes('comerciar') || text.includes('compra') || text.includes('trato') || text.includes('mundocoins') || text.includes('mc')) thematicClass = 'intercambio';
+
+            entry.className = `log-entry ${data.category || ''} ${data.private_for ? 'private' : ''} ${thematicClass}`;
+
+            // Renderizar Markdown si es un diálogo o pensamiento
+            let renderedMessage = data.message;
+            if (data.category === 'dialogo' || data.category === 'pensamiento') {
+                renderedMessage = marked.parse(data.message);
+            }
+
+            let content = `<div>${renderedMessage}</div>`;
+
+            // Si es un diálogo, formateamos bonito la traducción
+            if (data.category === 'dialogo' && data.subtitles) {
+                // El mensaje original trae los glifos
+                // Los subtítulos traen el español
+                const glifos = data.message.split('"')[1] || data.message;
+                content = `
+                    <div style="font-family: 'Courier New', monospace; color: var(--accent-primary); font-size: 1.1em; margin-bottom: 4px;">
+                        ${glifos}
+                    </div>
+                    <div class="log-subtitles" style="color: var(--text-primary); font-style: normal; border-left: 2px solid var(--accent-secondary); padding-left: 8px;">
+                        "${data.subtitles}"
+                    </div>
+                `;
+            } else if (data.subtitles) {
                 content += `<div class="log-subtitles">└─ ${data.subtitles}</div>`;
+            }
+
+            if (data.thought) {
+                content += `<div class="log-thought">🧠 <i>${data.thought}</i></div>`;
             }
 
             entry.innerHTML = content;
@@ -721,7 +931,7 @@
                 state.agents.set(id, {
                     id,
                     resources: 100,
-                    grupo: null,
+                    grupo_id: null,
                     ...data
                 });
             } else {
@@ -757,13 +967,43 @@
         function updateStats(data) {
             state.currentStep = data.step;
             document.getElementById('step-count').textContent = data.step;
-            document.getElementById('group-count').textContent = data.groups || 0;
             document.getElementById('agent-count').textContent = state.agents.size;
             document.getElementById('interaction-count').textContent = state.interactionCount;
 
+            // Calcular estadísticas de facciones
+            const factions = {};
+            state.agents.forEach(a => {
+                if (a.grupo_id) {
+                    if (!factions[a.grupo_id]) {
+                        factions[a.grupo_id] = {
+                            count: 0,
+                            mission: a.mision_grupal,
+                            leader: 'Sin líder',
+                            totalMoney: 0
+                        };
+                    }
+                    factions[a.grupo_id].count++;
+                    factions[a.grupo_id].totalMoney += (a.money || 0);
+                    if (a.rol === 'Líder') {
+                        factions[a.grupo_id].leader = `Agente ${a.id}`;
+                    }
+                }
+            });
+
+            const numFactions = Object.keys(factions).length;
+            document.getElementById('group-count').textContent = numFactions;
+
+            document.getElementById('group-count').textContent = numFactions;
+
+            // Actualizar lista de facciones en el panel lateral
+            renderFactionsList();
+
+            // Update metrics history
+
             // Update metrics history
             state.metricsHistory.steps.push(data.step);
-            state.metricsHistory.groups.push(data.groups || 0);
+            state.metricsHistory.groups.push(numFactions);
+            localStorage.setItem('metricsHistory', JSON.stringify(state.metricsHistory));
 
             // Calculate friends/enemies
             const friends = state.relationships.filter(r => r.type === 'amigo').length;
@@ -818,12 +1058,39 @@
                 type: r.type
             }));
 
+            // Añadir enlaces virtuales de GRUPO para que se atraigan
+            nodes.forEach(a => {
+                if (a.grupo_id) {
+                    nodes.forEach(b => {
+                        if (a.id !== b.id && a.grupo_id === b.grupo_id) {
+                            links.push({
+                                source: a.id,
+                                target: b.id,
+                                type: 'grupo',
+                                color: getGroupColor(a.grupo_id)
+                            });
+                        }
+                    });
+                }
+                // Añadir enlaces de ALIANZA
+                if (a.alianzas) {
+                    a.alianzas.forEach(aliadoId => {
+                        links.push({
+                            source: a.id,
+                            target: aliadoId,
+                            type: 'alianza'
+                        });
+                    });
+                }
+            });
+
             // Update links
-            link = link.data(links, d => `${d.source.id || d.source}-${d.target.id || d.target}`);
+            link = link.data(links);
             link.exit().remove();
             link = link.enter()
                 .append('line')
                 .attr('class', d => `link ${d.type}`)
+                .style('stroke', d => d.type === 'grupo' ? d.color : (d.type === 'alianza' ? '#FFD700' : null))
                 .merge(link);
 
             // Update nodes
@@ -840,9 +1107,10 @@
                 .on('click', (event, d) => showAgentDetail(d));
 
             nodeEnter.append('circle')
-                .attr('r', 12)
+                .attr('r', d => d.rol === 'Líder' ? 15 : 12)
                 .attr('fill', d => getAgentColor(d))
-                .attr('stroke', d => getAgentColor(d));
+                .attr('stroke', d => d.rol === 'Líder' ? '#fff' : getAgentColor(d))
+                .attr('stroke-width', d => d.rol === 'Líder' ? 3 : 1);
 
             nodeEnter.append('text')
                 .attr('dy', 25)
@@ -853,8 +1121,10 @@
 
             // Update colors
             node.select('circle')
+                .attr('r', d => d.rol === 'Líder' ? 15 : 12)
                 .attr('fill', d => getAgentColor(d))
-                .attr('stroke', d => getAgentColor(d));
+                .attr('stroke', d => d.rol === 'Líder' ? '#fff' : getAgentColor(d))
+                .attr('stroke-width', d => d.rol === 'Líder' ? 3 : 1);
 
             simulation.nodes(nodes);
             simulation.force('link').links(links);
@@ -872,10 +1142,14 @@
         }
 
         function getAgentColor(agent) {
-            if (!agent.resources) return '#7c4dff';
-            if (agent.resources > 80) return '#00e676';
-            if (agent.resources > 50) return '#ffd600';
-            if (agent.resources > 30) return '#ff9100';
+            if (agent.grupo_id) {
+                return getGroupColor(agent.grupo_id);
+            }
+            // Fallback a color por recursos si no tiene grupo
+            const res = agent.resources || 0;
+            if (res > 80) return '#00e676';
+            if (res > 50) return '#ffd600';
+            if (res > 30) return '#ff9100';
             return '#ff1744';
         }
 
@@ -932,15 +1206,28 @@
             detailContent.innerHTML = `
                 <div class="detail-section">
                     <div class="detail-title">🤖 Agente #${agent.id}</div>
+                    <div style="background: var(--accent-primary); color: white; padding: 4px 12px; border-radius: 20px; display: inline-block; font-size: 0.8rem; margin-bottom: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">
+                        ${agent.rol || 'Ciudadano'}
+                    </div>
                     
                     <div class="detail-item">
                         <span class="detail-label">Recursos</span>
                         <span class="detail-value">${(agent.resources || 100).toFixed(1)}</span>
                     </div>
+
+                    <div class="detail-item">
+                        <span class="detail-label">Economía</span>
+                        <span class="detail-value" style="color: #ffd600; font-weight: bold;">${(agent.money || 0).toFixed(1)} MC</span>
+                    </div>
                     
                     <div class="detail-item">
                         <span class="detail-label">Grupo</span>
-                        <span class="detail-value">${agent.grupo || 'Sin grupo'}</span>
+                        <span class="detail-value" style="color: ${getGroupColor(agent.grupo_id)}">${agent.grupo_id || 'Sin grupo'}</span>
+                    </div>
+
+                    <div class="detail-item">
+                        <span class="detail-label">Misión Grupal</span>
+                        <span class="detail-value" style="color: var(--accent-secondary); font-style: italic;">${agent.mision_grupal || 'N/A'}</span>
                     </div>
                     
                     <div class="detail-item">
@@ -1009,6 +1296,15 @@
                     <div class="detail-item">
                         <span class="detail-label">⚪ Conocidos</span>
                         <span class="detail-value">${conocidos}</span>
+                    </div>
+
+                    <div class="detail-item" style="border-bottom: none; flex-direction: column; align-items: flex-start; gap: 8px;">
+                        <span class="detail-label">🤝 Alianzas Formales</span>
+                        <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                            ${(agent.alianzas && agent.alianzas.length > 0) ?
+                    agent.alianzas.map(id => `<span style="background: rgba(255, 215, 0, 0.2); color: #FFD700; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; border: 1px solid rgba(255, 215, 0, 0.3);">Agente ${id}</span>`).join('') :
+                    '<span style="color: var(--text-muted); font-size: 0.75rem;">Ninguna alianza activa</span>'}
+                        </div>
                     </div>
                 </div>
 
@@ -1080,6 +1376,48 @@
                 }
             }
         });
+
+        function renderFactionsList() {
+            const factions = {};
+            state.agents.forEach(a => {
+                if (a.grupo_id) {
+                    if (!factions[a.grupo_id]) {
+                        factions[a.grupo_id] = {
+                            count: 0,
+                            mission: a.mision_grupal,
+                            leader: 'Sin líder',
+                            totalMoney: 0
+                        };
+                    }
+                    factions[a.grupo_id].count++;
+                    factions[a.grupo_id].totalMoney += (a.money || 0);
+                    if (a.rol === 'Líder') {
+                        factions[a.grupo_id].leader = `Agente ${a.id}`;
+                    }
+                }
+            });
+
+            const numFactions = Object.keys(factions).length;
+            const factionsList = document.getElementById('factions-list');
+
+            if (numFactions === 0) {
+                factionsList.innerHTML = '<p style="color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 20px;">Esperando formación de facciones...</p>';
+            } else {
+                factionsList.innerHTML = Object.entries(factions).map(([id, data]) => `
+                    <div class="faction-card" style="--faction-color: ${getGroupColor(id)}">
+                        <div class="faction-name">🚩 Facción ${id}</div>
+                        <div class="faction-mission">🎯 ${data.mission || 'Explorando objetivos...'}</div>
+                        <div style="font-size: 0.75rem; margin-top: 8px; color: var(--text-primary);">
+                            👑 Líder: <span style="color: var(--faction-color)">${data.leader}</span>
+                        </div>
+                        <div class="faction-stats">
+                            <span>👥 ${data.count} miembros</span>
+                            <span style="color: var(--accent-secondary)">💰 ${data.totalMoney.toFixed(1)} MC</span>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
 
         function updateChart() {
             chart.data.labels = state.metricsHistory.steps;

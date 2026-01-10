@@ -33,5 +33,5 @@ echo ""
 echo "📊 Abre tu navegador en: http://localhost:8000"
 echo ""
 
-# Iniciar servidor
-python3 api.py
+# Iniciar servidor con auto-reload para desarrollo
+uvicorn api:app --host 0.0.0.0 --port 8000 --reload

@@ -1,6 +1,6 @@
 # 🌐 MUNDO IA - Simulación Multiagente
 
-Sistema de simulación multiagente con visualización en tiempo real de interacciones sociales, formación de grupos y emergencia de comportamientos complejos.
+Sistema de simulación multiagente con visualización en tiempo real de interacciones sociales, formación de grupos y emergencia de co mportamientos complejos.
 
 ## ✨ Características
 

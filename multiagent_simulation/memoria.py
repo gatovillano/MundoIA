@@ -78,5 +78,20 @@ class MemoriaGrafica:
         
         print("    " + "━" * 40)
 
+    def exportar_datos(self):
+        """Convierte el grafo en una estructura de datos serializable."""
+        return {
+            "nodos": [{"id": n, "data": self.grafo.nodes[n]} for n in self.grafo.nodes],
+            "aristas": [{"u": u, "v": v, "data": self.grafo[u][v]} for u, v in self.grafo.edges]
+        }
+
+    def cargar_datos(self, datos):
+        """Reconstruye el grafo desde datos serializados."""
+        self.grafo.clear()
+        for n in datos.get("nodos", []):
+            self.grafo.add_node(n["id"], **n["data"])
+        for e in datos.get("aristas", []):
+            self.grafo.add_edge(e["u"], e["v"], **e["data"])
+
     def __str__(self):
         return f"Memoria de {self.owner_id}: {self.grafo.number_of_nodes()} conocidos, {self.grafo.number_of_edges()} relaciones."

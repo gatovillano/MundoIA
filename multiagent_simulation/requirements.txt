@@ -10,3 +10,4 @@ langgraph==0.0.20
 langchain==0.1.0
 litellm==1.17.0
 python-dotenv==1.0.0
+tavily-python==0.3.1
