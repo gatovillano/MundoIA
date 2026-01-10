@@ -2,8 +2,9 @@ import os
 import json
 import asyncio
 import threading
+import requests
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from modelo import ModeloRelacional
@@ -64,9 +65,17 @@ num_agentes = int(os.getenv("NUM_AGENTES", 30))
 pasos = int(os.getenv("PASOS_SIMULACION", 100))
 modelo = ModeloRelacional(num_agentes=num_agentes, log_callback=log_to_ws)
 
+simulacion_activa = True
+
 def run_sim_loop():
     """Hilo que ejecuta la simulación continuamente."""
-    for i in range(pasos):
+    global modelo, simulacion_activa
+    while True:
+        if not simulacion_activa:
+            import time
+            time.sleep(1)
+            continue
+            
         modelo.step()
         
         # Enviar estadísticas globales
@@ -74,7 +83,9 @@ def run_sim_loop():
             manager.broadcast({
                 "type": "stats",
                 "step": modelo.paso_actual,
-                "groups": len(set(a.grupo_id for a in modelo.agentes if a.grupo_id))
+                "groups": len(set(a.grupo_id for a in modelo.agentes if a.grupo_id)),
+                "group_relations": {f"{k[0]}-{k[1]}": v for k, v in modelo.relaciones_grupos.items()},
+                "economy": modelo.economia
             }),
             loop
         )
@@ -101,7 +112,7 @@ def run_sim_loop():
         )
         
         # Enviar relaciones cada 5 pasos
-        if i % 5 == 0:
+        if modelo.paso_actual % 5 == 0:
             relationships = []
             for a in modelo.agentes:
                 for neighbor in a.memoria.grafo.neighbors(a.unique_id):
@@ -146,6 +157,8 @@ async def websocket_endpoint(websocket: WebSocket):
             "personalidad": a.personalidad,
             "necesidades": a.necesidades,
             "rol": a.rol,
+            "profesion": getattr(a, 'profesion', None),
+            "experiencia": getattr(a, 'experiencia', {}),
             "mision_grupal": modelo.objetivos_grupos.get(a.grupo_id) if a.grupo_id else None,
             "conocimientos": a.conocimientos,
             "planes": a.planes,
@@ -154,7 +167,10 @@ async def websocket_endpoint(websocket: WebSocket):
     
     await websocket.send_json({
         "type": "initial_state",
-        "agents": agents_data
+        "agents": agents_data,
+        "history": modelo.historial_logs,
+        "economy": modelo.economia,
+        "step": modelo.paso_actual
     })
 
     try:
@@ -162,6 +178,55 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text() # Mantener conexión
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+@app.post("/reset")
+async def reset_simulation():
+    global modelo, simulacion_activa
+    
+    # Pausar bucle
+    simulacion_activa = False
+    
+    # Borrar archivo de estado
+    if os.path.exists("estado_simulacion.json"):
+        os.remove("estado_simulacion.json")
+    
+    # Reiniciar modelo
+    modelo = ModeloRelacional(num_agentes=num_agentes, log_callback=log_to_ws)
+    
+    # Notificar a los clientes
+    await manager.broadcast({"type": "reset"})
+    
+    # Reanudar bucle
+    simulacion_activa = True
+    
+    return {"status": "success", "message": "Simulación reiniciada"}
+
+@app.get("/tts")
+async def text_to_speech(text: str):
+    """Endpoint TTS que hace proxy al servicio TTS externo"""
+    tts_url = os.getenv("TTS_URL", "http://localhost:5050/v1/audio/speech")
+    
+    try:
+        # Hacer request al servicio TTS
+        response = requests.post(
+            tts_url,
+            json={
+                "model": "tts-1",
+                "input": text,
+                "voice": "alloy"
+            },
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            return StreamingResponse(
+                iter([response.content]),
+                media_type="audio/mpeg"
+            )
+        else:
+            return {"error": "TTS service unavailable", "status": response.status_code}
+    except requests.exceptions.RequestException as e:
+        return {"error": f"TTS service error: {str(e)}"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -304,6 +304,13 @@
             border-color: var(--accent-primary);
         }
 
+        .log-entry.group-message {
+            border-style: solid;
+            border-width: 2px;
+            background: rgba(0, 229, 255, 0.05);
+            border-color: var(--accent-secondary);
+        }
+
         /* Colores por temática */
         .log-entry.seguridad {
             border-color: #ff9800;
@@ -440,6 +447,73 @@
             font-weight: 600;
         }
 
+        .economy-panel {
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 12px;
+            padding: 15px;
+            margin-top: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .economy-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .econ-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .econ-label {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        .econ-value {
+            font-size: 0.9rem;
+            font-weight: bold;
+            color: #ffd600;
+        }
+
+        .network-filters {
+            position: absolute;
+            top: 50px;
+            left: 20px;
+            background: rgba(15, 23, 42, 0.8);
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 10;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .network-filters label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: color 0.2s;
+        }
+
+        .network-filters label:hover {
+            color: var(--text-primary);
+        }
+
+        .network-filters input {
+            cursor: pointer;
+            accent-color: var(--accent-primary);
+        }
+
         .personality-bar {
             height: 8px;
             background: var(--bg-secondary);
@@ -494,6 +568,16 @@
             font-size: 10px;
             fill: var(--text-primary);
             pointer-events: none;
+        }
+
+        .badge {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            display: inline-flex;
+            align-items: center;
         }
 
         .link {
@@ -582,6 +666,47 @@
             display: flex;
             justify-content: space-between;
         }
+
+        /* Leyenda */
+        .legend-container {
+            margin-top: 25px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .legend-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+
+        .legend-line {
+            width: 20px;
+            height: 2px;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
     </style>
 </head>
 
@@ -592,12 +717,22 @@
             <div class="status-badge" id="status">CONECTANDO...</div>
             <button class="control-btn" id="pauseBtn">⏸️ Pausar</button>
             <button class="control-btn" id="speedBtn">⚡ Velocidad: 1x</button>
+            <button class="control-btn" id="resetBtn"
+                style="background: var(--accent-danger); border-color: var(--accent-danger);">🔄 Reiniciar
+                Mundo</button>
         </div>
     </header>
 
     <main>
         <div id="network-container">
             <div class="network-title">Red de Agentes</div>
+            <div class="network-filters">
+                <label><input type="checkbox" class="rel-filter" value="amigo" checked> 😊 Amigos</label>
+                <label><input type="checkbox" class="rel-filter" value="enemigo" checked> 😡 Enemigos</label>
+                <label><input type="checkbox" class="rel-filter" value="conocido" checked> 👤 Conocidos</label>
+                <label><input type="checkbox" class="rel-filter" value="alianza" checked> 🤝 Alianzas</label>
+                <label><input type="checkbox" class="rel-filter" value="grupo" checked> 👥 Facciones</label>
+            </div>
             <svg id="network-svg"></svg>
         </div>
 
@@ -612,7 +747,7 @@
             </div>
             <div class="stat-card">
                 <div class="stat-value" id="group-count">0</div>
-                <div class="stat-label">Grupos Formados</div>
+                <div class="stat-label">Facciones Activas</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value" id="interaction-count">0</div>
@@ -625,6 +760,56 @@
                     Facciones Activas</h3>
                 <div id="factions-list">
                     <!-- Se llena dinámicamente -->
+                </div>
+            </div>
+
+            <div class="economy-panel">
+                <div class="legend-title">📈 Bolsa y Economía</div>
+                <div class="economy-stats">
+                    <div class="econ-item">
+                        <span class="econ-label">Índice Bursátil</span>
+                        <span class="econ-value" id="stock-index">1000.0</span>
+                    </div>
+                    <div class="econ-item">
+                        <span class="econ-label">MC en Circulación</span>
+                        <span class="econ-value" id="total-mc">0.0</span>
+                    </div>
+                    <div class="econ-item">
+                        <span class="econ-label">Inversiones Activas</span>
+                        <span class="econ-value" id="active-inv">0</span>
+                    </div>
+                </div>
+                <canvas id="economy-chart" style="width: 100%; height: 100px; margin-top: 10px;"></canvas>
+            </div>
+
+            <div class="legend-container">
+                <div class="legend-title">Guía Visual</div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: var(--accent-primary);"></div>
+                    <span>Agente Independiente</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot"
+                        style="background: #fff; border: 2px solid var(--accent-secondary); box-shadow: 0 0 10px var(--accent-secondary);">
+                    </div>
+                    <span>Líder de Facción</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: linear-gradient(45deg, #FF3D00, #2979FF);"></div>
+                    <span>Miembro de Facción (Color único)</span>
+                </div>
+                <hr style="border: 0; border-top: 1px solid var(--border); margin: 10px 0;">
+                <div class="legend-item">
+                    <div class="legend-line" style="background: var(--accent-secondary);"></div>
+                    <span>Amistad / Alianza</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-line" style="background: var(--accent-danger);"></div>
+                    <span>Enemistad / Conflicto</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-line" style="border-top: 2px dashed #FFD700; background: none; height: 0;"></div>
+                    <span>Pacto de Alianza Formal</span>
                 </div>
             </div>
         </aside>
@@ -729,6 +914,9 @@
                 case 'stats':
                     updateStats(data);
                     break;
+                case 'reset':
+                    handleReset();
+                    break;
                 case 'initial_state':
                     handleInitialState(data);
                     break;
@@ -738,6 +926,36 @@
                 case 'agent_update':
                     updateAgentState(data);
                     break;
+                    // Gráfico de Economía
+                    const econCtx = document.getElementById('economy-chart').getContext('2d');
+                    economyChart = new Chart(econCtx, {
+                        type: 'line',
+                        data: {
+                            labels: [],
+                            datasets: [{
+                                label: 'Índice Bursátil',
+                                data: [],
+                                borderColor: '#ffd600',
+                                backgroundColor: 'rgba(255, 214, 0, 0.1)',
+                                borderWidth: 2,
+                                fill: true,
+                                tension: 0.4,
+                                pointRadius: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: false } },
+                            scales: {
+                                x: { display: false },
+                                y: {
+                                    grid: { color: 'rgba(255,255,255,0.05)' },
+                                    ticks: { color: '#94a3b8', font: { size: 10 } }
+                                }
+                            }
+                        }
+                    });
             }
         }
 
@@ -809,6 +1027,27 @@
             updateNetwork();
         }
 
+        function handleReset() {
+            console.log('🔄 Reiniciando simulación local...');
+            state.agents.clear();
+            state.relationships = [];
+            state.metricsHistory = [];
+            state.groupColors = {};
+            localStorage.removeItem('simulation_metrics');
+            localStorage.removeItem('simulation_group_colors');
+
+            // Limpiar UI
+            logContainer.innerHTML = '';
+            document.getElementById('factions-list').innerHTML = '';
+            agentDetail.classList.remove('open');
+
+            updateNetwork();
+            updateStats({ step: 0, groups: 0 });
+
+            // Recargar página para asegurar estado limpio total (opcional pero recomendado)
+            // location.reload(); 
+        }
+
         // ============================================
         // LOG HANDLING
         // ============================================
@@ -839,7 +1078,8 @@
             else if (text.includes('recursos') || text.includes('energía')) thematicClass = 'recursos';
             else if (text.includes('comerciar') || text.includes('compra') || text.includes('trato') || text.includes('mundocoins') || text.includes('mc')) thematicClass = 'intercambio';
 
-            entry.className = `log-entry ${data.category || ''} ${data.private_for ? 'private' : ''} ${thematicClass}`;
+            const isGroup = data.private_for && data.private_for.toString().startsWith('GRUPO:');
+            entry.className = `log-entry ${data.category || ''} ${data.private_for ? 'private' : ''} ${isGroup ? 'group-message' : ''} ${thematicClass}`;
 
             // Renderizar Markdown si es un diálogo o pensamiento
             let renderedMessage = data.message;
@@ -993,8 +1233,6 @@
             const numFactions = Object.keys(factions).length;
             document.getElementById('group-count').textContent = numFactions;
 
-            document.getElementById('group-count').textContent = numFactions;
-
             // Actualizar lista de facciones en el panel lateral
             renderFactionsList();
 
@@ -1042,21 +1280,27 @@
         svg.call(zoom);
 
         let simulation = d3.forceSimulation()
-            .force('link', d3.forceLink().id(d => d.id).distance(100))
-            .force('charge', d3.forceManyBody().strength(-300))
+            .force('link', d3.forceLink().id(d => d.id).distance(200))
+            .force('charge', d3.forceManyBody().strength(-800))
             .force('center', d3.forceCenter(width / 2, height / 2))
-            .force('collision', d3.forceCollide().radius(30));
+            .force('collision', d3.forceCollide().radius(50));
 
         let link = g.append('g').selectAll('.link');
         let node = g.append('g').selectAll('.node');
 
         function updateNetwork() {
             const nodes = Array.from(state.agents.values());
-            const links = state.relationships.map(r => ({
-                source: r.source,
-                target: r.target,
-                type: r.type
-            }));
+
+            // Obtener tipos activos desde los filtros
+            const activeTypes = Array.from(document.querySelectorAll('.rel-filter:checked')).map(cb => cb.value);
+
+            let links = state.relationships
+                .filter(r => activeTypes.includes(r.type))
+                .map(r => ({
+                    source: r.source,
+                    target: r.target,
+                    type: r.type
+                }));
 
             // Añadir enlaces virtuales de GRUPO para que se atraigan
             nodes.forEach(a => {
@@ -1226,6 +1470,21 @@
                     </div>
 
                     <div class="detail-item">
+                        <span class="detail-label">Profesión</span>
+                        <span class="detail-value" style="color: #00e676; font-weight: bold; text-transform: uppercase;">${agent.profesion || 'Ninguna'}</span>
+                    </div>
+
+                    <div class="detail-item" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+                        <span class="detail-label">Experiencia</span>
+                        <div style="display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px;">
+                            <span class="badge" title="Medicina">🏥 ${agent.experiencia?.medicina || 0}</span>
+                            <span class="badge" title="Comercio">💰 ${agent.experiencia?.comercio || 0}</span>
+                            <span class="badge" title="Combate">⚔️ ${agent.experiencia?.combate || 0}</span>
+                            <span class="badge" title="Exploración">🔍 ${agent.experiencia?.exploracion || 0}</span>
+                        </div>
+                    </div>
+
+                    <div class="detail-item">
                         <span class="detail-label">Misión Grupal</span>
                         <span class="detail-value" style="color: var(--accent-secondary); font-style: italic;">${agent.mision_grupal || 'N/A'}</span>
                     </div>
@@ -1259,6 +1518,27 @@
                             <div class="personality-fill" style="width: ${personalidad.competitividad * 100}%"></div>
                         </div>
                     </div>
+
+                    <div style="margin-bottom: 15px;">
+                        <div class="detail-label">Curiosidad</div>
+                        <div class="personality-bar">
+                            <div class="personality-fill" style="width: ${(personalidad.curiosidad || 0) * 100}%; background: #00E5FF;"></div>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 15px;">
+                        <div class="detail-label">Lealtad</div>
+                        <div class="personality-bar">
+                            <div class="personality-fill" style="width: ${(personalidad.lealtad || 0) * 100}%; background: #7C4DFF;"></div>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 15px;">
+                        <div class="detail-label">Prudencia</div>
+                        <div class="personality-bar">
+                            <div class="personality-fill" style="width: ${(personalidad.prudencia || 0) * 100}%; background: #64FFDA;"></div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="detail-section">
@@ -1266,17 +1546,32 @@
                     
                     <div class="detail-item">
                         <span class="detail-label">🍎 Alimento</span>
-                        <span class="detail-value">${necesidades.alimento}/10</span>
+                        <span class="detail-value">${necesidades.alimento.toFixed(1)}/10</span>
                     </div>
                     
                     <div class="detail-item">
                         <span class="detail-label">🛡️ Seguridad</span>
-                        <span class="detail-value">${necesidades.seguridad}/10</span>
+                        <span class="detail-value">${necesidades.seguridad.toFixed(1)}/10</span>
                     </div>
                     
                     <div class="detail-item">
                         <span class="detail-label">👥 Social</span>
-                        <span class="detail-value">${necesidades.social}/10</span>
+                        <span class="detail-value">${necesidades.social.toFixed(1)}/10</span>
+                    </div>
+
+                    <div class="detail-item">
+                        <span class="detail-label">💤 Descanso</span>
+                        <span class="detail-value">${(necesidades.descanso || 0).toFixed(1)}/10</span>
+                    </div>
+
+                    <div class="detail-item">
+                        <span class="detail-label">🎭 Ocio</span>
+                        <span class="detail-value">${(necesidades.entretenimiento || 0).toFixed(1)}/10</span>
+                    </div>
+
+                    <div class="detail-item">
+                        <span class="detail-label">❤️ Salud</span>
+                        <span class="detail-value" style="color: ${necesidades.salud < 5 ? '#ff1744' : '#00e676'}; font-weight: bold;">${(necesidades.salud || 10).toFixed(1)}/10</span>
                     </div>
                 </div>
 
@@ -1446,15 +1741,32 @@
             speedBtn.textContent = `⚡ Velocidad: ${state.speed}x`;
         });
 
+        // Reset Button
+        document.getElementById('resetBtn').addEventListener('click', async () => {
+            if (confirm('⚠️ ¿Estás seguro de que quieres REINICIAR TODO EL MUNDO? Se perderán todos los agentes, relaciones y facciones actuales.')) {
+                try {
+                    const response = await fetch('/reset', { method: 'POST' });
+                    if (response.ok) {
+                        console.log('✅ Solicitud de reinicio enviada');
+                    }
+                } catch (error) {
+                    console.error('❌ Error al reiniciar:', error);
+                }
+            }
+        });
+
+        // Event listeners para filtros
+        document.addEventListener('change', (e) => {
+            if (e.target.classList.contains('rel-filter')) {
+                updateNetwork();
+            }
+        });
+
         // ============================================
         // INITIALIZATION
         // ============================================
         connectWebSocket();
 
-        // Initialize with some agents for demo
-        for (let i = 0; i < 30; i++) {
-            updateAgent(i, { resources: 100 });
-        }
         updateNetwork();
     </script>
 </body>

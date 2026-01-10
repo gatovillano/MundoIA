@@ -6,16 +6,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class HerramientasAgente:
-    def __init__(self):
+    def __init__(self, log_callback=None):
         self.tavily_key = os.getenv("TAVILY_API_KEY")
         self.brave_key = os.getenv("BRAVE_API_KEY")
+        self.log_callback = log_callback
         if self.tavily_key:
             self.tavily = TavilyClient(api_key=self.tavily_key)
         else:
             self.tavily = None
+    
+    def _log(self, mensaje, categoria="herramienta"):
+        """Envía un log si hay callback configurado."""
+        if self.log_callback:
+            self.log_callback(mensaje, categoria)
 
-    def buscar_noticias(self, query="noticias del mundo"):
+    def buscar_noticias(self, query="noticias del mundo", agente_id=None):
         """Busca noticias reales usando Tavily."""
+        self._log(f"🔍 [HERRAMIENTA] Agente {agente_id} está buscando: '{query}' usando Tavily", "herramienta")
         if not self.tavily:
             return "No tengo acceso a internet en este momento."
         try:
@@ -24,13 +31,16 @@ class HerramientasAgente:
             # Tomamos los primeros 2 resultados para no saturar el contexto
             resultados = response.get('results', [])[:2]
             if not resultados:
+                self._log(f"⚠️ [HERRAMIENTA] Agente {agente_id}: No se encontraron resultados", "herramienta")
                 return "No encontré noticias relevantes."
             
             info = "Noticias encontradas: "
             for r in resultados:
                 info += f"- {r['title']}: {r['content'][:200]}... "
+            self._log(f"✅ [HERRAMIENTA] Agente {agente_id}: Encontró {len(resultados)} resultados", "herramienta")
             return info
         except Exception as e:
+            self._log(f"❌ [HERRAMIENTA] Agente {agente_id}: Error - {str(e)}", "herramienta")
             return f"Error al buscar noticias: {str(e)}"
 
     def obtener_clima(self, ciudad="Madrid"):
@@ -46,8 +56,9 @@ class HerramientasAgente:
         precio = random.uniform(1.5, 5.0)
         return f"El precio actual del recurso es de {precio:.2f} MC por unidad."
 
-    def brave_search(self, query):
+    def brave_search(self, query, agente_id=None):
         """Realiza una búsqueda usando la API de Brave."""
+        self._log(f"🔍 [BRAVE SEARCH] Agente {agente_id} busca: '{query}'", "herramienta")
         if not self.brave_key:
             return "No tengo configurada la llave de Brave Search."
         
@@ -73,8 +84,9 @@ class HerramientasAgente:
         except Exception as e:
             return f"Error en Brave Search: {str(e)}"
 
-    def scrapear_url(self, url):
+    def scrapear_url(self, url, agente_id=None):
         """Extrae el texto principal de una URL."""
+        self._log(f"🌐 [WEB SCRAPING] Agente {agente_id} extrayendo contenido de: {url}", "herramienta")
         try:
             from bs4 import BeautifulSoup
             headers = {'User-Agent': 'Mozilla/5.0'}

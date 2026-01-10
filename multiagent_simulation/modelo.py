@@ -10,6 +10,7 @@ from cerebro_llm import cerebro_llm
 from dotenv import load_dotenv
 import os
 import json
+from herramientas import herramientas
 
 # Cargar configuración
 load_dotenv()
@@ -31,7 +32,19 @@ class Agente:
         self.personalidad = personalidad if personalidad else {
             "extroversión": random.random(),
             "amabilidad": random.random(),
-            "competitividad": random.random()
+            "competitividad": random.random(),
+            "curiosidad": random.random(),
+            "lealtad": random.random(),
+            "prudencia": random.random(),
+            "hostilidad": random.random()
+        }
+        self.necesidades = {
+            "alimento": random.uniform(0, 5),
+            "social": random.uniform(0, 5),
+            "seguridad": random.uniform(0, 5),
+            "descanso": 0.0,
+            "entretenimiento": random.uniform(0, 5),
+            "salud": 10.0
         }
         
         # Memoria basada en Grafos
@@ -51,17 +64,34 @@ class Agente:
         self.gasto_turno = 0.0 # Control de gasto por turno
         self.inversiones = [] # [{monto, paso_inicio, interes_esperado}]
         self.alianzas = [] # Lista de IDs de agentes aliados
+        self.inventario = {
+            "medicina": 0,
+            "ocio": 0
+        }
+        
+        # --- SISTEMA DE PROFESIONES ---
+        self.profesion = None # "Médico", "Comerciante", "Guarda", "Explorador"
+        self.experiencia = {
+            "medicina": 0,
+            "comercio": 0,
+            "combate": 0,
+            "exploracion": 0
+        }
+        self.hitos = [] # Lista de logros alcanzados
 
-    def decir(self, mensaje, pensamiento=None, privado_para=None):
-        """Imprime un mensaje directo."""
+    def decir(self, mensaje, pensamiento=None, privado_para=None, para_grupo=False):
+        """Imprime un mensaje directo, privado o para el grupo."""
         prefijo = f"[{self.unique_id}]"
-        if privado_para:
+        
+        if para_grupo and self.grupo_id:
+            prefijo = f"👥 {prefijo} (Para Facción {self.grupo_id})"
+            privado_para = f"GRUPO:{self.grupo_id}"
+        elif privado_para:
             prefijo = f"🔒 {prefijo} (Privado para {privado_para})"
         elif self.personalidad["amabilidad"] > 0.7: prefijo = f"😇 {prefijo}"
         elif self.personalidad["competitividad"] > 0.7: prefijo = f"👿 {prefijo}"
         else: prefijo = f"🤖 {prefijo}"
         
-        # Usar mensaje directo sin traducción
         self.modelo.log(f'{prefijo}: "{mensaje}"', categoria="dialogo", tts_text=mensaje, pensamiento=pensamiento, privado_para=privado_para)
 
     def interactuar(self, otro_agente, tipo_interaccion="social", mensaje_enviado=None):
@@ -79,26 +109,53 @@ class Agente:
             if not getattr(self, '_respondiendo', False):
                 otro_agente._respondiendo = True
                 # El objetivo piensa una RESPUESTA basada en el mensaje recibido
-                decision_resp, mensaje_resp, pensamiento_resp, es_privado_resp = otro_agente.cerebro.pensar(otro_agente, objetivo_id=self.unique_id)
-                otro_agente.decir(mensaje_resp, pensamiento=pensamiento_resp, privado_para=self.unique_id if es_privado_resp else None)
+                decision_resp, mensaje_resp, pensamiento_resp, es_privado_resp, es_grupal_resp = otro_agente.cerebro.pensar(otro_agente, objetivo_id=self.unique_id)
+                otro_agente.decir(mensaje_resp, pensamiento=pensamiento_resp, privado_para=self.unique_id if es_privado_resp else None, para_grupo=es_grupal_resp)
                 otro_agente._respondiendo = False
                 # Limpiar mensaje tras responder
                 otro_agente.ultimo_mensaje_recibido = None
 
         if tipo_interaccion == "SOCIALIZAR" or tipo_interaccion == "social":
-            afinidad_base = 0.2 * (self.personalidad["amabilidad"] + otro_agente.personalidad["amabilidad"])
-            self.memoria.registrar_interaccion(otro_agente.unique_id, "amigo", afinidad_base, otro_agente.recursos, otro_agente.grupo_id)
-            self.modelo.log(f"  🤝 [SOCIAL] Agente {self.unique_id} socializa con {otro_agente.unique_id}.", categoria="social")
+            # La hostilidad de ambos agentes reduce la probabilidad de una buena relación
+            hostilidad_total = self.personalidad.get("hostilidad", 0.5) + otro_agente.personalidad.get("hostilidad", 0.5)
+            afinidad_base = 0.2 * (self.personalidad["amabilidad"] + otro_agente.personalidad["amabilidad"]) - (0.15 * hostilidad_total)
+            
+            # Factor de Envidia: Si el otro tiene mucho más dinero, la afinidad baja
+            if otro_agente.dinero > self.dinero * 1.5:
+                afinidad_base -= 0.1 * self.personalidad.get("hostilidad", 0.5)
+
+            self.memoria.registrar_interaccion(otro_agente.unique_id, "amigo" if afinidad_base > 0 else "conocido", afinidad_base, otro_agente.recursos, otro_agente.grupo_id)
+            self.modelo.log(f"  🤝 [SOCIAL] Agente {self.unique_id} socializa con {otro_agente.unique_id}. Afinidad: {afinidad_base:.2f}", categoria="social")
             
         elif tipo_interaccion == "COMPETIR":
+            self.ganar_experiencia("combate", 1)
+            # El ataque siempre destruye la relación
+            self.memoria.registrar_interaccion(otro_agente.unique_id, "enemigo", -0.5, otro_agente.recursos, otro_agente.grupo_id)
+            otro_agente.memoria.registrar_interaccion(self.unique_id, "enemigo", -0.5, self.recursos, self.grupo_id)
+            
             exito = random.random() * self.rango > random.random() * otro_agente.rango
             if exito:
                 robo = 5
                 self.recursos += robo
                 otro_agente.recursos -= robo
+                
+                # Posibilidad de robar objetos del inventario
+                if random.random() < 0.3:
+                    for item in ["medicina", "ocio"]:
+                        if otro_agente.inventario[item] > 0:
+                            otro_agente.inventario[item] -= 1
+                            self.inventario[item] += 1
+                            self.modelo.log(f"  🏴‍☠️ [ROBO] ¡Agente {self.unique_id} le arrebató un objeto de {item} a {otro_agente.unique_id}!", categoria="conflict")
+                            break
+                
                 self.modelo.log(f"  ⚔️ [CONFLICTO] Agente {self.unique_id} robó recursos a {otro_agente.unique_id}.", categoria="conflict")
             else:
                 self.modelo.log(f"  🛡️ [FALLO] Agente {self.unique_id} intentó atacar a {otro_agente.unique_id} pero falló.", categoria="conflict")
+        
+        # --- IMPACTO DIPLOMÁTICO ---
+        if self.grupo_id and otro_agente.grupo_id and self.grupo_id != otro_agente.grupo_id:
+            cambio_grupal = 0.05 if (tipo_interaccion == "SOCIALIZAR" or tipo_interaccion == "social") else -0.1
+            self.modelo.actualizar_relacion_grupal(self.grupo_id, otro_agente.grupo_id, cambio_grupal)
         
     def fundar_grupo(self, nombre_mision):
         """El agente crea un nuevo grupo y se convierte en líder."""
@@ -110,17 +167,20 @@ class Agente:
         return nuevo_id
 
     def invitar_agente(self, otro_agente):
-        """Envía una invitación para unirse al grupo actual."""
+        """Envía una invitación formal para unirse a su facción."""
         if self.grupo_id is None:
             return False
         
-        # El otro agente recibe la invitación como un mensaje especial
-        mision = self.modelo.objetivos_grupos.get(self.grupo_id, "Sin misión")
+        # Solo invitamos si no tiene grupo o si queremos que cambie
+        if otro_agente.grupo_id == self.grupo_id:
+            return False
+
+        mision = self.modelo.objetivos_grupos.get(self.grupo_id, "Prosperidad Colectiva")
         otro_agente.ultimo_mensaje_recibido = {
             "emisor": self.unique_id,
             "contenido": f"INVITACION_GRUPO:{self.grupo_id}:{mision}"
         }
-        self.modelo.log(f"✉️ [INVITACION] Agente {self.unique_id} invita a {otro_agente.unique_id} a su grupo.", categoria="social")
+        self.modelo.log(f"✉️ [INVITACION] Agente {self.unique_id} invita a {otro_agente.unique_id} a unirse a la Facción {self.grupo_id}.", categoria="social")
         return True
 
     def formar_alianza(self, otro_agente):
@@ -182,9 +242,8 @@ class Agente:
 
     def actualizar_estado(self):
         """Actualiza las necesidades y recursos internos en cada paso."""
-        # Producción aleatoria (recolección) - REDUCIDA
-        recoleccion = random.uniform(0.5, 1.5)
-        self.recursos += recoleccion
+        # Producción pasiva mínima
+        self.recursos += 0.2
 
         # Procesar inversiones terminadas
         for inv in list(self.inversiones):
@@ -200,9 +259,100 @@ class Agente:
         self.recursos -= consumo
         
         # Necesidades aumentan
-        self.necesidades["alimento"] += 0.1
+        self.necesidades["alimento"] += 0.15
         self.necesidades["social"] += 0.1
         self.necesidades["seguridad"] += 0.05
+        self.necesidades["descanso"] += 0.2
+        self.necesidades["entretenimiento"] += 0.1
+        
+        # --- BENEFICIOS DE ALIANZAS ---
+        for aliado_id in self.alianzas:
+            aliado = next((a for a in self.modelo.agentes if a.unique_id == aliado_id), None)
+            if aliado:
+                # 1. Apoyo Social Pasivo
+                self.necesidades["social"] = max(0, self.necesidades["social"] - 0.05)
+                
+                # 2. Intercambio de Recursos (Solidaridad)
+                if self.recursos < 10 and aliado.recursos > 50:
+                    transferencia = 2
+                    aliado.recursos -= transferencia
+                    self.recursos += transferencia
+                    self.modelo.log(f"🤝 [ALIANZA] Agente {aliado.unique_id} envió suministros de emergencia a su aliado {self.unique_id}.", categoria="social")
+                
+                # 3. Solidaridad Médica
+                if self.necesidades["salud"] < 5 and aliado.inventario["medicina"] > 1 and self.inventario["medicina"] == 0:
+                    aliado.inventario["medicina"] -= 1
+                    self.inventario["medicina"] += 1
+                    self.modelo.log(f"💊 [ALIANZA] Agente {aliado.unique_id} envió una medicina a su aliado herido {self.unique_id}.", categoria="social")
+        
+        # Impacto de la salud
+        if self.necesidades["alimento"] > 9.0 or self.necesidades["descanso"] > 9.0:
+            self.necesidades["salud"] -= 0.2
+            self.modelo.log(f"⚠️ [SALUD] Agente {self.unique_id} se siente débil por falta de cuidados.", categoria="state")
+        
+        if self.necesidades["salud"] < 3.0:
+            self.modelo.log(f"🚑 [CRÍTICO] Agente {self.unique_id} está en estado crítico de salud.", categoria="state")
+
+    def recolectar(self):
+        """El agente busca recursos en el entorno. Los objetos especiales son MUY raros."""
+        r = random.random()
+        if r < 0.80: # 80% Alimento
+            cantidad = random.uniform(5, 15)
+            self.recursos += cantidad
+            self.modelo.log(f"  🍎 [RECOLECCION] Agente {self.unique_id} encontró {cantidad:.1f} unidades de alimento.", categoria="alimentos")
+        elif r < 0.85: # 5% Medicina (Escaso)
+            self.inventario["medicina"] += 1
+            self.modelo.log(f"  💊 [RECOLECCION] Agente {self.unique_id} encontró una MEDICINA RARA.", categoria="recursos")
+        elif r < 0.90: # 5% Ocio (Escaso)
+            self.inventario["ocio"] += 1
+            self.modelo.log(f"  🎮 [RECOLECCION] Agente {self.unique_id} encontró un OBJETO DE OCIO.", categoria="recursos")
+        else: # 10% Nada
+            self.modelo.log(f"  🍃 [RECOLECCION] Agente {self.unique_id} no encontró nada valioso.", categoria="recursos")
+        
+        self.necesidades["alimento"] = max(0, self.necesidades["alimento"] - 2)
+
+    def ganar_experiencia(self, area, puntos=1):
+        """Aumenta la experiencia en un área y verifica si puede graduarse."""
+        if area in self.experiencia:
+            self.experiencia[area] += puntos
+            # Si llega a 5 de experiencia en un área y no tiene esa profesión, avisar
+            if self.experiencia[area] == 5 and self.profesion is None:
+                self.modelo.log(f"🎓 [HITOS] Agente {self.unique_id} ha ganado suficiente experiencia en {area} para profesionalizarse.", categoria="sistema")
+
+    def graduarse(self, profesion_deseada):
+        """Intenta declarar una profesión si cumple los requisitos."""
+        if self.profesion:
+            return False, "Ya tienes una profesión."
+
+        costos = {
+            "Médico": 150,
+            "Comerciante": 200,
+            "Guarda": 100,
+            "Explorador": 120
+        }
+        
+        requisitos = {
+            "Médico": self.experiencia["medicina"] >= 5 and self.personalidad["amabilidad"] > 0.5,
+            "Comerciante": self.experiencia["comercio"] >= 5,
+            "Guarda": self.experiencia["combate"] >= 3 and self.personalidad["hostilidad"] < 0.6,
+            "Explorador": self.experiencia["exploracion"] >= 5
+        }
+
+        if profesion_deseada not in costos:
+            return False, "Profesión no válida."
+
+        if not requisitos[profesion_deseada]:
+            return False, f"No cumples los requisitos de experiencia o personalidad para ser {profesion_deseada}."
+
+        if self.dinero < costos[profesion_deseada]:
+            return False, f"Necesitas {costos[profesion_deseada]} MC para la licencia de {profesion_deseada}."
+
+        # Éxito
+        self.dinero -= costos[profesion_deseada]
+        self.profesion = profesion_deseada
+        self.hitos.append(f"Graduado como {profesion_deseada}")
+        self.modelo.log(f"✨ [PROFESION] ¡El Agente {self.unique_id} se ha graduado como {profesion_deseada}! 🎓", categoria="consenso")
+        return True, f"¡Felicidades! Ahora eres {profesion_deseada}."
 
     def step(self):
         """Acciones que realiza el agente en un turno."""
@@ -212,12 +362,17 @@ class Agente:
         objetivo_cercano = random.choice(otros) if otros else None
         
         # 2. Pensar (LangGraph) - Pasamos el objetivo potencial
-        decision, mensaje, pensamiento, es_privado = self.cerebro.pensar(self, objetivo_id=objetivo_cercano.unique_id if objetivo_cercano else None)
+        decision, mensaje, pensamiento, es_privado, es_grupal = self.cerebro.pensar(self, objetivo_id=objetivo_cercano.unique_id if objetivo_cercano else None)
         
         destinatario_id = objetivo_cercano.unique_id if (objetivo_cercano and es_privado) else None
+        if es_grupal: destinatario_id = f"GRUPO:{self.grupo_id}"
         
         # 3. Actuar según pensamiento
-        if decision == "SOCIALIZAR" or decision == "COMPETIR":
+        if decision == "RECOLECTAR":
+            self.recolectar()
+            self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+
+        elif decision == "SOCIALIZAR" or decision == "COMPETIR":
             if objetivo_cercano:
                 # Si estamos socializando y somos líderes, hay probabilidad de invitar al grupo
                 if decision == "SOCIALIZAR" and self.rol == "Líder" and random.random() > 0.5:
@@ -236,12 +391,21 @@ class Agente:
             # El mensaje del LLM suele ser la propuesta de misión
             mision_propuesta = mensaje if len(mensaje) < 50 else "Prosperidad y Poder"
             self.fundar_grupo(mision_propuesta)
-            self.decir(f"📢 ¡He fundado una nueva facción! Misión: {mision_propuesta}", pensamiento=pensamiento, privado_para=destinatario_id)
+            self.rol = "Miembro" # El fundador empieza como miembro, el líder se elige en asamblea
+            self.decir(f"📢 ¡He fundado una nueva facción! Misión: {mision_propuesta}. ¡Buscamos miembros!", pensamiento=pensamiento, privado_para=destinatario_id)
+
+        elif decision == "INVITAR_A_GRUPO":
+            if objetivo_cercano:
+                self.invitar_agente(objetivo_cercano)
+                self.decir(f"✉️ Agente {objetivo_cercano.unique_id}, te invito a unirte a nuestra causa en la Facción {self.grupo_id}.", pensamiento=pensamiento, privado_para=destinatario_id)
+            else:
+                self.decir("Busco nuevos talentos para nuestra facción.", pensamiento=pensamiento, privado_para=destinatario_id)
 
         elif decision == "COMERCIAR":
             if objetivo_cercano:
                 exito = self.comerciar(objetivo_cercano, tipo="compra")
                 if exito:
+                    self.ganar_experiencia("comercio", 1)
                     self.decir(f"🤝 He comprado recursos al Agente {objetivo_cercano.unique_id}. ¡Buen trato!", pensamiento=pensamiento, privado_para=destinatario_id)
                 else:
                     self.decir(f"💸 Quería comerciar con el Agente {objetivo_cercano.unique_id}, pero no llegamos a un acuerdo.", pensamiento=pensamiento, privado_para=destinatario_id)
@@ -261,6 +425,7 @@ class Agente:
             tema = random.choice(temas)
             info = f"Dato sobre {tema} en el paso {self.modelo.paso_actual}"
             self.conocimientos[tema] = info
+            self.ganar_experiencia("exploracion", 1)
             self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id)
 
         elif decision == "COMPARTIR_INFO":
@@ -300,24 +465,73 @@ class Agente:
             if objetivo_cercano:
                 exito = self.formar_alianza(objetivo_cercano)
                 if exito:
-                    self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id)
+                    self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
                 else:
-                    self.decir(f"Ya tengo un pacto con el Agente {objetivo_cercano.unique_id}.", pensamiento=pensamiento, privado_para=destinatario_id)
+                    self.decir(f"Ya tengo un pacto con el Agente {objetivo_cercano.unique_id}.", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
             else:
-                self.decir("Busco aliados estratégicos para el futuro.", pensamiento=pensamiento, privado_para=destinatario_id)
+                self.decir("Busco aliados estratégicos para el futuro.", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
 
-        # Lógica de respuesta a invitaciones (si hay una pendiente)
-        if self.ultimo_mensaje_recibido and "INVITACION_GRUPO" in str(self.ultimo_mensaje_recibido.get('contenido')):
-            # Aceptamos si la afinidad con el emisor es buena (simplificado)
-            emisor_id = self.ultimo_mensaje_recibido['emisor']
-            if random.random() > 0.3: # 70% de probabilidad de aceptar por ahora
-                partes = self.ultimo_mensaje_recibido['contenido'].split(":")
-                self.grupo_id = partes[1] # Mantener como string
-                self.rol = "Ciudadano"
-                self.modelo.log(f"🤝 [UNION] Agente {self.unique_id} se ha unido al grupo {self.grupo_id}.", categoria="social")
-                self.decir(f"He aceptado la invitación del Agente {emisor_id}. ¡Cuenten conmigo!")
+        elif decision == "DESCANSAR":
+            self.necesidades["descanso"] = max(0, self.necesidades["descanso"] - 5)
+            self.necesidades["salud"] = min(10, self.necesidades["salud"] + 0.5)
+            self.modelo.log(f"  💤 [ACCION] Agente {self.unique_id} descansa para recuperar energías.", categoria="state")
+            self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+
+        elif decision == "CURARSE":
+            if self.inventario["medicina"] > 0:
+                self.inventario["medicina"] -= 1
+                self.necesidades["salud"] = min(10, self.necesidades["salud"] + 4)
+                self.ganar_experiencia("medicina", 1)
+                self.modelo.log(f"  🏥 [ACCION] Agente {self.unique_id} usó medicina. Salud restaurada.", categoria="state")
             else:
-                self.decir(f"Gracias Agente {emisor_id}, pero prefiero seguir mi propio camino.")
+                self.modelo.log(f"  ⚠️ [ACCION] Agente {self.unique_id} intentó curarse pero no tiene medicinas.", categoria="state")
+            self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+
+        elif decision == "DIVERTIRSE":
+            if self.inventario["ocio"] > 0:
+                self.inventario["ocio"] -= 1
+                self.necesidades["entretenimiento"] = max(0, self.necesidades["entretenimiento"] - 6)
+                self.modelo.log(f"  🎮 [ACCION] Agente {self.unique_id} usó objetos de ocio. ¡Se siente genial!", categoria="state")
+            else:
+                self.necesidades["entretenimiento"] = max(0, self.necesidades["entretenimiento"] - 2) # Ocio básico sin objetos
+                self.modelo.log(f"  🎭 [ACCION] Agente {self.unique_id} buscó entretenimiento básico.", categoria="state")
+            self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+
+        elif decision == "GRADUARSE":
+            # El mensaje del LLM debería contener la profesión deseada o la deducimos de su experiencia
+            profesion_objetivo = None
+            if "Médico" in str(mensaje): profesion_objetivo = "Médico"
+            elif "Comerciante" in str(mensaje): profesion_objetivo = "Comerciante"
+            elif "Guarda" in str(mensaje): profesion_objetivo = "Guarda"
+            elif "Explorador" in str(mensaje): profesion_objetivo = "Explorador"
+            
+            if profesion_objetivo:
+                exito, msg = self.graduarse(profesion_objetivo)
+                if exito:
+                    self.decir(f"🎓 {msg}", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+                else:
+                    self.decir(f"⚠️ Intenté graduarme como {profesion_objetivo} pero: {msg}", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+            else:
+                self.decir("Estoy considerando profesionalizarme, pero aún no decido el camino.", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+
+        # Lógica de respuesta a invitaciones
+        if self.ultimo_mensaje_recibido and "INVITACION_GRUPO" in str(self.ultimo_mensaje_recibido.get('contenido')):
+            emisor_id = self.ultimo_mensaje_recibido['emisor']
+            # Aceptamos si:
+            # 1. No tenemos grupo
+            # 2. Tenemos afinidad positiva con el emisor (> 0.3)
+            # 3. Somos amables o extrovertidos
+            afinidad = self.memoria.obtener_fuerza(emisor_id)
+            amabilidad = self.personalidad.get('amabilidad', 0.5)
+            
+            if self.grupo_id is None and (afinidad > 0.3 or amabilidad > 0.7):
+                partes = self.ultimo_mensaje_recibido['contenido'].split(":")
+                self.grupo_id = partes[1]
+                self.rol = "Miembro"
+                self.modelo.log(f"🤝 [UNION] Agente {self.unique_id} ha aceptado unirse a la Facción {self.grupo_id}.", categoria="social")
+                self.decir(f"¡He aceptado la invitación! Me uno a la Facción {self.grupo_id} con entusiasmo.")
+            else:
+                self.decir(f"Agradezco la invitación, Agente {emisor_id}, pero por ahora seguiré mi propio camino.")
             self.ultimo_mensaje_recibido = None
 
         self.actualizar_estado()
@@ -327,14 +541,30 @@ class ModeloRelacional:
         self.num_agentes = num_agentes
         self.log_callback = log_callback
         self.paso_actual = 0
+        
+        # Conectar herramientas con el sistema de logs del modelo
+        if self.log_callback:
+            herramientas.log_callback = self.log
+            
         self.objetivos_grupos = {}
         self.precio_recurso_actual = 2.0 # Precio base global
+        
+        # --- SISTEMA ECONÓMICO GLOBAL ---
+        self.economia = {
+            "indice_bursatil": 1000.0, # Base 1000
+            "historial_indice": [1000.0],
+            "total_dinero": 0.0,
+            "inversiones_activas": 0,
+            "volumen_transacciones": 0.0
+        }
         self.agentes = []
         self.agentes_cargados = False
 
         self.historial_relaciones = []
         self.historial_grupos = []
         self.datos = [] # Mantener para compatibilidad con visualizar_resultados
+        self.relaciones_grupos = {} # {(id1, id2): afinidad}
+        self.historial_logs = [] # [{mensaje, categoria, ...}]
         
         # Cargar estado previo si existe
         self.cargar_estado()
@@ -347,7 +577,19 @@ class ModeloRelacional:
             self.log(f"💾 [SISTEMA] Continuando simulación con {len(self.agentes)} agentes.", categoria="sistema")
 
     def log(self, mensaje, categoria="info", subtitulos=None, tts_text=None, pensamiento=None, privado_para=None):
-        """Envía un log al callback o a la terminal."""
+        """Envía un log al callback o a la terminal y lo guarda en el historial."""
+        log_entry = {
+            "mensaje": mensaje,
+            "categoria": categoria,
+            "subtitulos": subtitulos,
+            "tts_text": tts_text,
+            "pensamiento": pensamiento,
+            "privado_para": privado_para
+        }
+        self.historial_logs.append(log_entry)
+        if len(self.historial_logs) > 100: # Mantener solo los últimos 100
+            self.historial_logs.pop(0)
+
         if self.log_callback:
             self.log_callback(mensaje, categoria, subtitulos, tts_text, pensamiento, privado_para)
         else:
@@ -355,7 +597,34 @@ class ModeloRelacional:
             if subtitulos:
                 print(f"             └─ [Subtítulos: {subtitulos}]")
 
+    def actualizar_relacion_grupal(self, g1, g2, cambio):
+        """Actualiza la afinidad entre dos facciones."""
+        if not g1 or not g2 or g1 == g2: return
+        
+        pair = tuple(sorted([str(g1), str(g2)]))
+        actual = self.relaciones_grupos.get(pair, 0.0)
+        nueva = max(-1.0, min(1.0, actual + cambio))
+        self.relaciones_grupos[pair] = nueva
+        
+        if actual >= 0 and nueva < 0:
+            self.log(f"⚠️ [DIPLOMACIA] Las facciones {g1} y {g2} han entrado en CONFLICTO.", categoria="sistema")
+        elif actual < 0 and nueva >= 0:
+            self.log(f"🕊️ [DIPLOMACIA] Las facciones {g1} y {g2} han firmado la PAZ.", categoria="sistema")
+
     def step(self):
+        # Actualizar economía global
+        total_dinero = sum(a.dinero for a in self.agentes)
+        inversiones_activas = sum(len(a.inversiones) for a in self.agentes)
+        
+        # El índice bursátil varía según el dinero total y las inversiones
+        variacion = (total_dinero - self.economia["total_dinero"]) * 0.1 if self.economia["total_dinero"] > 0 else 0
+        self.economia["indice_bursatil"] += variacion + (inversiones_activas * 0.5)
+        self.economia["total_dinero"] = total_dinero
+        self.economia["inversiones_activas"] = inversiones_activas
+        self.economia["historial_indice"].append(round(self.economia["indice_bursatil"], 2))
+        if len(self.economia["historial_indice"]) > 50:
+            self.economia["historial_indice"].pop(0)
+
         self.paso_actual += 1
         self.log(f"\n================ PASO {self.paso_actual} ================", categoria="paso")
         
@@ -510,8 +779,15 @@ class ModeloRelacional:
                 "planes": a.planes,
                 "inversiones": a.inversiones,
                 "alianzas": a.alianzas,
+                "profesion": a.profesion,
+                "experiencia": a.experiencia,
+                "hitos": a.hitos,
                 "memoria_grafica": a.memoria.exportar_datos()
             })
+        
+        datos["economia"] = self.economia
+        datos["relaciones_grupos"] = {f"{k[0]}-{k[1]}": v for k, v in self.relaciones_grupos.items()}
+        datos["historial_logs"] = self.historial_logs
         
         with open("estado_simulacion.json", "w") as f:
             json.dump(datos, f, indent=4)
@@ -529,37 +805,55 @@ class ModeloRelacional:
                 self.agentes = []
                 for a_data in datos.get("agentes", []):
                     a = Agente(a_data["id"], self)
-                    a.recursos = a_data["recursos"]
-                    a.dinero = a_data["dinero"]
-                    a.necesidades = a_data["necesidades"]
-                    a.personalidad = a_data["personalidad"]
-                    a.rol = a_data["rol"]
-                    a.grupo_id = a_data["grupo_id"]
-                    a.rango = a_data["rango"]
-                    a.conocimientos = a_data["conocimientos"]
-                    a.planes = a_data["planes"]
-                    a.inversiones = a_data["inversiones"]
+                    a.recursos = a_data.get("recursos", 10.0)
+                    a.dinero = a_data.get("dinero", 100.0)
+                    
+                    # Cargar necesidades con valores por defecto para evitar KeyErrors
+                    necesidades_base = {
+                        "alimento": 0.0, "social": 0.0, "seguridad": 0.0, 
+                        "descanso": 0.0, "entretenimiento": 0.0, "salud": 10.0
+                    }
+                    a.necesidades = {**necesidades_base, **a_data.get("necesidades", {})}
+                    
+                    # Cargar personalidad con valores por defecto
+                    personalidad_base = {
+                        "extroversión": 0.5, "amabilidad": 0.5, "competitividad": 0.5,
+                        "curiosidad": 0.5, "lealtad": 0.5, "prudencia": 0.5
+                    }
+                    a.personalidad = {**personalidad_base, **a_data.get("personalidad", {})}
+                    
+                    a.rol = a_data.get("rol", "Ciudadano")
+                    a.grupo_id = a_data.get("grupo_id")
+                    a.rango = a_data.get("rango", 1.0)
+                    a.conocimientos = a_data.get("conocimientos", {})
+                    a.planes = a_data.get("planes", [])
+                    a.inversiones = a_data.get("inversiones", [])
                     a.alianzas = a_data.get("alianzas", [])
+                    a.profesion = a_data.get("profesion")
+                    a.experiencia = a_data.get("experiencia", {"medicina": 0, "comercio": 0, "combate": 0, "exploracion": 0})
+                    a.hitos = a_data.get("hitos", [])
+                    
                     if "memoria_grafica" in a_data:
                         a.memoria.cargar_datos(a_data["memoria_grafica"])
                     self.agentes.append(a)
                 
+                self.economia = datos.get("economia", self.economia)
+                self.historial_logs = datos.get("historial_logs", [])
+                
+                # Cargar relaciones grupales (convertir keys de string a tupla)
+                rel_data = datos.get("relaciones_grupos", {})
+                for k, v in rel_data.items():
+                    try:
+                        p1, p2 = k.split("-")
+                        self.relaciones_grupos[(p1, p2)] = v
+                    except: pass
+
                 self.agentes_cargados = True
                 self.log(f"💾 [SISTEMA] Estado cargado desde el paso {self.paso_actual}.", categoria="sistema")
             except Exception as e:
                 self.log(f"⚠️ [ERROR] No se pudo cargar el estado: {e}", categoria="sistema")
                 self.agentes_cargados = False
 
-if __name__ == "__main__":
-    # Configuración desde .env
-    num_agentes = int(os.getenv("NUM_AGENTES", 30))
-    pasos = int(os.getenv("PASOS_SIMULACION", 100))
-    
-    # Configuración de la simulación
-    modelo = ModeloRelacional(num_agentes=num_agentes)
-    modelo.ejecutar(pasos=pasos)
-    modelo.imprimir_resumen_social()
-    modelo.visualizar_resultados()
     def asignar_roles_consenso(self):
         """Los grupos negocian roles internos basados en méritos y personalidad."""
         grupos = {}
@@ -572,56 +866,63 @@ if __name__ == "__main__":
             if len(miembros) < 2: continue
             
             # --- FASE DE DEBATE PÚBLICO ---
-            self.log(f"🏛️ [ASAMBLEA GRUPO {g_id}] Se inicia el debate para elegir líder...", categoria="consenso")
+            self.log(f"🏛️ [ASAMBLEA FACCIÓN {g_id}] Se inicia el debate democrático...", categoria="consenso")
             
             ids_miembros = [m.unique_id for m in miembros]
             for m in miembros:
                 # Cada agente expresa su opinión sobre el liderazgo
                 argumento, pensamiento = cerebro_llm.generar_debate_consenso(m, ids_miembros, fase="liderazgo")
-                m.decir(f"🗣️ [DEBATE] {argumento}", pensamiento=pensamiento)
+                m.decir(f"🗣️ [DEBATE ASAMBLEA] {argumento}", pensamiento=pensamiento, para_grupo=True)
             
-            # 1. Elegir Líder (el de mayor rango y amabilidad)
-            miembros.sort(key=lambda x: (x.rango + x.personalidad.get('amabilidad', 0.5)), reverse=True)
+            # 1. Elegir Líder (Democrática basada en Rango y Amabilidad)
+            # El que tenga mayor (Rango * 0.7 + Amabilidad * 0.3) es el candidato ideal
+            miembros.sort(key=lambda x: (x.rango * 0.7 + x.personalidad.get('amabilidad', 0.5) * 0.3), reverse=True)
             lider = miembros[0]
-            lider.rol = "Líder"
             
-            self.log(f"🏛️ [ASAMBLEA GRUPO {g_id}] Debate sobre la misión del grupo...", categoria="consenso")
             for m in miembros:
-                # Cada agente expresa su opinión sobre la misión
-                argumento, pensamiento = cerebro_llm.generar_debate_consenso(m, ids_miembros, fase="mision")
-                m.decir(f"🎯 [PROPUESTA] {argumento}", pensamiento=pensamiento)
-            
-            # 2. Asignar otros roles por aptitud
-            for m in miembros[1:]:
-                comp = m.personalidad.get('competitividad', 0.5)
-                ext = m.personalidad.get('extroversion', 0.5)
-                
-                if comp > 0.7:
-                    m.rol = "Guardián"
-                elif ext > 0.6:
-                    m.rol = "Explorador"
+                if m == lider:
+                    m.rol = "Líder"
                 else:
-                    m.rol = "Recolector"
+                    # Asignación de roles secundarios por personalidad
+                    p = m.personalidad
+                    if p.get('competitividad', 0) > 0.7:
+                        m.rol = "Guardián"
+                    elif p.get('extroversión', 0) > 0.7:
+                        m.rol = "Explorador"
+                    else:
+                        m.rol = "Recolector"
             
-            # 3. Definir Objetivo del Grupo por Consenso (Liderado por el Líder)
-            if g_id not in self.objetivos_grupos:
-                posibles_objetivos = [
-                    "Prosperidad Económica (Acumular MC)",
-                    "Innovación y Conocimiento (Buscar Info)",
-                    "Armonía Social (Fortalecer Vínculos)",
-                    "Seguridad y Defensa (Competir/Proteger)"
-                ]
-                # El líder elige basado en su personalidad
-                if lider.personalidad.get('amabilidad', 0.5) > 0.6:
-                    mision = posibles_objetivos[2] # Armonía
-                elif lider.personalidad.get('competitividad', 0.5) > 0.6:
-                    mision = posibles_objetivos[3] # Seguridad
-                elif lider.personalidad.get('extroversion', 0.5) > 0.6:
-                    mision = posibles_objetivos[1] # Innovación
-                else:
-                    mision = posibles_objetivos[0] # Prosperidad
-                
-                self.objetivos_grupos[g_id] = mision
-                self.log(f"🎯 [GRUPO {g_id}] Misión establecida: {mision}", categoria="sistema")
+            self.log(f"👑 [LIDERAZGO] El Agente {lider.unique_id} ha sido elegido Líder de la Facción {g_id}.", categoria="consenso")
             
-            self.log(f"👥 [GRUPO {g_id}] Consenso alcanzado: {lider.unique_id} es el nuevo Líder.", categoria="sistema")
+            # 2. Definición de Nombre y Misión (Consenso)
+            misiones_detalladas = {
+                "Prosperidad Económica": ["Mercaderes del Destino", "Sindicato del Oro", "La Ruta de la Seda Digital"],
+                "Seguridad Colectiva": ["La Muralla de Hierro", "Orden del Escudo", "Vigilantes del Nexo"],
+                "Innovación Tecnológica": ["Vanguardia del Silicio", "Arquitectos del Futuro", "Círculo de la Chispa"],
+                "Armonía Social": ["Lazos de Unidad", "Comunidad del Equilibrio", "El Gran Ágora"],
+                "Preservación de la Memoria": ["Archiveros del Tiempo", "Guardianes del Saber", "El Códice Eterno"],
+                "Hedonismo Colectivo": ["Buscadores del Deleite", "La Gran Fiesta", "Sinfonía de los Sentidos"],
+                "Aislamiento Defensivo": ["Los Ermitaños", "Refugio de las Sombras", "La Fortaleza Oculta"]
+            }
+            
+            import random
+            mision_tipo = random.choice(list(misiones_detalladas.keys()))
+            nombre_faccion = random.choice(misiones_detalladas[mision_tipo])
+            
+            # Guardar tanto el nombre como la misión
+            self.objetivos_grupos[g_id] = f"{nombre_faccion} ({mision_tipo})"
+            
+            # El líder anuncia el nombre y la misión al grupo
+            lider.decir(f"📢 ¡Hermanos! Desde hoy, nuestra unión se conocerá como **{nombre_faccion}**. Nuestra misión sagrada es la **{mision_tipo}**. ¡Por la gloria de nuestro grupo!", para_grupo=True)
+            self.log(f"🚩 [FACCION] La Facción {g_id} se ha refundado como '{nombre_faccion}' con la misión: {mision_tipo}", categoria="consenso")
+
+if __name__ == "__main__":
+    # Configuración desde .env
+    num_agentes = int(os.getenv("NUM_AGENTES", 30))
+    pasos = int(os.getenv("PASOS_SIMULACION", 100))
+    
+    # Configuración de la simulación
+    modelo = ModeloRelacional(num_agentes=num_agentes)
+    modelo.ejecutar(pasos=pasos)
+    modelo.imprimir_resumen_social()
+    modelo.visualizar_resultados()

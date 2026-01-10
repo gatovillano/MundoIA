@@ -25,6 +25,8 @@ class AgentState(TypedDict):
     conocimientos: Dict[str, str] # {tema: info}
     planes: List[Dict] # [{con_quien, accion, paso}]
     privado: bool # Si el mensaje actual es privado
+    grupo_id: Optional[str] # ID del grupo actual
+    es_grupal: bool # Si el mensaje es para toda la facción
 
 
 def percibir_necesidades(state: AgentState):
@@ -122,31 +124,40 @@ def razonar_accion(state: AgentState):
         elif r < 0.60 and state['recursos'] > 50: accion = "FUNDAR_GRUPO" 
         elif r < 0.70 and state['dinero'] > 100: accion = "MEJORAR_SEGURIDAD"
         elif r < 0.80 and comp > 0.7: accion = "COMPETIR" 
-        elif r < 0.85 and amab > 0.6: accion = "FORMAR_ALIANZA"
+        elif r < 0.85 and amab > 0.6: 
+            if state.get("grupo_id"):
+                accion = "INVITAR_A_GRUPO"
+            else:
+                accion = "FORMAR_ALIANZA"
         elif r < 0.95: accion = "SOCIALIZAR"
         else: accion = "RECOLECTAR"
         
-    # Decidir si es PRIVADO (agentes competitivos o planes estratégicos)
+    # Decidir si es PRIVADO o GRUPAL
     privado = False
-    if accion in ["PLANIFICAR", "COMPARTIR_INFO"] and (comp > 0.6 or r < 0.5):
+    es_grupal = False
+    
+    if state.get("grupo_id") and accion in ["DEBATIR", "PLANIFICAR", "BUSCAR_INFO"]:
+        es_grupal = True
+    elif accion in ["PLANIFICAR", "COMPARTIR_INFO"] and (comp > 0.6 or r < 0.5):
         privado = True
         
-    return {"decision": accion, "privado": privado}
+    return {"decision": accion, "privado": privado, "es_grupal": es_grupal}
 
 def ejecutar_herramientas(state: AgentState):
     """Nodo 3: Si decide BUSCAR_INFO, usa herramientas externas."""
+    agent_id = state.get('agent_id')
     if state['decision'] == "BUSCAR_INFO":
         # Elegimos una herramienta al azar para variar la conversación
         opcion = random.choice(["noticias", "clima", "mercado", "brave", "scraping"])
         if opcion == "noticias":
-            info = herramientas.buscar_noticias()
+            info = herramientas.buscar_noticias(agente_id=agent_id)
         elif opcion == "clima":
             info = herramientas.obtener_clima()
         elif opcion == "brave":
-            info = herramientas.brave_search("tendencias tecnológicas 2024")
+            info = herramientas.brave_search("tendencias tecnológicas 2024", agente_id=agent_id)
         elif opcion == "scraping":
             # Si ya tenemos una URL de una búsqueda previa, la scrapeamos
-            info = herramientas.scrapear_url("https://es.wikipedia.org/wiki/Inteligencia_artificial")
+            info = herramientas.scrapear_url("https://es.wikipedia.org/wiki/Inteligencia_artificial", agente_id=agent_id)
         else:
             info = herramientas.consultar_mercado()
             
@@ -253,9 +264,10 @@ class CerebroAvanzado:
             "objetivo_grupo": agente.modelo.objetivos_grupos.get(agente.grupo_id) if agente.grupo_id else None,
             "conocimientos": agente.conocimientos,
             "planes": agente.planes,
-            "privado": False
+            "privado": False,
+            "grupo_id": agente.grupo_id
         }
         
         resultado = cerebro_cognitivo.invoke(inputs)
-        return resultado['decision'], resultado['mensaje_generado'], resultado.get('pensamiento_actual'), resultado.get('privado', False)
+        return resultado['decision'], resultado['mensaje_generado'], resultado.get('pensamiento_actual'), resultado.get('privado', False), resultado.get('es_grupal', False)
 

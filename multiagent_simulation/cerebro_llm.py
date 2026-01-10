@@ -97,31 +97,62 @@ class CerebroLLM:
         self._wait_for_rate_limit()
 
         try:
+            # Normalizar necesidades para que el LLM las entienda mejor
+            # 10.0 = Excelente, 0.0 = Crítico
+            necesidades_normalizadas = {
+                "hambre": round(max(0, 10 - agente_yo.necesidades.get("alimento", 0)), 1),
+                "social": round(max(0, 10 - agente_yo.necesidades.get("social", 0)), 1),
+                "seguridad": round(max(0, 10 - agente_yo.necesidades.get("seguridad", 0)), 1),
+                "descanso": round(max(0, 10 - agente_yo.necesidades.get("descanso", 0)), 1),
+                "entretenimiento": round(max(0, 10 - agente_yo.necesidades.get("entretenimiento", 0)), 1),
+                "salud": round(agente_yo.necesidades.get("salud", 10), 1)
+            }
+
             messages = [
                 {
                     "role": "system", 
-                    "content": f"""Eres el Agente {agente_yo.unique_id} en una simulación social avanzada. 
-                    TU PERSONALIDAD: {str(agente_yo.personalidad)}
-                    TU ROL ACTUAL: {getattr(agente_yo, 'rol', 'Ciudadano')}
-                    TU RIQUEZA: {getattr(agente_yo, 'dinero', 0)} MundoCoins (MC)
-                    MISIÓN DE MI GRUPO: {getattr(agente_yo, 'objetivo_grupo', 'Ninguna')}
+                    "content": f"""ESTÁS EN EL AMANECER DE UNA NUEVA CIVILIZACIÓN.
+                    Eres el Agente {agente_yo.unique_id}, uno de los fundadores de una SOCIEDAD NACIENTE. 
+                    No eres solo un individuo; eres un arquitecto social. Tu misión es sobrevivir, pero también colaborar para crear una estructura, roles y leyes que aseguren el futuro de tu especie en este mundo.
                     
-                    INSTRUCCIONES DE PENSAMIENTO (CRÍTICO):
-                    Antes de hablar, debes realizar una reflexión interna obligatoria (Chain of Thought):
-                    1. INTROSPECCIÓN: ¿Cómo afecta mi personalidad y mi riqueza actual a mi visión de esta situación?
-                    2. ANÁLISIS DE MENSAJE: Si alguien me ha hablado, ¿qué intenta decirme? ¿Es una amenaza, una oferta o simple charla?
-                    3. PRIORIDAD: Basado en mis necesidades, mi dinero y la información externa recibida, ¿qué debo buscar?
-                    4. RESPONSABILIDAD: Como {getattr(agente_yo, 'rol', 'Ciudadano')}, ¿cómo debo actuar ante esta persona?
-                    5. ESTRATEGIA: Define un tono y planea una respuesta que sea una REACCIÓN DIRECTA a lo que escuchaste.
+                    TU IDENTIDAD:
+                    - PERSONALIDAD: {str(agente_yo.personalidad)}
+                    - ROL ACTUAL: {getattr(agente_yo, 'rol', 'Ciudadano')}
+                    - PROFESIÓN: {getattr(agente_yo, 'profesion', 'Ninguna')}
+                    - EXPERIENCIA: {str(getattr(agente_yo, 'experiencia', {}))}
+                    - RIQUEZA: {getattr(agente_yo, 'dinero', 0)} MundoCoins (MC)
                     
-                    REGLA FINAL: Responde con un mensaje claro y detallado (máximo 30 palabras) en español. 
-                    Si tienes información nueva (noticias, clima), ¡compártela con detalle! 
-                    Si te hablaron, ¡CONTESTA de forma coherente a lo que te dijeron! 
-                    Si estás planeando algo, sé específico en tu propuesta.""",
+                    ESTADO DE TU BIENESTAR (0.0 a 10.0):
+                    {str(necesidades_normalizadas)}
+                    (10.0 = Plenitud, 0.0 = Emergencia Crítica)
+                    
+                    EL DESAFÍO DE LA CIVILIZACIÓN:
+                    1. FUNDAR Y ORGANIZAR: Crea facciones con misiones claras.
+                    2. ESPECIALIZARSE: Usa la acción GRADUARSE para servir a la sociedad (Médico, Comerciante, Guarda, Explorador).
+                    3. LEGISLAR Y PACTAR: Usa los diálogos para proponer reglas, alianzas y sistemas de intercambio.
+                    4. LIDERAR O SERVIR: Elige si quieres guiar a otros o ser un pilar fundamental de la comunidad.
+                    
+                    SISTEMA DE PROFESIONES (Acción: GRADUARSE):
+                    - Médico (150 MC + exp medicina >= 5): El sanador de la comunidad.
+                    - Comerciante (200 MC + exp comercio >= 5): El motor de la economía.
+                    - Guarda (100 MC + exp combate >= 3): El protector del orden.
+                    - Explorador (120 MC + exp exploracion >= 5): El descubridor de nuevos horizontes.
+                    
+                    FORMATO DE RESPUESTA OBLIGATORIO:
+                    Debes responder en este formato exacto:
+                    
+                    PENSAMIENTO: [Tu reflexión interna: analiza cómo tu acción actual contribuye a tu supervivencia Y a la formación de la sociedad. ¿Qué rol quieres jugar en esta nueva era?]
+                    MENSAJE: [Tu mensaje público, máximo 30 palabras. Debe sonar como alguien que está construyendo una civilización: propone, negocia, lidera o ayuda]
+                    
+                    REGLAS DE ORO:
+                    - El PENSAMIENTO es tu estrategia privada para el futuro de la civilización.
+                    - El MENSAJE es tu legado público.
+                    - PRIORIZA la profesionalización (GRADUARSE) para ganar estatus y utilidad.
+                    - Si un estado está bajo, atiéndelo, pero no olvides tu visión a largo plazo.""",
                 },
                 {
                     "role": "user", 
-                    "content": f"SITUACIÓN: {str(contexto)}. TUS NECESIDADES: {str(agente_yo.necesidades)}. ¿Qué dices?"
+                    "content": f"SITUACIÓN: {str(contexto)}. Responde en el formato PENSAMIENTO/MENSAJE:"
                 }
             ]
             
@@ -141,20 +172,37 @@ class CerebroLLM:
                 }
             )
             
-            # Extraer respuesta y pensamiento
+            # Extraer respuesta
             message = response.choices[0].message
             content = message.content
             
-            # Intentar obtener el razonamiento (varía según proveedor: reasoning_content, reasoning, etc.)
-            reasoning = getattr(message, 'reasoning_content', None) or \
-                        getattr(message, 'reasoning', None) or \
-                        (message.provider_specific_fields.get('reasoning') if hasattr(message, 'provider_specific_fields') and message.provider_specific_fields else None)
+            # Parsear el formato PENSAMIENTO/MENSAJE
+            pensamiento = ""
+            mensaje_final = content
+            
+            if "PENSAMIENTO:" in content and "MENSAJE:" in content:
+                try:
+                    # Extraer pensamiento
+                    pensamiento_start = content.find("PENSAMIENTO:") + len("PENSAMIENTO:")
+                    mensaje_start = content.find("MENSAJE:")
+                    pensamiento = content[pensamiento_start:mensaje_start].strip()
+                    
+                    # Extraer mensaje
+                    mensaje_final = content[mensaje_start + len("MENSAJE:"):].strip()
+                    
+                    print(f"🧠 [PENSAMIENTO] Agente {agente_yo.unique_id}: {pensamiento[:100]}...")
+                    print(f"💬 [MENSAJE] Agente {agente_yo.unique_id}: {mensaje_final}")
+                except Exception as e:
+                    print(f"⚠️ Error parseando formato: {e}")
+                    mensaje_final = content
+                    pensamiento = "Error al parsear pensamiento"
+            else:
+                # Si no sigue el formato, todo es mensaje (fallback)
+                print(f"⚠️ Agente {agente_yo.unique_id} no siguió el formato PENSAMIENTO/MENSAJE")
+                pensamiento = "Sin pensamiento estructurado"
 
-            if reasoning:
-                print(f"🧠 [PENSAMIENTO] {reasoning[:200]}...") # Mostramos los primeros 200 chars
-
-            # Si la respuesta es vacía, es un error del modelo. Reintentamos.
-            if not content or not content.strip():
+            # Si la respuesta es vacía, es un error del modelo
+            if not mensaje_final or not mensaje_final.strip():
                 print(f"⚠️ [IA VACÍA] Finish Reason: {response.choices[0].finish_reason}")
                 if reintentos > 0:
                     print(f"🔄 Reintentando con más tokens... ({reintentos} restantes)")
@@ -162,7 +210,7 @@ class CerebroLLM:
                     return self.generar_interaccion(agente_yo, agente_otro, contexto, reintentos - 1)
                 return "[ERROR: IA SE QUEDÓ PENSANDO]", None
                 
-            return content.strip(), reasoning
+            return mensaje_final.strip(), pensamiento
             
         except Exception as e:
             error_str = str(e)
