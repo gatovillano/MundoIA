@@ -85,7 +85,8 @@ def run_sim_loop():
                 "step": modelo.paso_actual,
                 "groups": len(set(a.grupo_id for a in modelo.agentes if a.grupo_id)),
                 "group_relations": {f"{k[0]}-{k[1]}": v for k, v in modelo.relaciones_grupos.items()},
-                "economy": modelo.economia
+                "economy": modelo.economia,
+                "facciones_leyes": modelo.facciones_leyes
             }),
             loop
         )
@@ -99,6 +100,9 @@ def run_sim_loop():
                 "money": a.dinero,
                 "grupo_id": a.grupo_id,
                 "rol": a.rol,
+                "profesion": getattr(a, 'profesion', None),
+                "experiencia": getattr(a, 'experiencia', {}),
+                "reputacion": getattr(a, 'reputacion', 1.0),
                 "mision_grupal": modelo.objetivos_grupos.get(a.grupo_id) if a.grupo_id else None,
                 "alianzas": a.alianzas
             })
@@ -207,14 +211,18 @@ async def text_to_speech(text: str):
     tts_url = os.getenv("TTS_URL", "http://localhost:5050/v1/audio/speech")
     
     try:
+        # Payload específico para el contenedor edge-tts
+        tts_payload = {
+            "input": text,
+            "voice": "es-MX-DaliaNeural",
+            "model": "edge-tts",
+            "speed": 1.0
+        }
+        
         # Hacer request al servicio TTS
         response = requests.post(
             tts_url,
-            json={
-                "model": "tts-1",
-                "input": text,
-                "voice": "alloy"
-            },
+            json=tts_payload,
             timeout=10
         )
         

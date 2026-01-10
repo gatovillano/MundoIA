@@ -63,7 +63,8 @@ class Agente:
         self.planes = [] # Acuerdos con otros agentes
         self.gasto_turno = 0.0 # Control de gasto por turno
         self.inversiones = [] # [{monto, paso_inicio, interes_esperado}]
-        self.alianzas = [] # Lista de IDs de agentes aliados
+        self.alianzas = [] # Lista de IDs de agentes aliados (para compatibilidad)
+        self.tratados = [] # Lista de dicts: {"socio_id": ID, "terminos": {...}, "pasos_restantes": N}
         self.inventario = {
             "medicina": 0,
             "ocio": 0
@@ -78,6 +79,11 @@ class Agente:
             "exploracion": 0
         }
         self.hitos = [] # Lista de logros alcanzados
+        
+        # --- SISTEMA POLÍTICO ---
+        self.reputacion = 1.0 # 0.0 a 1.0 (Prestigio social)
+        self.votos_recibidos = 0
+        self.historial_etico = [] # Registro de crímenes o buenas acciones
 
     def decir(self, mensaje, pensamiento=None, privado_para=None, para_grupo=False):
         """Imprime un mensaje directo, privado o para el grupo."""
@@ -116,6 +122,7 @@ class Agente:
                 otro_agente.ultimo_mensaje_recibido = None
 
         if tipo_interaccion == "SOCIALIZAR" or tipo_interaccion == "social":
+            self.reputacion = min(1.0, self.reputacion + 0.01) # Socializar mejora reputación
             # La hostilidad de ambos agentes reduce la probabilidad de una buena relación
             hostilidad_total = self.personalidad.get("hostilidad", 0.5) + otro_agente.personalidad.get("hostilidad", 0.5)
             afinidad_base = 0.2 * (self.personalidad["amabilidad"] + otro_agente.personalidad["amabilidad"]) - (0.15 * hostilidad_total)
@@ -129,6 +136,13 @@ class Agente:
             
         elif tipo_interaccion == "COMPETIR":
             self.ganar_experiencia("combate", 1)
+            self.reputacion = max(0.0, self.reputacion - 0.05) # Atacar baja reputación
+            
+            # Verificar si hay leyes contra el robo en la facción
+            leyes_faccion = self.modelo.facciones_leyes.get(self.grupo_id, [])
+            if any("prohibido robar" in l.lower() or "ley de salud" in l.lower() for l in leyes_faccion):
+                self.sancionar("Violación de la ley de propiedad", gravedad=0.15)
+
             # El ataque siempre destruye la relación
             self.memoria.registrar_interaccion(otro_agente.unique_id, "enemigo", -0.5, otro_agente.recursos, otro_agente.grupo_id)
             otro_agente.memoria.registrar_interaccion(self.unique_id, "enemigo", -0.5, self.recursos, self.grupo_id)
@@ -159,10 +173,16 @@ class Agente:
         
     def fundar_grupo(self, nombre_mision):
         """El agente crea un nuevo grupo y se convierte en líder."""
+        # Verificar límite por turno
+        if self.modelo.grupos_creados_este_paso >= 2:
+            self.modelo.log(f"⚠️ [SISTEMA] Agente {self.unique_id} intentó fundar un grupo, pero se alcanzó el límite de 2 por turno.", categoria="sistema")
+            return None
+
         nuevo_id = str(len(self.modelo.objetivos_grupos) + 1)
         self.grupo_id = nuevo_id
         self.rol = "Líder"
         self.modelo.objetivos_grupos[nuevo_id] = nombre_mision
+        self.modelo.grupos_creados_este_paso += 1
         self.modelo.log(f"🚩 [FACCION] Agente {self.unique_id} ha fundado la facción {nuevo_id}: {nombre_mision}", categoria="consenso")
         return nuevo_id
 
@@ -183,15 +203,37 @@ class Agente:
         self.modelo.log(f"✉️ [INVITACION] Agente {self.unique_id} invita a {otro_agente.unique_id} a unirse a la Facción {self.grupo_id}.", categoria="social")
         return True
 
-    def formar_alianza(self, otro_agente):
-        """Crea un pacto de alianza mutua entre dos agentes."""
-        if otro_agente.unique_id not in self.alianzas:
-            self.alianzas.append(otro_agente.unique_id)
-            if self.unique_id not in otro_agente.alianzas:
-                otro_agente.alianzas.append(self.unique_id)
-            self.modelo.log(f"📜 [ALIANZA] Pacto formal entre {self.unique_id} y {otro_agente.unique_id}.", categoria="social")
-            return True
-        return False
+    def formar_alianza(self, otro_agente, terminos=None):
+        """Crea un pacto de alianza mutua con términos específicos."""
+        # Si no hay términos, es una alianza básica de apoyo mutuo
+        if terminos is None:
+            terminos = {"tipo": "apoyo_mutuo", "descripcion": "Apoyo social y suministros básicos"}
+
+        # Evitar duplicados de tratados activos con el mismo agente
+        if any(t["socio_id"] == otro_agente.unique_id for t in self.tratados):
+            return False
+
+        nuevo_tratado_yo = {
+            "socio_id": otro_agente.unique_id,
+            "terminos": terminos,
+            "pasos_restantes": 10 # Duración estándar de 10 turnos
+        }
+        nuevo_tratado_otro = {
+            "socio_id": self.unique_id,
+            "terminos": terminos,
+            "pasos_restantes": 10
+        }
+
+        self.tratados.append(nuevo_tratado_yo)
+        otro_agente.tratados.append(nuevo_tratado_otro)
+        
+        # Mantener lista de alianzas para compatibilidad visual
+        if otro_agente.unique_id not in self.alianzas: self.alianzas.append(otro_agente.unique_id)
+        if self.unique_id not in otro_agente.alianzas: otro_agente.alianzas.append(self.unique_id)
+
+        desc = terminos.get("descripcion", "Pacto formal")
+        self.modelo.log(f"📜 [TRATADO] {self.unique_id} y {otro_agente.unique_id} han firmado: {desc}", categoria="social")
+        return True
 
     def comerciar(self, otro_agente, tipo="compra"):
         """Realiza una transacción económica entre agentes."""
@@ -265,25 +307,52 @@ class Agente:
         self.necesidades["descanso"] += 0.2
         self.necesidades["entretenimiento"] += 0.1
         
-        # --- BENEFICIOS DE ALIANZAS ---
+        # --- PROCESAMIENTO DE TRATADOS FORMALES ---
+        for tratado in list(self.tratados):
+            aliado = next((a for a in self.modelo.agentes if a.unique_id == tratado["socio_id"]), None)
+            if not aliado: continue
+
+            t = tratado["terminos"]
+            # 1. Intercambio de Recursos por Dinero
+            if t.get("tipo") == "intercambio":
+                dar = t.get("da", {}) # {recurso: "medicina", cant: 1}
+                recibe = t.get("recibe", {}) # {recurso: "dinero", cant: 10}
+
+                # Ejecutar si ambos tienen lo necesario
+                puedo_dar = False
+                if dar.get("recurso") == "medicina" and self.inventario["medicina"] >= dar.get("cant", 0): puedo_dar = True
+                elif dar.get("recurso") == "dinero" and self.dinero >= dar.get("cant", 0): puedo_dar = True
+                elif dar.get("recurso") == "recursos" and self.recursos >= dar.get("cant", 0): puedo_dar = True
+
+                if puedo_dar:
+                    # Transferir lo que yo doy
+                    if dar["recurso"] == "medicina": 
+                        self.inventario["medicina"] -= dar["cant"]; aliado.inventario["medicina"] += dar["cant"]
+                    elif dar["recurso"] == "dinero":
+                        self.dinero -= dar["cant"]; aliado.dinero += dar["cant"]
+                    elif dar["recurso"] == "recursos":
+                        self.recursos -= dar["cant"]; aliado.recursos += dar["cant"]
+                    
+                    # Transferir lo que yo recibo (si el aliado puede)
+                    # Nota: Simplificado para que el aliado siempre cumpla su parte si el otro empezó
+                    if recibe["recurso"] == "dinero":
+                        aliado.dinero -= recibe["cant"]; self.dinero += recibe["cant"]
+                    elif recibe["recurso"] == "seguridad":
+                        self.rango += recibe["cant"] # El aliado me brinda protección
+                    
+                    self.modelo.log(f"🤝 [EJECUCION TRATADO] Intercambio realizado entre {self.unique_id} y {aliado.unique_id}.", categoria="social")
+
+            # Reducir duración
+            tratado["pasos_restantes"] -= 1
+            if tratado["pasos_restantes"] <= 0:
+                self.tratados.remove(tratado)
+                # También quitar del aliado
+                aliado.tratados = [at for at in aliado.tratados if at["socio_id"] != self.unique_id]
+                self.modelo.log(f"⌛ [SISTEMA] El tratado entre {self.unique_id} y {aliado.unique_id} ha expirado.", categoria="sistema")
+
+        # --- BENEFICIOS DE ALIANZAS BÁSICAS ---
         for aliado_id in self.alianzas:
-            aliado = next((a for a in self.modelo.agentes if a.unique_id == aliado_id), None)
-            if aliado:
-                # 1. Apoyo Social Pasivo
-                self.necesidades["social"] = max(0, self.necesidades["social"] - 0.05)
-                
-                # 2. Intercambio de Recursos (Solidaridad)
-                if self.recursos < 10 and aliado.recursos > 50:
-                    transferencia = 2
-                    aliado.recursos -= transferencia
-                    self.recursos += transferencia
-                    self.modelo.log(f"🤝 [ALIANZA] Agente {aliado.unique_id} envió suministros de emergencia a su aliado {self.unique_id}.", categoria="social")
-                
-                # 3. Solidaridad Médica
-                if self.necesidades["salud"] < 5 and aliado.inventario["medicina"] > 1 and self.inventario["medicina"] == 0:
-                    aliado.inventario["medicina"] -= 1
-                    self.inventario["medicina"] += 1
-                    self.modelo.log(f"💊 [ALIANZA] Agente {aliado.unique_id} envió una medicina a su aliado herido {self.unique_id}.", categoria="social")
+            pass # Los beneficios ahora se manejan principalmente por tratados formales
         
         # Impacto de la salud
         if self.necesidades["alimento"] > 9.0 or self.necesidades["descanso"] > 9.0:
@@ -353,6 +422,60 @@ class Agente:
         self.hitos.append(f"Graduado como {profesion_deseada}")
         self.modelo.log(f"✨ [PROFESION] ¡El Agente {self.unique_id} se ha graduado como {profesion_deseada}! 🎓", categoria="consenso")
         return True, f"¡Felicidades! Ahora eres {profesion_deseada}."
+
+    # --- MÉTODOS POLÍTICOS ---
+    def proponer_ley(self, ley_texto):
+        """Propone una nueva ley para su facción o el mundo."""
+        if not self.grupo_id: return False, "Debes pertenecer a una facción para proponer leyes."
+        
+        ley_id = f"LEY-{random.randint(1000, 9999)}"
+        propuesta = {
+            "id": ley_id,
+            "autor": self.unique_id,
+            "texto": ley_texto,
+            "votos_si": 1,
+            "votos_no": 0,
+            "votantes": [self.unique_id],
+            "estado": "pendiente",
+            "grupo_id": self.grupo_id
+        }
+        
+        if "propuestas" not in self.modelo.facciones_leyes:
+            self.modelo.facciones_leyes["propuestas"] = []
+            
+        self.modelo.facciones_leyes["propuestas"].append(propuesta)
+        self.modelo.log(f"📜 [POLITICA] Agente {self.unique_id} propone la ley: '{ley_texto}' en la Facción {self.grupo_id}.", categoria="sistema")
+        return True, ley_id
+
+    def votar_ley(self, ley_id, a_favor=True):
+        """Vota una propuesta de ley existente."""
+        propuestas = self.modelo.facciones_leyes.get("propuestas", [])
+        for p in propuestas:
+            if p["id"] == ley_id and self.unique_id not in p["votantes"]:
+                if a_favor: p["votos_si"] += 1
+                else: p["votos_no"] += 1
+                p["votantes"].append(self.unique_id)
+                
+                # Si vota más del 50% de la facción, se aprueba
+                miembros = [a for a in self.modelo.agentes if a.grupo_id == p["grupo_id"]]
+                if len(p["votantes"]) > len(miembros) / 2:
+                    if p["votos_si"] > p["votos_no"]:
+                        p["estado"] = "aprobada"
+                        if p["grupo_id"] not in self.modelo.facciones_leyes:
+                            self.modelo.facciones_leyes[p["grupo_id"]] = []
+                        self.modelo.facciones_leyes[p["grupo_id"]].append(p["texto"])
+                        self.modelo.log(f"⚖️ [LEY] ¡La ley '{p['texto']}' ha sido APROBADA en la Facción {p['grupo_id']}!", categoria="sistema")
+                    else:
+                        p["estado"] = "rechazada"
+                        self.modelo.log(f"❌ [LEY] La propuesta '{p['texto']}' fue RECHAZADA.", categoria="sistema")
+                return True
+        return False
+
+    def sancionar(self, motivo, gravedad=0.1):
+        """Reduce la reputación del agente por acciones indebidas."""
+        self.reputacion = max(0.0, self.reputacion - gravedad)
+        self.historial_etico.append(f"Sanción: {motivo} (-{gravedad})")
+        self.modelo.log(f"⚖️ [JUSTICIA] Agente {self.unique_id} sancionado por: {motivo}. Reputación: {self.reputacion:.2f}", categoria="sistema")
 
     def step(self):
         """Acciones que realiza el agente en un turno."""
@@ -463,11 +586,28 @@ class Agente:
 
         elif decision == "FORMAR_ALIANZA":
             if objetivo_cercano:
-                exito = self.formar_alianza(objetivo_cercano)
+                # Intentar extraer términos del mensaje del LLM o usar uno por defecto
+                terminos = None
+                if "medicina" in mensaje.lower() and "dinero" in mensaje.lower():
+                    terminos = {
+                        "tipo": "intercambio",
+                        "descripcion": "Medicina por MundoCoins",
+                        "da": {"recurso": "medicina", "cant": 1},
+                        "recibe": {"recurso": "dinero", "cant": 15}
+                    }
+                elif "seguridad" in mensaje.lower() or "protección" in mensaje.lower():
+                    terminos = {
+                        "tipo": "intercambio",
+                        "descripcion": "Recursos por Seguridad",
+                        "da": {"recurso": "recursos", "cant": 10},
+                        "recibe": {"recurso": "seguridad", "cant": 0.1}
+                    }
+                
+                exito = self.formar_alianza(objetivo_cercano, terminos=terminos)
                 if exito:
                     self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
                 else:
-                    self.decir(f"Ya tengo un pacto con el Agente {objetivo_cercano.unique_id}.", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+                    self.decir(f"Ya tenemos un pacto activo o no pudimos negociar los términos.", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
             else:
                 self.decir("Busco aliados estratégicos para el futuro.", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
 
@@ -513,6 +653,30 @@ class Agente:
                     self.decir(f"⚠️ Intenté graduarme como {profesion_objetivo} pero: {msg}", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
             else:
                 self.decir("Estoy considerando profesionalizarme, pero aún no decido el camino.", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+
+        elif decision == "PROPONER_LEY":
+            # Extraer el texto de la ley del mensaje o pensamiento
+            ley_texto = mensaje.replace("PROPONER_LEY:", "").strip()
+            if not ley_texto: ley_texto = "Ley de Convivencia Social"
+            exito, ley_id = self.proponer_ley(ley_texto)
+            if exito:
+                self.decir(f"📜 He propuesto una nueva ley: '{ley_texto}'. ¡Espero su apoyo! (ID: {ley_id})", pensamiento=pensamiento, para_grupo=True)
+            else:
+                self.decir("Intenté proponer una ley, pero no tengo facción.", pensamiento=pensamiento, privado_para=destinatario_id)
+
+        elif decision == "VOTAR":
+            # El LLM debe indicar el ID de la ley y su voto
+            import re
+            ley_match = re.search(r'LEY-\d+', str(mensaje) + str(pensamiento))
+            if ley_match:
+                ley_id = ley_match.group(0)
+                a_favor = "no" not in mensaje.lower() and "contra" not in mensaje.lower()
+                exito = self.votar_ley(ley_id, a_favor)
+                if exito:
+                    voto_str = "A FAVOR" if a_favor else "EN CONTRA"
+                    self.decir(f"🗳️ He votado {voto_str} en la propuesta {ley_id}.", pensamiento=pensamiento, para_grupo=True)
+            else:
+                self.decir("Quería votar, pero no encontré una propuesta clara.", pensamiento=pensamiento, privado_para=destinatario_id)
 
         # Lógica de respuesta a invitaciones
         if self.ultimo_mensaje_recibido and "INVITACION_GRUPO" in str(self.ultimo_mensaje_recibido.get('contenido')):
@@ -565,6 +729,11 @@ class ModeloRelacional:
         self.datos = [] # Mantener para compatibilidad con visualizar_resultados
         self.relaciones_grupos = {} # {(id1, id2): afinidad}
         self.historial_logs = [] # [{mensaje, categoria, ...}]
+        
+        # --- SISTEMA POLÍTICO ---
+        self.leyes_globales = [] # Lista de leyes activas en todo el mundo
+        self.facciones_leyes = {} # {grupo_id: [leyes]}
+        self.grupos_creados_este_paso = 0 # Límite de 2 por turno
         
         # Cargar estado previo si existe
         self.cargar_estado()
@@ -626,6 +795,7 @@ class ModeloRelacional:
             self.economia["historial_indice"].pop(0)
 
         self.paso_actual += 1
+        self.grupos_creados_este_paso = 0 # Resetear contador de grupos
         self.log(f"\n================ PASO {self.paso_actual} ================", categoria="paso")
         
         # Guardar estado automáticamente en cada paso
@@ -678,10 +848,11 @@ class ModeloRelacional:
                         agente.grupo_id = otro.grupo_id
                         break
                 else:
-                    # Crear nuevo grupo si tiene al menos un amigo
-                    if amigos:
+                    # Crear nuevo grupo si tiene al menos un amigo y hay cupo
+                    if amigos and self.grupos_creados_este_paso < 2:
                         nuevo_id = f"G{agente.unique_id}"
                         agente.grupo_id = nuevo_id
+                        self.grupos_creados_este_paso += 1
                         for id_amigo in amigos:
                             self.agentes[id_amigo].grupo_id = nuevo_id
 
@@ -779,6 +950,7 @@ class ModeloRelacional:
                 "planes": a.planes,
                 "inversiones": a.inversiones,
                 "alianzas": a.alianzas,
+                "tratados": a.tratados,
                 "profesion": a.profesion,
                 "experiencia": a.experiencia,
                 "hitos": a.hitos,
@@ -829,6 +1001,7 @@ class ModeloRelacional:
                     a.planes = a_data.get("planes", [])
                     a.inversiones = a_data.get("inversiones", [])
                     a.alianzas = a_data.get("alianzas", [])
+                    a.tratados = a_data.get("tratados", [])
                     a.profesion = a_data.get("profesion")
                     a.experiencia = a_data.get("experiencia", {"medicina": 0, "comercio": 0, "combate": 0, "exploracion": 0})
                     a.hitos = a_data.get("hitos", [])

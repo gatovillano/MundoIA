@@ -685,6 +685,56 @@
             font-weight: 600;
         }
 
+        .policy-panel,
+        .pacts-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .policy-title,
+        .pacts-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--accent-secondary);
+            margin-bottom: 12px;
+            letter-spacing: 1px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .law-item,
+        .pact-item {
+            background: rgba(255, 255, 255, 0.03);
+            border-left: 3px solid var(--accent-primary);
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+        }
+
+        .law-faction {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .proposal-badge {
+            background: var(--accent-warning);
+            color: black;
+            font-size: 0.6rem;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-weight: bold;
+            margin-left: 5px;
+        }
+
         .legend-item {
             display: flex;
             align-items: center;
@@ -706,6 +756,26 @@
             height: 2px;
             margin-right: 10px;
             flex-shrink: 0;
+        }
+
+        .pact-item {
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .pact-item:hover {
+            filter: brightness(0.95);
+        }
+
+        .pact-details {
+            display: none;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed rgba(0, 0, 0, 0.1);
+        }
+
+        .pact-item.expanded .pact-details {
+            display: block;
         }
     </style>
 </head>
@@ -780,6 +850,21 @@
                     </div>
                 </div>
                 <canvas id="economy-chart" style="width: 100%; height: 100px; margin-top: 10px;"></canvas>
+            </div>
+            <div class="policy-panel" id="policy-container">
+                <div class="policy-title">⚖️ Código de Leyes</div>
+                <div id="active-laws">
+                    <div style="color: var(--text-muted); font-size: 0.8rem; font-style: italic;">Esperando
+                        legislación...</div>
+                </div>
+            </div>
+
+            <div class="pacts-panel" id="pacts-container">
+                <div class="pacts-title">🤝 Tratados y Pactos</div>
+                <div id="active-pacts">
+                    <div style="color: var(--text-muted); font-size: 0.8rem; font-style: italic;">Sin alianzas
+                        formales...</div>
+                </div>
             </div>
 
             <div class="legend-container">
@@ -984,21 +1069,27 @@
             data.agents.forEach(updatedAgent => {
                 const agent = state.agents.get(updatedAgent.id);
                 if (agent) {
-                    agent.resources = updatedAgent.resources;
-                    agent.money = updatedAgent.money;
-                    agent.necesidades = updatedAgent.necesidades;
-                    agent.rol = updatedAgent.rol;
-                    agent.grupo_id = updatedAgent.grupo_id;
-                    agent.mision_grupal = updatedAgent.mision_grupal;
-                    agent.conocimientos = updatedAgent.conocimientos || {};
-                    agent.planes = updatedAgent.planes || [];
-                    agent.alianzas = updatedAgent.alianzas || [];
+                    // Solo actualizar si el valor existe en el mensaje para evitar undefined
+                    if (updatedAgent.resources !== undefined) agent.resources = updatedAgent.resources;
+                    if (updatedAgent.money !== undefined) agent.money = updatedAgent.money;
+                    if (updatedAgent.necesidades !== undefined) agent.necesidades = updatedAgent.necesidades;
+                    if (updatedAgent.rol !== undefined) agent.rol = updatedAgent.rol;
+                    if (updatedAgent.grupo_id !== undefined) agent.grupo_id = updatedAgent.grupo_id;
+                    if (updatedAgent.mision_grupal !== undefined) agent.mision_grupal = updatedAgent.mision_grupal;
+                    if (updatedAgent.conocimientos !== undefined) agent.conocimientos = updatedAgent.conocimientos;
+                    if (updatedAgent.planes !== undefined) agent.planes = updatedAgent.planes;
+                    if (updatedAgent.alianzas !== undefined) agent.alianzas = updatedAgent.alianzas;
+                    if (updatedAgent.tratados !== undefined) agent.tratados = updatedAgent.tratados;
+                    if (updatedAgent.reputacion !== undefined) agent.reputacion = updatedAgent.reputacion;
+                    if (updatedAgent.profesion !== undefined) agent.profesion = updatedAgent.profesion;
+                    if (updatedAgent.experiencia !== undefined) agent.experiencia = updatedAgent.experiencia;
                 }
             });
 
             // Actualizar visualización
             updateNetwork();
-            renderFactionsList(); // Nueva función para refrescar la lista
+            renderFactionsList();
+            updatePactsPanel(); // Asegurar que el panel de alianzas se refresque
 
             // Si el agente seleccionado se actualizó, refrescar panel
             if (state.selectedAgent) {
@@ -1143,6 +1234,7 @@
             const cooperationMatch = msg.match(/Agente (\d+) ayudó a (\d+)/);
             const conflictMatch = msg.match(/Agente (\d+) atacó a (\d+)/);
             const socialMatch = msg.match(/Charla entre (\d+) y (\d+)/);
+            const allianceMatch = msg.match(/Pacto formal entre (\d+) y (\d+)/);
 
             if (cooperationMatch) {
                 const [_, from, to] = cooperationMatch;
@@ -1156,6 +1248,26 @@
                 const [_, from, to] = socialMatch;
                 updateRelationship(parseInt(from), parseInt(to), 'conocido');
                 state.interactionCount++;
+            } else if (allianceMatch) {
+                const [_, a1, a2] = allianceMatch;
+                const id1 = parseInt(a1);
+                const id2 = parseInt(a2);
+
+                // Actualizar alianzas en los objetos de agente locales
+                const agent1 = state.agents.get(id1);
+                const agent2 = state.agents.get(id2);
+
+                if (agent1) {
+                    if (!agent1.alianzas) agent1.alianzas = [];
+                    if (!agent1.alianzas.includes(id2)) agent1.alianzas.push(id2);
+                }
+                if (agent2) {
+                    if (!agent2.alianzas) agent2.alianzas = [];
+                    if (!agent2.alianzas.includes(id1)) agent2.alianzas.push(id1);
+                }
+
+                updatePactsPanel();
+                updateNetwork();
             }
 
             // Extract agent state
@@ -1257,6 +1369,157 @@
             }
 
             updateChart();
+
+            if (data.economy) {
+                updateEconomyPanel(data.economy);
+            }
+
+            if (data.facciones_leyes) {
+                updatePolicyPanel(data.facciones_leyes);
+            }
+
+            updatePactsPanel();
+        }
+
+        function updateEconomyPanel(economy) {
+            document.getElementById('stock-index').textContent = economy.indice_bursatil.toFixed(1);
+            document.getElementById('total-mc').textContent = economy.total_dinero.toFixed(0);
+            document.getElementById('active-inv').textContent = economy.inversiones_activas;
+
+            if (economyChart) {
+                economyChart.data.labels = economy.historial_indice.map((_, i) => i);
+                economyChart.data.datasets[0].data = economy.historial_indice;
+                economyChart.update('none');
+            }
+        }
+
+        function updatePolicyPanel(lawsData) {
+            console.log('⚖️ Actualizando leyes:', lawsData);
+            const container = document.getElementById('active-laws');
+            if (!container) return;
+            container.innerHTML = '';
+
+            let hasLaws = false;
+
+            // Leyes por facción
+            for (const [factionId, laws] of Object.entries(lawsData)) {
+                if (factionId === 'propuestas') continue;
+
+                laws.forEach(law => {
+                    hasLaws = true;
+                    const item = document.createElement('div');
+                    item.className = 'law-item';
+                    item.innerHTML = `
+                        <span class="law-faction" style="color: ${getGroupColor(factionId)}">Facción ${factionId}</span>
+                        <div>${law}</div>
+                    `;
+                    container.appendChild(item);
+                });
+            }
+
+            // Propuestas pendientes
+            if (lawsData.propuestas && lawsData.propuestas.length > 0) {
+                lawsData.propuestas.forEach(prop => {
+                    if (prop.estado === 'pendiente') {
+                        hasLaws = true;
+                        const item = document.createElement('div');
+                        item.className = 'law-item';
+                        item.style.borderLeftColor = 'var(--accent-warning)';
+                        item.innerHTML = `
+                            <span class="law-faction">Propuesta en Facción ${prop.grupo_id} <span class="proposal-badge">VOTANDO</span></span>
+                            <div>${prop.texto}</div>
+                            <div style="font-size: 0.6rem; margin-top: 4px; color: var(--text-muted);">
+                                👍 ${prop.votos_si} | 👎 ${prop.votos_no}
+                            </div>
+                        `;
+                        container.appendChild(item);
+                    }
+                });
+            }
+
+            if (!hasLaws) {
+                container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8rem; font-style: italic;">Esperando legislación...</div>';
+            }
+        }
+
+        function updatePactsPanel() {
+            const container = document.getElementById('active-pacts');
+            if (!container) return;
+
+            console.log('🤝 Actualizando pactos. Agentes en estado:', state.agents.size);
+            container.innerHTML = ''; // Limpiar antes de llenar
+
+            const pacts = [];
+            const processed = new Set();
+
+            state.agents.forEach(agent => {
+                if (agent.tratados && agent.tratados.length > 0) {
+                    agent.tratados.forEach(t => {
+                        const id1 = agent.id.toString();
+                        const id2 = t.socio_id.toString();
+                        const pair = [id1, id2].sort().join('-');
+
+                        if (!processed.has(pair)) {
+                            pacts.push({
+                                a1: id1,
+                                a2: id2,
+                                desc: t.terminos.description || t.terminos.descripcion,
+                                terminos: t.terminos,
+                                pasos: t.pasos_restantes
+                            });
+                            processed.add(pair);
+                        }
+                    });
+                }
+            });
+
+            console.log('🤝 Pactos únicos encontrados:', pacts.length);
+
+            if (pacts.length > 0) {
+                pacts.forEach(pact => {
+                    const item = document.createElement('div');
+                    item.className = 'pact-item';
+                    item.style.borderLeft = '3px solid #FFD700';
+                    item.style.padding = '10px';
+                    item.style.marginBottom = '8px';
+                    item.style.background = 'rgba(255, 215, 0, 0.05)';
+
+                    let terminosHtml = '';
+                    if (pact.terminos && pact.terminos.tipo === 'intercambio') {
+                        terminosHtml = `
+                            <div style="font-size: 0.7rem; color: #00e676; margin-top: 4px;">
+                                🔄 ${pact.terminos.da.cant} ${pact.terminos.da.recurso} ↔ ${pact.terminos.recibe.cant} ${pact.terminos.recibe.recurso}
+                            </div>
+                        `;
+                    }
+
+                    item.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.85rem;">
+                            <span>🤝 Agente #${pact.a1}</span>
+                            <span style="color: var(--text-muted); font-size: 0.7rem;">↔</span>
+                            <span>Agente #${pact.a2}</span>
+                            <span style="font-size: 0.7rem;">▼</span>
+                        </div>
+                        <div class="pact-details">
+                            <div style="font-size: 0.75rem; color: var(--accent-secondary); margin-top: 4px; font-style: italic;">
+                                ${pact.desc || 'Pacto de Ayuda Mutua'}
+                            </div>
+                            ${terminosHtml}
+                            <div style="font-size: 0.6rem; color: var(--text-muted); margin-top: 4px; text-align: right;">
+                                Expira en ${pact.pasos} turnos
+                            </div>
+                        </div>
+                    `;
+
+                    item.addEventListener('click', () => {
+                        item.classList.toggle('expanded');
+                    });
+
+                    container.appendChild(item);
+                });
+            } else {
+                container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8rem; font-style: italic;">Sin alianzas formales...</div>';
+            }
         }
 
         // ============================================
@@ -1302,28 +1565,39 @@
                     type: r.type
                 }));
 
-            // Añadir enlaces virtuales de GRUPO para que se atraigan
+            // Añadir enlaces virtuales de GRUPO y ALIANZA para que se atraigan
+            const processedPairs = new Set();
+
             nodes.forEach(a => {
-                if (a.grupo_id) {
+                if (a.grupo_id && activeTypes.includes('grupo')) {
                     nodes.forEach(b => {
                         if (a.id !== b.id && a.grupo_id === b.grupo_id) {
-                            links.push({
-                                source: a.id,
-                                target: b.id,
-                                type: 'grupo',
-                                color: getGroupColor(a.grupo_id)
-                            });
+                            const pair = [a.id, b.id].sort().join('-');
+                            if (!processedPairs.has(pair)) {
+                                links.push({
+                                    source: a.id,
+                                    target: b.id,
+                                    type: 'grupo',
+                                    color: getGroupColor(a.grupo_id)
+                                });
+                                processedPairs.add(pair);
+                            }
                         }
                     });
                 }
+
                 // Añadir enlaces de ALIANZA
-                if (a.alianzas) {
+                if (a.alianzas && activeTypes.includes('alianza')) {
                     a.alianzas.forEach(aliadoId => {
-                        links.push({
-                            source: a.id,
-                            target: aliadoId,
-                            type: 'alianza'
-                        });
+                        const pair = [a.id, aliadoId].sort().join('-');
+                        if (!processedPairs.has(pair)) {
+                            links.push({
+                                source: a.id,
+                                target: aliadoId,
+                                type: 'alianza'
+                            });
+                            processedPairs.add(pair);
+                        }
                     });
                 }
             });
@@ -1492,6 +1766,14 @@
                     <div class="detail-item">
                         <span class="detail-label">Rango</span>
                         <span class="detail-value">${(agent.rango || 1.0).toFixed(2)}</span>
+                    </div>
+
+                    <div class="detail-item" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+                        <span class="detail-label">Reputación Social</span>
+                        <div class="personality-bar" style="width: 100%; background: rgba(255,255,255,0.05);">
+                            <div class="personality-fill" style="width: ${(agent.reputacion || 1.0) * 100}%; background: ${(agent.reputacion || 1.0) > 0.5 ? 'linear-gradient(90deg, #00e676, #69f0ae)' : 'linear-gradient(90deg, #ff5252, #ff8a80)'}"></div>
+                        </div>
+                        <span style="font-size: 0.7rem; color: var(--text-muted);">${((agent.reputacion || 1.0) * 100).toFixed(0)}% de Honor</span>
                     </div>
                 </div>
 

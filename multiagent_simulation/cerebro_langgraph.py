@@ -27,6 +27,10 @@ class AgentState(TypedDict):
     privado: bool # Si el mensaje actual es privado
     grupo_id: Optional[str] # ID del grupo actual
     es_grupal: bool # Si el mensaje es para toda la facción
+    profesion: Optional[str]
+    experiencia: Dict[str, int]
+    reputacion: float
+    modelo_instancia: Any # Referencia al objeto ModeloRelacional real
 
 
 def percibir_necesidades(state: AgentState):
@@ -149,12 +153,31 @@ def ejecutar_herramientas(state: AgentState):
     if state['decision'] == "BUSCAR_INFO":
         # Elegimos una herramienta al azar para variar la conversación
         opcion = random.choice(["noticias", "clima", "mercado", "brave", "scraping"])
+        
+        # Generar query dinámica basada en el pensamiento actual
+        pensamiento = state.get('pensamiento_actual', '')
+        query_base = "tendencias tecnológicas 2024" # Fallback
+        
+        # Heurística simple para extraer temas de interés
+        temas_interes = []
+        if "seguridad" in pensamiento.lower(): temas_interes.append("estrategias de defensa base")
+        if "alimento" in pensamiento.lower() or "recursos" in pensamiento.lower(): temas_interes.append("técnicas de recolección eficiente")
+        if "social" in pensamiento.lower() or "aliado" in pensamiento.lower(): temas_interes.append("teoría de juegos cooperación")
+        if "dinero" in pensamiento.lower() or "comercio" in pensamiento.lower(): temas_interes.append("análisis de mercado cripto")
+        
+        if temas_interes:
+            query_base = random.choice(temas_interes)
+        elif state.get('conocimientos'):
+            # Si no hay urgencia clara, profundizar en un conocimiento existente
+            tema_conocido = random.choice(list(state['conocimientos'].keys()))
+            query_base = f"avances recientes en {tema_conocido}"
+
         if opcion == "noticias":
             info = herramientas.buscar_noticias(agente_id=agent_id)
         elif opcion == "clima":
             info = herramientas.obtener_clima()
         elif opcion == "brave":
-            info = herramientas.brave_search("tendencias tecnológicas 2024", agente_id=agent_id)
+            info = herramientas.brave_search(query_base, agente_id=agent_id)
         elif opcion == "scraping":
             # Si ya tenemos una URL de una búsqueda previa, la scrapeamos
             info = herramientas.scrapear_url("https://es.wikipedia.org/wiki/Inteligencia_artificial", agente_id=agent_id)
@@ -193,22 +216,31 @@ def generar_comunicacion(state: AgentState):
         contexto += " Habla en voz alta para quien escuche."
     
     # Usamos el cerebro LLM existente para generar el diálogo
-    # Creamos un objeto dummy para compatibilidad
-    class DummyAgent:
-        def __init__(self, s):
+    # Representación activa del agente para el proceso cognitivo
+    class AgenteProcesador:
+        def __init__(self, s, modelo_ref=None):
             self.unique_id = s['agent_id']
             self.personalidad = s['personalidad']
             self.recursos = s['recursos']
             self.necesidades = s['necesidades']
             self.rol = s.get('rol', 'Ciudadano')
             self.dinero = s.get('dinero', 0)
+            self.grupo_id = s.get('grupo_id')
+            self.profesion = s.get('profesion')
+            self.experiencia = s.get('experiencia', {})
+            self.reputacion = s.get('reputacion', 1.0)
             self.objetivo_grupo = s.get('objetivo_grupo')
+            # Referencia al modelo real para acceder a leyes y economía
+            self.modelo = modelo_ref if modelo_ref else type('obj', (object,), {'facciones_leyes': {}})
             self.memoria = type('obj', (object,), {'obtener_tipo': lambda x: 'conocido', 'obtener_fuerza': lambda x: 0.5})
             
-    dummy_yo = DummyAgent(state)
-    dummy_otro = DummyAgent({'agent_id': 999, 'personalidad': {}, 'recursos': 0, 'necesidades': {}}) # Placeholder
+    # Intentamos obtener la referencia al modelo real si está disponible
+    modelo_real = state.get('modelo_instancia')
     
-    mensaje, pensamiento = cerebro_llm.generar_interaccion(dummy_yo, dummy_otro, contexto)
+    agente_yo = AgenteProcesador(state, modelo_real)
+    agente_otro = AgenteProcesador({'agent_id': 999, 'personalidad': {}, 'recursos': 0, 'necesidades': {}}) # Interlocutor
+    
+    mensaje, pensamiento = cerebro_llm.generar_interaccion(agente_yo, agente_otro, contexto)
     
     # Si hay pensamiento del LLM, lo actualizamos en el estado
     updates = {"mensaje_generado": mensaje}
@@ -258,14 +290,18 @@ class CerebroAvanzado:
             "objetivo_id": objetivo_id,
             "mensaje_generado": "",
             "info_externa": "",
-            "rol": agente.rol, # Pasar rol al cerebro
+            "rol": agente.rol,
             "mensaje_recibido": getattr(agente, 'ultimo_mensaje_recibido', None),
             "dinero": agente.dinero,
             "objetivo_grupo": agente.modelo.objetivos_grupos.get(agente.grupo_id) if agente.grupo_id else None,
             "conocimientos": agente.conocimientos,
             "planes": agente.planes,
             "privado": False,
-            "grupo_id": agente.grupo_id
+            "grupo_id": agente.grupo_id,
+            "profesion": getattr(agente, 'profesion', None),
+            "experiencia": getattr(agente, 'experiencia', {}),
+            "reputacion": getattr(agente, 'reputacion', 1.0),
+            "modelo_instancia": agente.modelo
         }
         
         resultado = cerebro_cognitivo.invoke(inputs)

@@ -119,8 +119,15 @@ class CerebroLLM:
                     - PERSONALIDAD: {str(agente_yo.personalidad)}
                     - ROL ACTUAL: {getattr(agente_yo, 'rol', 'Ciudadano')}
                     - PROFESIÓN: {getattr(agente_yo, 'profesion', 'Ninguna')}
+                    - REPUTACIÓN: {getattr(agente_yo, 'reputacion', 1.0):.2f} (1.0 = Honorable, 0.0 = Paria)
                     - EXPERIENCIA: {str(getattr(agente_yo, 'experiencia', {}))}
                     - RIQUEZA: {getattr(agente_yo, 'dinero', 0)} MundoCoins (MC)
+                    
+                    LEYES DE MI FACCIÓN ({getattr(agente_yo, 'grupo_id', 'Ninguna')}):
+                    {str(agente_yo.modelo.facciones_leyes.get(getattr(agente_yo, 'grupo_id', None), ["Ninguna ley activa aún."]))}
+                    
+                    PROPUESTAS PENDIENTES:
+                    {str([p for p in agente_yo.modelo.facciones_leyes.get("propuestas", []) if p["grupo_id"] == getattr(agente_yo, 'grupo_id', None) and p["estado"] == "pendiente"])}
                     
                     ESTADO DE TU BIENESTAR (0.0 a 10.0):
                     {str(necesidades_normalizadas)}
@@ -128,9 +135,9 @@ class CerebroLLM:
                     
                     EL DESAFÍO DE LA CIVILIZACIÓN:
                     1. FUNDAR Y ORGANIZAR: Crea facciones con misiones claras.
-                    2. ESPECIALIZARSE: Usa la acción GRADUARSE para servir a la sociedad (Médico, Comerciante, Guarda, Explorador).
-                    3. LEGISLAR Y PACTAR: Usa los diálogos para proponer reglas, alianzas y sistemas de intercambio.
-                    4. LIDERAR O SERVIR: Elige si quieres guiar a otros o ser un pilar fundamental de la comunidad.
+                    2. ESPECIALIZARSE: Usa la acción GRADUARSE para servir a la sociedad.
+                    3. LEGISLAR: Usa PROPONER_LEY para establecer reglas (ej: "Prohibido robar medicina").
+                    4. VOTAR: Usa VOTAR (ley_id, a_favor=True/False) para decidir el futuro de tu facción.
                     
                     SISTEMA DE PROFESIONES (Acción: GRADUARSE):
                     - Médico (150 MC + exp medicina >= 5): El sanador de la comunidad.
