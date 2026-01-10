@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MUNDO IA - Simulación Multiagente</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0a0b10;
+            --bg-secondary: #12131a;
+            --bg-card: rgba(255, 255, 255, 0.03);
+            --bg-card-hover: rgba(255, 255, 255, 0.06);
+            --border: rgba(255, 255, 255, 0.1);
+            --accent-primary: #7c4dff;
+            --accent-secondary: #00e676;
+            --accent-danger: #ff1744;
+            --accent-warning: #ffd600;
+            --accent-info: #2979ff;
+            --text-primary: #e0e0e0;
+            --text-secondary: #888;
+            --text-muted: #555;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: 'Outfit', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        header {
+            padding: 20px 40px;
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .status-badge {
+            padding: 8px 20px;
+            border-radius: 25px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: rgba(0, 230, 118, 0.15);
+            color: var(--accent-secondary);
+            border: 1.5px solid var(--accent-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-badge.disconnected {
+            background: rgba(255, 23, 68, 0.15);
+            color: var(--accent-danger);
+            border-color: var(--accent-danger);
+            animation: none;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.6;
+            }
+        }
+
+        .control-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 1px solid var(--border);
+        }
+
+        .control-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--accent-primary);
+            transform: translateY(-2px);
+        }
+
+        .control-btn.active {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+        }
+
+        /* Main Layout */
+        main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            grid-template-rows: 1fr 250px;
+            gap: 20px;
+            padding: 20px;
+            overflow: hidden;
+        }
+
+        /* Network Visualization */
+        #network-container {
+            grid-row: 1 / 3;
+            background: var(--bg-card);
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #network-svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .network-title {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            z-index: 10;
+        }
+
+        /* Stats Panel */
+        #stats-panel {
+            background: var(--bg-card);
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            overflow-y: auto;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.02);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--accent-primary);
+            transform: translateY(-2px);
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 600;
+        }
+
+        /* Charts Panel */
+        #charts-panel {
+            background: var(--bg-card);
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            padding: 20px;
+            position: relative;
+        }
+
+        #metrics-chart {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Log Container */
+        #log-container {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            width: 400px;
+            max-height: 300px;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(20px);
+            border-radius: 15px;
+            border: 1px solid var(--border);
+            padding: 15px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: all 0.3s ease;
+        }
+
+        #log-container.minimized {
+            max-height: 50px;
+            overflow: hidden;
+        }
+
+        .log-toggle {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 1.2rem;
+            transition: color 0.3s ease;
+        }
+
+        .log-toggle:hover {
+            color: var(--text-primary);
+        }
+
+        .log-entry {
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.03);
+            border-left: 3px solid var(--accent-primary);
+            animation: slideIn 0.3s ease-out;
+            line-height: 1.4;
+        }
+
+        .log-entry.social {
+            border-color: var(--accent-info);
+        }
+
+        .log-entry.conflict {
+            border-color: var(--accent-danger);
+        }
+
+        .log-entry.state {
+            border-color: var(--accent-secondary);
+        }
+
+        .log-entry.sistema {
+            border-color: var(--accent-warning);
+        }
+
+        .log-subtitles {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 5px;
+            font-style: italic;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        /* Agent Detail Panel */
+        #agent-detail {
+            position: fixed;
+            right: -450px;
+            top: 0;
+            width: 450px;
+            height: 100vh;
+            background: rgba(10, 11, 16, 0.95);
+            backdrop-filter: blur(20px);
+            border-left: 1px solid var(--border);
+            padding: 30px;
+            overflow-y: auto;
+            z-index: 200;
+            transition: right 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        #agent-detail.open {
+            right: 0;
+        }
+
+        .detail-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: color 0.3s ease;
+        }
+
+        .detail-close:hover {
+            color: var(--text-primary);
+        }
+
+        .detail-section {
+            margin-bottom: 25px;
+        }
+
+        .detail-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: var(--accent-primary);
+        }
+
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .detail-label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .detail-value {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .personality-bar {
+            height: 8px;
+            background: var(--bg-secondary);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+
+        .personality-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+            border-radius: 10px;
+            transition: width 0.5s ease;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* D3 Network Styles */
+        .node {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .node circle {
+            stroke-width: 2px;
+        }
+
+        .node.selected circle {
+            stroke-width: 4px;
+            filter: drop-shadow(0 0 10px currentColor);
+        }
+
+        .node text {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            fill: var(--text-primary);
+            pointer-events: none;
+        }
+
+        .link {
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
+        }
+
+        .link.amigo {
+            stroke: var(--accent-secondary);
+        }
+
+        .link.enemigo {
+            stroke: var(--accent-danger);
+        }
+
+        .link.conocido {
+            stroke: var(--text-muted);
+        }
+
+        /* Loading Animation */
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent-primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>🌐 MUNDO IA: SIMULACIÓN MULTIAGENTE</h1>
+        <div class="header-controls">
+            <div class="status-badge" id="status">CONECTANDO...</div>
+            <button class="control-btn" id="pauseBtn">⏸️ Pausar</button>
+            <button class="control-btn" id="speedBtn">⚡ Velocidad: 1x</button>
+        </div>
+    </header>
+
+    <main>
+        <div id="network-container">
+            <div class="network-title">Red de Agentes</div>
+            <svg id="network-svg"></svg>
+        </div>
+
+        <aside id="stats-panel">
+            <div class="stat-card">
+                <div class="stat-value" id="agent-count">0</div>
+                <div class="stat-label">Agentes Activos</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="step-count">0</div>
+                <div class="stat-label">Paso Actual</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="group-count">0</div>
+                <div class="stat-label">Grupos Formados</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="interaction-count">0</div>
+                <div class="stat-label">Interacciones</div>
+            </div>
+        </aside>
+
+        <div id="charts-panel">
+            <canvas id="metrics-chart"></canvas>
+        </div>
+    </main>
+
+    <div id="log-container">
+        <button class="log-toggle" id="logToggle">−</button>
+        <!-- Logs will appear here -->
+    </div>
+
+    <div id="agent-detail">
+        <button class="detail-close" id="detailClose">×</button>
+        <div id="detail-content">
+            <div class="detail-section">
+                <div class="detail-title">Selecciona un agente</div>
+                <p style="color: var(--text-secondary);">Haz clic en un nodo de la red para ver sus detalles</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // STATE MANAGEMENT
+        // ============================================
+        const state = {
+            agents: new Map(),
+            relationships: [],
+            currentStep: 0,
+            isPaused: false,
+            speed: 1,
+            selectedAgent: null,
+            interactionCount: 0,
+            metricsHistory: {
+                steps: [],
+                resources: [],
+                friends: [],
+                enemies: [],
+                groups: []
+            }
+        };
+
+        // ============================================
+        // WEBSOCKET CONNECTION
+        // ============================================
+        let ws;
+        const statusBadge = document.getElementById('status');
+
+        function connectWebSocket() {
+            ws = new WebSocket('ws://localhost:8000/ws');
+
+            ws.onopen = () => {
+                statusBadge.textContent = 'CONECTADO';
+                statusBadge.classList.remove('disconnected');
+                console.log('✅ WebSocket conectado');
+            };
+
+            ws.onclose = () => {
+                statusBadge.textContent = 'DESCONECTADO';
+                statusBadge.classList.add('disconnected');
+                console.log('❌ WebSocket desconectado');
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('❌ Error WebSocket:', error);
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+        }
+
+        function handleWebSocketMessage(data) {
+            if (state.isPaused) return;
+
+            switch (data.type) {
+                case 'log':
+                    addLog(data);
+                    parseLogForNetwork(data);
+                    break;
+                case 'stats':
+                    updateStats(data);
+                    break;
+                case 'initial_state':
+                    handleInitialState(data);
+                    break;
+                case 'relationships':
+                    handleRelationships(data);
+                    break;
+                case 'agent_state':
+                    updateAgentState(data);
+                    break;
+            }
+        }
+
+        function handleInitialState(data) {
+            console.log('📥 Estado inicial recibido:', data.agents.length, 'agentes');
+            data.agents.forEach(agent => {
+                state.agents.set(agent.id, {
+                    id: agent.id,
+                    resources: agent.resources,
+                    grupo: agent.grupo,
+                    rango: agent.rango,
+                    personalidad: agent.personalidad,
+                    necesidades: agent.necesidades
+                });
+            });
+            updateNetwork();
+        }
+
+        function handleRelationships(data) {
+            console.log('🔗 Relaciones recibidas:', data.data.length);
+            // Clear existing relationships
+            state.relationships = [];
+
+            // Add new relationships
+            data.data.forEach(rel => {
+                state.relationships.push({
+                    source: rel.source,
+                    target: rel.target,
+                    type: rel.type,
+                    strength: rel.strength
+                });
+            });
+
+            updateNetwork();
+        }
+
+        // ============================================
+        // LOG HANDLING
+        // ============================================
+        const logContainer = document.getElementById('log-container');
+        const logToggle = document.getElementById('logToggle');
+        let isLogMinimized = false;
+
+        logToggle.addEventListener('click', () => {
+            isLogMinimized = !isLogMinimized;
+            logContainer.classList.toggle('minimized', isLogMinimized);
+            logToggle.textContent = isLogMinimized ? '+' : '−';
+        });
+
+        function addLog(data) {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${data.category || ''}`;
+
+            let content = `<div>${data.message}</div>`;
+            if (data.subtitles) {
+                content += `<div class="log-subtitles">└─ ${data.subtitles}</div>`;
+            }
+
+            entry.innerHTML = content;
+            logContainer.appendChild(entry);
+
+            // Keep only last 50 logs
+            while (logContainer.children.length > 51) { // +1 for toggle button
+                logContainer.children[1].remove();
+            }
+
+            if (!isLogMinimized) {
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }
+
+            // Play TTS if available
+            if (data.tts_text) {
+                playTTS(data.tts_text);
+            }
+        }
+
+        function playTTS(text) {
+            const audio = new Audio(`/tts?text=${encodeURIComponent(text)}`);
+            audio.play().catch(e => console.log("Error al reproducir audio:", e));
+        }
+
+        // ============================================
+        // PARSE LOGS FOR NETWORK DATA
+        // ============================================
+        function parseLogForNetwork(data) {
+            const msg = data.message;
+
+            // Extract agent interactions
+            const cooperationMatch = msg.match(/Agente (\d+) ayudó a (\d+)/);
+            const conflictMatch = msg.match(/Agente (\d+) atacó a (\d+)/);
+            const socialMatch = msg.match(/Charla entre (\d+) y (\d+)/);
+
+            if (cooperationMatch) {
+                const [_, from, to] = cooperationMatch;
+                updateRelationship(parseInt(from), parseInt(to), 'amigo');
+                state.interactionCount++;
+            } else if (conflictMatch) {
+                const [_, from, to] = conflictMatch;
+                updateRelationship(parseInt(from), parseInt(to), 'enemigo');
+                state.interactionCount++;
+            } else if (socialMatch) {
+                const [_, from, to] = socialMatch;
+                updateRelationship(parseInt(from), parseInt(to), 'conocido');
+                state.interactionCount++;
+            }
+
+            // Extract agent state
+            const stateMatch = msg.match(/Agente (\d+):.*Recursos actuales: ([\d.]+)/);
+            if (stateMatch) {
+                const [_, id, resources] = stateMatch;
+                updateAgent(parseInt(id), { resources: parseFloat(resources) });
+            }
+        }
+
+        function updateAgent(id, data) {
+            if (!state.agents.has(id)) {
+                state.agents.set(id, {
+                    id,
+                    resources: 100,
+                    grupo: null,
+                    ...data
+                });
+            } else {
+                const agent = state.agents.get(id);
+                Object.assign(agent, data);
+            }
+            updateNetwork();
+        }
+
+        function updateRelationship(from, to, type) {
+            // Ensure agents exist
+            updateAgent(from, {});
+            updateAgent(to, {});
+
+            // Update or add relationship
+            const existing = state.relationships.find(r =>
+                (r.source === from && r.target === to) ||
+                (r.source === to && r.target === from)
+            );
+
+            if (existing) {
+                existing.type = type;
+            } else {
+                state.relationships.push({ source: from, target: to, type });
+            }
+
+            updateNetwork();
+        }
+
+        // ============================================
+        // STATS UPDATE
+        // ============================================
+        function updateStats(data) {
+            state.currentStep = data.step;
+            document.getElementById('step-count').textContent = data.step;
+            document.getElementById('group-count').textContent = data.groups || 0;
+            document.getElementById('agent-count').textContent = state.agents.size;
+            document.getElementById('interaction-count').textContent = state.interactionCount;
+
+            // Update metrics history
+            state.metricsHistory.steps.push(data.step);
+            state.metricsHistory.groups.push(data.groups || 0);
+
+            // Calculate friends/enemies
+            const friends = state.relationships.filter(r => r.type === 'amigo').length;
+            const enemies = state.relationships.filter(r => r.type === 'enemigo').length;
+            state.metricsHistory.friends.push(friends);
+            state.metricsHistory.enemies.push(enemies);
+
+            // Keep last 50 data points
+            if (state.metricsHistory.steps.length > 50) {
+                Object.keys(state.metricsHistory).forEach(key => {
+                    state.metricsHistory[key].shift();
+                });
+            }
+
+            updateChart();
+        }
+
+        // ============================================
+        // D3 NETWORK VISUALIZATION
+        // ============================================
+        const svg = d3.select('#network-svg');
+        const width = document.getElementById('network-container').clientWidth - 40;
+        const height = document.getElementById('network-container').clientHeight - 40;
+
+        svg.attr('width', width).attr('height', height);
+
+        const g = svg.append('g');
+
+        // Zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 4])
+            .on('zoom', (event) => {
+                g.attr('transform', event.transform);
+            });
+
+        svg.call(zoom);
+
+        let simulation = d3.forceSimulation()
+            .force('link', d3.forceLink().id(d => d.id).distance(100))
+            .force('charge', d3.forceManyBody().strength(-300))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('collision', d3.forceCollide().radius(30));
+
+        let link = g.append('g').selectAll('.link');
+        let node = g.append('g').selectAll('.node');
+
+        function updateNetwork() {
+            const nodes = Array.from(state.agents.values());
+            const links = state.relationships.map(r => ({
+                source: r.source,
+                target: r.target,
+                type: r.type
+            }));
+
+            // Update links
+            link = link.data(links, d => `${d.source.id || d.source}-${d.target.id || d.target}`);
+            link.exit().remove();
+            link = link.enter()
+                .append('line')
+                .attr('class', d => `link ${d.type}`)
+                .merge(link);
+
+            // Update nodes
+            node = node.data(nodes, d => d.id);
+            node.exit().remove();
+
+            const nodeEnter = node.enter()
+                .append('g')
+                .attr('class', 'node')
+                .call(d3.drag()
+                    .on('start', dragStarted)
+                    .on('drag', dragged)
+                    .on('end', dragEnded))
+                .on('click', (event, d) => showAgentDetail(d));
+
+            nodeEnter.append('circle')
+                .attr('r', 12)
+                .attr('fill', d => getAgentColor(d))
+                .attr('stroke', d => getAgentColor(d));
+
+            nodeEnter.append('text')
+                .attr('dy', 25)
+                .attr('text-anchor', 'middle')
+                .text(d => d.id);
+
+            node = nodeEnter.merge(node);
+
+            // Update colors
+            node.select('circle')
+                .attr('fill', d => getAgentColor(d))
+                .attr('stroke', d => getAgentColor(d));
+
+            simulation.nodes(nodes);
+            simulation.force('link').links(links);
+            simulation.alpha(0.3).restart();
+
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+        }
+
+        function getAgentColor(agent) {
+            if (!agent.resources) return '#7c4dff';
+            if (agent.resources > 80) return '#00e676';
+            if (agent.resources > 50) return '#ffd600';
+            if (agent.resources > 30) return '#ff9100';
+            return '#ff1744';
+        }
+
+        function dragStarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragEnded(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        // ============================================
+        // AGENT DETAIL PANEL
+        // ============================================
+        const agentDetail = document.getElementById('agent-detail');
+        const detailClose = document.getElementById('detailClose');
+        const detailContent = document.getElementById('detail-content');
+
+        detailClose.addEventListener('click', () => {
+            agentDetail.classList.remove('open');
+            node.classed('selected', false);
+        });
+
+        function showAgentDetail(agent) {
+            state.selectedAgent = agent;
+            agentDetail.classList.add('open');
+
+            // Highlight selected node
+            node.classed('selected', d => d.id === agent.id);
+
+            // Get relationships
+            const relationships = state.relationships.filter(r =>
+                r.source.id === agent.id || r.target.id === agent.id ||
+                r.source === agent.id || r.target === agent.id
+            );
+
+            const friends = relationships.filter(r => r.type === 'amigo').length;
+            const enemies = relationships.filter(r => r.type === 'enemigo').length;
+            const conocidos = relationships.filter(r => r.type === 'conocido').length;
+
+            // Personalidad
+            const personalidad = agent.personalidad || { extroversión: 0.5, amabilidad: 0.5, competitividad: 0.5 };
+            const necesidades = agent.necesidades || { alimento: 3, seguridad: 3, social: 3 };
+
+            detailContent.innerHTML = `
+                <div class="detail-section">
+                    <div class="detail-title">🤖 Agente #${agent.id}</div>
+                    
+                    <div class="detail-item">
+                        <span class="detail-label">Recursos</span>
+                        <span class="detail-value">${(agent.resources || 100).toFixed(1)}</span>
+                    </div>
+                    
+                    <div class="detail-item">
+                        <span class="detail-label">Grupo</span>
+                        <span class="detail-value">${agent.grupo || 'Sin grupo'}</span>
+                    </div>
+                    
+                    <div class="detail-item">
+                        <span class="detail-label">Rango</span>
+                        <span class="detail-value">${(agent.rango || 1.0).toFixed(2)}</span>
+                    </div>
+                </div>
+
+                <div class="detail-section">
+                    <div class="detail-title">🧬 Personalidad</div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <div class="detail-label">Extroversión</div>
+                        <div class="personality-bar">
+                            <div class="personality-fill" style="width: ${personalidad.extroversión * 100}%"></div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <div class="detail-label">Amabilidad</div>
+                        <div class="personality-bar">
+                            <div class="personality-fill" style="width: ${personalidad.amabilidad * 100}%"></div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <div class="detail-label">Competitividad</div>
+                        <div class="personality-bar">
+                            <div class="personality-fill" style="width: ${personalidad.competitividad * 100}%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="detail-section">
+                    <div class="detail-title">💭 Necesidades</div>
+                    
+                    <div class="detail-item">
+                        <span class="detail-label">🍎 Alimento</span>
+                        <span class="detail-value">${necesidades.alimento}/10</span>
+                    </div>
+                    
+                    <div class="detail-item">
+                        <span class="detail-label">🛡️ Seguridad</span>
+                        <span class="detail-value">${necesidades.seguridad}/10</span>
+                    </div>
+                    
+                    <div class="detail-item">
+                        <span class="detail-label">👥 Social</span>
+                        <span class="detail-value">${necesidades.social}/10</span>
+                    </div>
+                </div>
+
+                <div class="detail-section">
+                    <div class="detail-title">📊 Relaciones</div>
+                    
+                    <div class="detail-item">
+                        <span class="detail-label">🟢 Amigos</span>
+                        <span class="detail-value">${friends}</span>
+                    </div>
+                    
+                    <div class="detail-item">
+                        <span class="detail-label">🔴 Enemigos</span>
+                        <span class="detail-value">${enemies}</span>
+                    </div>
+                    
+                    <div class="detail-item">
+                        <span class="detail-label">⚪ Conocidos</span>
+                        <span class="detail-value">${conocidos}</span>
+                    </div>
+                </div>
+
+                <div class="detail-section">
+                    <div class="detail-title">💬 Análisis</div>
+                    <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.6;">
+                        Este agente tiene ${(agent.resources || 100).toFixed(1)} recursos y ha establecido 
+                        ${relationships.length} conexiones en la red social. 
+                        ${personalidad.amabilidad > 0.7 ? 'Es muy amable y cooperativo.' :
+                    personalidad.competitividad > 0.7 ? 'Es altamente competitivo.' :
+                        'Tiene un comportamiento equilibrado.'}
+                    </p>
+                </div>
+            `;
+        }
+
+        // ============================================
+        // CHARTS
+        // ============================================
+        const ctx = document.getElementById('metrics-chart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Amigos',
+                        data: [],
+                        borderColor: '#00e676',
+                        backgroundColor: 'rgba(0, 230, 118, 0.1)',
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Enemigos',
+                        data: [],
+                        borderColor: '#ff1744',
+                        backgroundColor: 'rgba(255, 23, 68, 0.1)',
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Grupos',
+                        data: [],
+                        borderColor: '#7c4dff',
+                        backgroundColor: 'rgba(124, 77, 255, 0.1)',
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: '#e0e0e0',
+                            font: { family: 'Outfit' }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#888' },
+                        grid: { color: 'rgba(255, 255, 255, 0.05)' }
+                    },
+                    y: {
+                        ticks: { color: '#888' },
+                        grid: { color: 'rgba(255, 255, 255, 0.05)' }
+                    }
+                }
+            }
+        });
+
+        function updateChart() {
+            chart.data.labels = state.metricsHistory.steps;
+            chart.data.datasets[0].data = state.metricsHistory.friends;
+            chart.data.datasets[1].data = state.metricsHistory.enemies;
+            chart.data.datasets[2].data = state.metricsHistory.groups;
+            chart.update('none');
+        }
+
+        // ============================================
+        // CONTROLS
+        // ============================================
+        const pauseBtn = document.getElementById('pauseBtn');
+        const speedBtn = document.getElementById('speedBtn');
+
+        pauseBtn.addEventListener('click', () => {
+            state.isPaused = !state.isPaused;
+            pauseBtn.textContent = state.isPaused ? '▶️ Reanudar' : '⏸️ Pausar';
+            pauseBtn.classList.toggle('active', state.isPaused);
+        });
+
+        speedBtn.addEventListener('click', () => {
+            const speeds = [1, 2, 4, 0.5];
+            const currentIndex = speeds.indexOf(state.speed);
+            state.speed = speeds[(currentIndex + 1) % speeds.length];
+            speedBtn.textContent = `⚡ Velocidad: ${state.speed}x`;
+        });
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        connectWebSocket();
+
+        // Initialize with some agents for demo
+        for (let i = 0; i < 30; i++) {
+            updateAgent(i, { resources: 100 });
+        }
+        updateNetwork();
+    </script>
+</body>
+
+</html>

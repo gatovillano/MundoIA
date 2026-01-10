@@ -1,0 +1,252 @@
+/* ============================================
+   MUNDO IA - Estilos del Dashboard
+   ============================================ */
+
+:root {
+    --bg-primary: #0a0b10;
+    --bg-secondary: #12131a;
+    --bg-card: rgba(255, 255, 255, 0.03);
+    --bg-card-hover: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.1);
+    --accent-primary: #7c4dff;
+    --accent-secondary: #00e676;
+    --accent-danger: #ff1744;
+    --accent-warning: #ffd600;
+    --accent-info: #2979ff;
+    --text-primary: #e0e0e0;
+    --text-secondary: #888;
+    --text-muted: #555;
+}
+
+/* Animaciones personalizadas */
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+}
+
+@keyframes glow {
+    0%, 100% { filter: drop-shadow(0 0 5px var(--accent-primary)); }
+    50% { filter: drop-shadow(0 0 20px var(--accent-primary)); }
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Mejoras para nodos de agentes */
+.node circle {
+    filter: drop-shadow(0 0 3px currentColor);
+    transition: all 0.3s ease;
+}
+
+.node:hover circle {
+    filter: drop-shadow(0 0 10px currentColor);
+    r: 15;
+}
+
+.node.selected circle {
+    animation: glow 2s infinite;
+}
+
+/* Mejoras para enlaces */
+.link {
+    transition: all 0.3s ease;
+}
+
+.link:hover {
+    stroke-width: 3px;
+    stroke-opacity: 1;
+}
+
+/* Tooltip para nodos */
+.node-tooltip {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.9);
+    color: var(--text-primary);
+    padding: 10px 15px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 0.85rem;
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.node-tooltip.visible {
+    opacity: 1;
+}
+
+/* Efectos de partículas de fondo */
+.particles {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.particle {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    background: var(--accent-primary);
+    border-radius: 50%;
+    opacity: 0.3;
+    animation: float 10s infinite;
+}
+
+/* Mejoras para stats cards */
+.stat-card {
+    position: relative;
+    overflow: hidden;
+}
+
+.stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    transition: left 0.5s ease;
+}
+
+.stat-card:hover::before {
+    left: 100%;
+}
+
+/* Mejoras para logs */
+.log-entry {
+    position: relative;
+    overflow: hidden;
+}
+
+.log-entry::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    width: 3px;
+    background: inherit;
+    filter: brightness(1.5);
+}
+
+/* Indicadores de estado */
+.status-indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+    animation: pulse 2s infinite;
+}
+
+.status-indicator.active {
+    background: var(--accent-secondary);
+}
+
+.status-indicator.inactive {
+    background: var(--accent-danger);
+}
+
+/* Mejoras para el panel de detalles */
+.detail-section {
+    animation: slideInRight 0.3s ease-out;
+}
+
+/* Botones con efecto ripple */
+.control-btn {
+    position: relative;
+    overflow: hidden;
+}
+
+.control-btn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+}
+
+.control-btn:active::after {
+    width: 300px;
+    height: 300px;
+}
+
+/* Mejoras para gráficos */
+#charts-panel {
+    position: relative;
+}
+
+#charts-panel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+    opacity: 0.5;
+}
+
+/* Loading spinner mejorado */
+.spinner {
+    position: relative;
+}
+
+.spinner::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 30px;
+    height: 30px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent-secondary);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    animation: spin 1s linear infinite reverse;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+    main {
+        grid-template-columns: 1fr 300px;
+    }
+    
+    #agent-detail {
+        width: 350px;
+    }
+}
+
+@media (max-width: 768px) {
+    main {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr auto auto;
+    }
+    
+    #log-container {
+        width: calc(100% - 40px);
+    }
+    
+    #agent-detail {
+        width: 100%;
+    }
+}
