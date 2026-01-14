@@ -230,7 +230,10 @@ class CerebroLLM:
             if reintentos > 0:
                 time.sleep(2)
                 return self.generar_interaccion(agente_yo, agente_otro, contexto, reintentos - 1)
-            return f"[ERROR IA: {str(e)[:20]}...]", None
+            
+            # FALLBACK: Si todo falla, usar el generador procedimental
+            print(f"⚠️ [IA FALLBACK] Usando generador procedimental para Agente {agente_yo.unique_id}")
+            return self._simular_respuesta(agente_yo, contexto)
 
     def _simular_respuesta(self, agente, contexto):
         """Generador de diálogos procedimental avanzado basado en personalidad y estado."""

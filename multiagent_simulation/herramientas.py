@@ -107,5 +107,37 @@ class HerramientasAgente:
         except Exception as e:
             return f"Error al scrapear {url}: {str(e)}"
 
+    def ejecutar_codigo_seguro(self, codigo, agente_id=None):
+        """Ejecuta código Python en un entorno restringido."""
+        self._log(f"💻 [PROGRAMMABLE REALITY] Agente {agente_id} ejecutando código...", "herramienta")
+        
+        # Diccionario de funciones permitidas (Safe globals)
+        safe_globals = {
+            "abs": abs, "min": min, "max": max, "sum": sum, "round": round,
+            "len": len, "list": list, "dict": dict, "set": set, "range": range,
+            "int": int, "float": float, "str": str, "bool": bool
+        }
+        
+        # Añadir acceso limitado al modelo si se pasa el contexto (opcional)
+        # Por ahora lo mantenemos puramente matemático/lógico para seguridad
+        
+        try:
+            # Capturar salida
+            import sys
+            from io import StringIO
+            old_stdout = sys.stdout
+            redirected_output = sys.stdout = StringIO()
+            
+            exec(codigo, {"__builtins__": safe_globals}, {})
+            
+            sys.stdout = old_stdout
+            result = redirected_output.getvalue()
+            
+            self._log(f"✅ [PROGRAMMABLE REALITY] Ejecución exitosa.", "herramienta")
+            return result if result else "Código ejecutado sin salida."
+        except Exception as e:
+            self._log(f"❌ [PROGRAMMABLE REALITY] Error: {str(e)}", "herramienta")
+            return f"Error de ejecución: {str(e)}"
+
 # Instancia global
 herramientas = HerramientasAgente()

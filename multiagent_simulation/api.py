@@ -51,6 +51,7 @@ def log_to_ws(mensaje, categoria, subtitulos, tts_text, pensamiento=None, privad
     asyncio.run_coroutine_threadsafe(
         manager.broadcast({
             "type": "log",
+            "step": modelo.paso_actual,
             "message": mensaje,
             "category": categoria,
             "subtitles": subtitulos,
@@ -86,7 +87,13 @@ def run_sim_loop():
                 "groups": len(set(a.grupo_id for a in modelo.agentes if a.grupo_id)),
                 "group_relations": {f"{k[0]}-{k[1]}": v for k, v in modelo.relaciones_grupos.items()},
                 "economy": modelo.economia,
-                "facciones_leyes": modelo.facciones_leyes
+                "facciones_leyes": modelo.facciones_leyes,
+                "infraestructura": modelo.infraestructura,
+                "metrics": {
+                    "gini": modelo.calcular_gini(),
+                    "happiness": modelo.calcular_felicidad_promedio(),
+                    "conflict_rate": modelo.track_conflictos()
+                }
             }),
             loop
         )
@@ -103,6 +110,8 @@ def run_sim_loop():
                 "profesion": getattr(a, 'profesion', None),
                 "experiencia": getattr(a, 'experiencia', {}),
                 "reputacion": getattr(a, 'reputacion', 1.0),
+                "personalidad": a.personalidad,
+                "necesidades": a.necesidades,
                 "mision_grupal": modelo.objetivos_grupos.get(a.grupo_id) if a.grupo_id else None,
                 "alianzas": a.alianzas
             })
@@ -190,7 +199,11 @@ async def reset_simulation():
     # Pausar bucle
     simulacion_activa = False
     
-    # Borrar archivo de estado
+    # Limpiar base de datos
+    if modelo.db_active:
+        modelo.db.clear_database()
+    
+    # Borrar archivo de estado (fallback)
     if os.path.exists("estado_simulacion.json"):
         os.remove("estado_simulacion.json")
     
@@ -203,7 +216,37 @@ async def reset_simulation():
     # Reanudar bucle
     simulacion_activa = True
     
-    return {"status": "success", "message": "Simulación reiniciada"}
+    return {"status": "success", "message": "Simulación reiniciada y base de datos limpiada"}
+
+from pydantic import BaseModel
+
+class SeedRequest(BaseModel):
+    lore: str
+    seed: str
+
+class EventRequest(BaseModel):
+    tipo: str
+    descripcion: str
+    duracion: int = 5
+    impacto: dict = None
+
+class SpawnRequest(BaseModel):
+    arquetipo: str = None
+
+@app.post("/architect/seed")
+async def set_seed(req: SeedRequest):
+    modelo.set_lore_and_seed(req.lore, req.seed)
+    return {"status": "success", "message": "Lore y Seed actualizados"}
+
+@app.post("/architect/event")
+async def trigger_event(req: EventRequest):
+    modelo.trigger_event(req.tipo, req.descripcion, req.duracion, req.impacto)
+    return {"status": "success", "message": f"Evento {req.tipo} iniciado"}
+
+@app.post("/architect/spawn")
+async def spawn_agent(req: SpawnRequest):
+    agente = modelo.spawn_agent(req.arquetipo)
+    return {"status": "success", "agent_id": agente.unique_id}
 
 @app.get("/tts")
 async def text_to_speech(text: str):

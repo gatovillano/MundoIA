@@ -11,6 +11,128 @@ from dotenv import load_dotenv
 import os
 import json
 from herramientas import herramientas
+import psycopg2
+from psycopg2.extras import Json
+import logging
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class DatabaseManager:
+    def __init__(self):
+        self.conn_params = {
+            "host": os.getenv("DB_HOST", "localhost"),
+            "database": os.getenv("DB_NAME", "mundoia"),
+            "user": os.getenv("DB_USER", "architect"),
+            "password": os.getenv("DB_PASS", "mundoia_secret_2026"),
+            "port": os.getenv("DB_PORT", "5434")
+        }
+        self.conn = None
+
+    def connect(self):
+        try:
+            self.conn = psycopg2.connect(**self.conn_params)
+            self.conn.autocommit = True
+            logger.info("✅ Conexión a PostgreSQL establecida.")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error conectando a PostgreSQL: {e}")
+            return False
+
+    def execute(self, query, params=None):
+        if not self.conn: return None
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, params)
+                if cur.description:
+                    return cur.fetchall()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error ejecutando query: {e}")
+            return False
+
+    def save_agent(self, agent):
+        query = """
+        INSERT INTO agentes (id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, 
+                            personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            recursos = EXCLUDED.recursos,
+            dinero = EXCLUDED.dinero,
+            grupo_id = EXCLUDED.grupo_id,
+            rol = EXCLUDED.rol,
+            profesion = EXCLUDED.profesion,
+            rango = EXCLUDED.rango,
+            reputacion = EXCLUDED.reputacion,
+            personalidad = EXCLUDED.personalidad,
+            necesidades = EXCLUDED.necesidades,
+            experiencia = EXCLUDED.experiencia,
+            conocimientos = EXCLUDED.conocimientos,
+            inventario = EXCLUDED.inventario,
+            hitos = EXCLUDED.hitos,
+            historial_etico = EXCLUDED.historial_etico;
+        """
+        params = (
+            str(agent.unique_id), agent.recursos, agent.dinero, agent.grupo_id, agent.rol,
+            agent.profesion, agent.rango, agent.reputacion, Json(agent.personalidad),
+            Json(agent.necesidades), Json(agent.experiencia), Json(agent.conocimientos),
+            Json(agent.inventario), Json(agent.hitos), Json(agent.historial_etico)
+        )
+        self.execute(query, params)
+
+    def save_memory(self, owner_id, target_id, data):
+        query = """
+        INSERT INTO memorias (agente_fuente, agente_objetivo, tipo_relacion, fuerza, recursos_percibidos, grupo_percibido)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (agente_fuente, agente_objetivo) DO UPDATE SET
+            tipo_relacion = EXCLUDED.tipo_relacion,
+            fuerza = EXCLUDED.fuerza,
+            recursos_percibidos = EXCLUDED.recursos_percibidos,
+            grupo_percibido = EXCLUDED.grupo_percibido;
+        """
+        params = (
+            str(owner_id), str(target_id), data.get('tipo'), data.get('fuerza', 0.0),
+            data.get('recursos_vistos'), data.get('grupo')
+        )
+        self.execute(query, params)
+
+    def save_world_state(self, step, lore, seed, economy):
+        query = """
+        INSERT INTO estado_mundo (paso_actual, lore, seed, precio_recurso, indice_bursatil, total_dinero)
+        VALUES (%s, %s, %s, %s, %s, %s);
+        """
+        params = (
+            step, lore, seed, economy.get('precio_recurso', 2.0),
+            economy.get('indice_bursatil', 1000.0), economy.get('total_dinero', 0.0)
+        )
+        self.execute(query, params)
+
+    def get_world_state(self):
+        query = "SELECT paso_actual, lore, seed, precio_recurso, indice_bursatil, total_dinero FROM estado_mundo ORDER BY id DESC LIMIT 1;"
+        result = self.execute(query)
+        return result[0] if result else None
+
+    def get_agents(self):
+        query = "SELECT * FROM agentes;"
+        return self.execute(query)
+
+    def get_memories(self, agent_id):
+        query = "SELECT agente_objetivo, tipo_relacion, fuerza, recursos_percibidos, grupo_percibido FROM memorias WHERE agente_fuente = %s;"
+        return self.execute(query, (str(agent_id),))
+
+    def clear_database(self):
+        """Limpia todas las tablas de la base de datos."""
+        queries = [
+            "TRUNCATE TABLE memorias CASCADE;",
+            "TRUNCATE TABLE agentes CASCADE;",
+            "TRUNCATE TABLE estado_mundo CASCADE;",
+            "TRUNCATE TABLE eventos_globales CASCADE;",
+            "TRUNCATE TABLE logs_simulacion CASCADE;"
+        ]
+        for q in queries:
+            self.execute(q)
+        logger.info("🗑️ Base de datos limpiada exitosamente.")
 
 # Cargar configuración
 load_dotenv()
@@ -116,7 +238,16 @@ class Agente:
                 otro_agente._respondiendo = True
                 # El objetivo piensa una RESPUESTA basada en el mensaje recibido
                 decision_resp, mensaje_resp, pensamiento_resp, es_privado_resp, es_grupal_resp = otro_agente.cerebro.pensar(otro_agente, objetivo_id=self.unique_id)
+                
+                # IMPORTANTE: El otro agente DEBE decir su respuesta
                 otro_agente.decir(mensaje_resp, pensamiento=pensamiento_resp, privado_para=self.unique_id if es_privado_resp else None, para_grupo=es_grupal_resp)
+                
+                # Si la respuesta fue SOCIALIZAR o COMPETIR, procesar efectos
+                if decision_resp in ["SOCIALIZAR", "COMPETIR"]:
+                    # Evitamos recursión infinita no llamando a interactuar de nuevo aquí, 
+                    # pero registramos la interacción en la memoria
+                    otro_agente.memoria.registrar_interaccion(self.unique_id, "amigo" if decision_resp == "SOCIALIZAR" else "enemigo", 0.1 if decision_resp == "SOCIALIZAR" else -0.2)
+                
                 otro_agente._respondiendo = False
                 # Limpiar mensaje tras responder
                 otro_agente.ultimo_mensaje_recibido = None
@@ -480,9 +611,26 @@ class Agente:
     def step(self):
         """Acciones que realiza el agente en un turno."""
         self.gasto_turno = 0.0 # Resetear gasto al inicio del turno
-        # 1. Identificar posibles objetivos cercanos para el contexto
+        
+        # 1. Identificar posibles objetivos (Prioridad: Respondedor > Vecinos > Azar)
         otros = [a for a in self.modelo.agentes if a.unique_id != self.unique_id]
-        objetivo_cercano = random.choice(otros) if otros else None
+        objetivo_cercano = None
+        
+        # Prioridad 1: Quien me habló recientemente
+        if self.ultimo_mensaje_recibido:
+            emisor_id = self.ultimo_mensaje_recibido['emisor']
+            objetivo_cercano = next((a for a in otros if a.unique_id == emisor_id), None)
+            
+        # Prioridad 2: Vecinos en mi memoria (amigos/conocidos)
+        if not objetivo_cercano:
+            vecinos_ids = list(self.memoria.grafo.neighbors(self.unique_id))
+            if vecinos_ids:
+                vecino_id = random.choice(vecinos_ids)
+                objetivo_cercano = next((a for a in otros if a.unique_id == vecino_id), None)
+        
+        # Prioridad 3: Azar
+        if not objetivo_cercano and otros:
+            objetivo_cercano = random.choice(otros)
         
         # 2. Pensar (LangGraph) - Pasamos el objetivo potencial
         decision, mensaje, pensamiento, es_privado, es_grupal = self.cerebro.pensar(self, objetivo_id=objetivo_cercano.unique_id if objetivo_cercano else None)
@@ -501,14 +649,12 @@ class Agente:
                 if decision == "SOCIALIZAR" and self.rol == "Líder" and random.random() > 0.5:
                     self.invitar_agente(objetivo_cercano)
                 
-                self.interactuar(objetivo_cercano, decision, mensaje_enviado=mensaje)
+                # Decir el mensaje PRIMERO
                 self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id)
-                
-        elif decision == "RECOLECTAR":
-            self.recursos += 5
-            self.necesidades["alimento"] = max(0, self.necesidades["alimento"] - 2)
-            self.modelo.log(f"  🍎 [ACCION] Agente {self.unique_id} recolecta recursos extra.", categoria="state")
-            self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id)
+                # Luego interactuar (esto dispara la respuesta del otro)
+                self.interactuar(objetivo_cercano, decision, mensaje_enviado=mensaje)
+            else:
+                self.decir(mensaje, pensamiento=pensamiento)
 
         elif decision == "FUNDAR_GRUPO":
             # El mensaje del LLM suele ser la propuesta de misión
@@ -637,6 +783,14 @@ class Agente:
                 self.modelo.log(f"  🎭 [ACCION] Agente {self.unique_id} buscó entretenimiento básico.", categoria="state")
             self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
 
+        elif decision.startswith("CONSTRUIR:"):
+            tipo_edif = decision.split(":")[1]
+            exito, msg = self.modelo.construir_edificio(self, tipo_edif)
+            if exito:
+                self.decir(f"🏗️ ¡He construido un {tipo_edif}! {mensaje}", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+            else:
+                self.decir(f"⚠️ Intenté construir un {tipo_edif} pero: {msg}", pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
+
         elif decision == "GRADUARSE":
             # El mensaje del LLM debería contener la profesión deseada o la deducimos de su experiencia
             profesion_objetivo = None
@@ -677,6 +831,10 @@ class Agente:
                     self.decir(f"🗳️ He votado {voto_str} en la propuesta {ley_id}.", pensamiento=pensamiento, para_grupo=True)
             else:
                 self.decir("Quería votar, pero no encontré una propuesta clara.", pensamiento=pensamiento, privado_para=destinatario_id)
+
+        elif decision == "EJECUTAR_CODIGO":
+            self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id)
+            # El resultado ya se procesó en el cerebro y se incluyó en el mensaje/pensamiento
 
         # Lógica de respuesta a invitaciones
         if self.ultimo_mensaje_recibido and "INVITACION_GRUPO" in str(self.ultimo_mensaje_recibido.get('contenido')):
@@ -735,8 +893,133 @@ class ModeloRelacional:
         self.facciones_leyes = {} # {grupo_id: [leyes]}
         self.grupos_creados_este_paso = 0 # Límite de 2 por turno
         
+        # --- PERSISTENCIA POSTGRESQL ---
+        self.db = DatabaseManager()
+        self.db_active = self.db.connect()
+        
+        # --- SISTEMA DE INFRAESTRUCTURA ---
+        self.infraestructura = [] # Lista de dicts: {"tipo": T, "grupo_id": G, "pos": P, "paso_creacion": S}
+        
+        # --- MUNDO ATRIBUTOS ---
+        self.lore = ""
+        self.seed = ""
+        self.eventos_activos = []
+        
         # Cargar estado previo si existe
         self.cargar_estado()
+
+    def step(self):
+        """Avanza un paso en la simulación."""
+        self.paso_actual += 1
+        self.grupos_creados_este_paso = 0
+        
+        # Aplicar efectos de infraestructura
+        for edif in self.infraestructura:
+            beneficiarios = [a for a in self.agentes if a.grupo_id == edif["grupo_id"]]
+            for b in beneficiarios:
+                if edif["tipo"] == "Hospital":
+                    b.necesidades["salud"] = min(10.0, b.necesidades["salud"] + 0.5)
+                elif edif["tipo"] == "Comedor":
+                    b.necesidades["alimento"] = max(0.0, b.necesidades["alimento"] - 0.2)
+                elif edif["tipo"] == "Centro de Ocio":
+                    b.necesidades["entretenimiento"] = max(0.0, b.necesidades["entretenimiento"] - 0.3)
+
+        # Actualizar agentes
+        for agente in self.agentes:
+            agente.actualizar_estado()
+            agente.step()
+        
+        # Economía global
+        self.actualizar_economia()
+        
+        # Guardar estado si la DB está activa
+        if self.db_active:
+            self.db.save_world_state(self.paso_actual, self.lore, self.seed, self.economia)
+            for a in self.agentes:
+                self.db.save_agent(a)
+        
+        # Guardar en archivo cada 10 pasos (respaldo)
+        if self.paso_actual % 10 == 0:
+            self.guardar_estado()
+
+    def construir_edificio(self, agente, tipo):
+        """Permite a un agente construir una infraestructura para su grupo."""
+        costos = {
+            "Hospital": {"dinero": 100, "recursos": 50},
+            "Comedor": {"dinero": 80, "recursos": 40},
+            "Centro de Ocio": {"dinero": 70, "recursos": 30}
+        }
+        
+        if tipo not in costos:
+            return False, "Tipo de edificio no válido."
+        
+        costo = costos[tipo]
+        if agente.dinero >= costo["dinero"] and agente.recursos >= costo["recursos"]:
+            agente.dinero -= costo["dinero"]
+            agente.recursos -= costo["recursos"]
+            
+            nuevo_edif = {
+                "id": f"EDIF-{len(self.infraestructura) + 1}",
+                "tipo": tipo,
+                "grupo_id": agente.grupo_id,
+                "constructor": agente.unique_id,
+                "paso_creacion": self.paso_actual
+            }
+            self.infraestructura.append(nuevo_edif)
+            self.log(f"🏗️ [CONSTRUCCION] Agente {agente.unique_id} ha construido un {tipo} para la Facción {agente.grupo_id}!", categoria="sistema")
+            return True, f"¡{tipo} construido con éxito!"
+        
+        return False, "No tienes suficientes recursos o dinero."
+        
+    def set_lore_and_seed(self, lore, seed):
+        self.lore = lore
+        self.seed = seed
+        self.log(f"🌍 [MUNDO] Lore actualizado: {lore[:50]}...", categoria="sistema")
+
+    def get_agent_by_id(self, agent_id):
+        """Busca un agente por su ID único."""
+        return next((a for a in self.agentes if str(a.unique_id) == str(agent_id)), None)
+
+    def trigger_event(self, tipo, descripcion, duracion=5, impacto=None):
+        evento = {
+            "tipo": tipo,
+            "descripcion": descripcion,
+            "paso_inicio": self.paso_actual,
+            "pasos_restantes": duracion,
+            "impacto": impacto or {}
+        }
+        self.eventos_activos.append(evento)
+        self.log(f"🌪️ [EVENTO GLOBAL] ¡Ha comenzado: {tipo}! {descripcion}", categoria="sistema")
+        
+        # Guardar en DB si está activa
+        if self.db_active:
+            query = "INSERT INTO eventos_globales (tipo, descripcion, paso_inicio, duracion, impacto) VALUES (%s, %s, %s, %s, %s)"
+            self.db.execute(query, (tipo, descripcion, self.paso_actual, duracion, Json(impacto or {})))
+
+    def spawn_agent(self, arquetipo=None):
+        """Spawnea un nuevo agente con un arquetipo específico."""
+        nuevo_id = f"A{len(self.agentes)}"
+        
+        personalidad = None
+        if arquetipo == "Merchant":
+            personalidad = {"extroversión": 0.8, "amabilidad": 0.7, "competitividad": 0.6, "curiosidad": 0.5, "lealtad": 0.4, "prudencia": 0.6, "hostilidad": 0.1}
+        elif arquetipo == "Warrior":
+            personalidad = {"extroversión": 0.4, "amabilidad": 0.2, "competitividad": 0.9, "curiosidad": 0.3, "lealtad": 0.8, "prudencia": 0.4, "hostilidad": 0.7}
+        elif arquetipo == "Scientist":
+            personalidad = {"extroversión": 0.2, "amabilidad": 0.5, "competitividad": 0.3, "curiosidad": 0.9, "lealtad": 0.5, "prudencia": 0.8, "hostilidad": 0.1}
+        
+        nuevo_agente = Agente(nuevo_id, self, personalidad=personalidad)
+        if arquetipo:
+            nuevo_agente.profesion = arquetipo
+            nuevo_agente.hitos.append(f"Spawned as {arquetipo}")
+            
+        self.agentes.append(nuevo_agente)
+        self.log(f"✨ [SPAWNER] Nuevo agente {nuevo_id} ha entrado al mundo como {arquetipo or 'Ciudadano'}.", categoria="sistema")
+        
+        if self.db_active:
+            self.db.save_agent(nuevo_agente)
+            
+        return nuevo_agente
 
         # Si no se cargaron agentes (primera vez), los creamos
         if not self.agentes_cargados:
@@ -748,6 +1031,7 @@ class ModeloRelacional:
     def log(self, mensaje, categoria="info", subtitulos=None, tts_text=None, pensamiento=None, privado_para=None):
         """Envía un log al callback o a la terminal y lo guarda en el historial."""
         log_entry = {
+            "paso": self.paso_actual,
             "mensaje": mensaje,
             "categoria": categoria,
             "subtitulos": subtitulos,
@@ -807,7 +1091,14 @@ class ModeloRelacional:
             self.formar_grupos()
             self.asignar_roles_consenso()
 
+        # Ejecutar el paso de cada agente
+        self.ejecutar_paso_agentes()
+
         # Registrar métricas globales
+        if len(self.agentes) == 0:
+            # Si no hay agentes, no calcular métricas
+            return
+            
         recursos_totales = sum(a.recursos for a in self.agentes)
         promedio_recursos = recursos_totales / len(self.agentes)
         
@@ -825,9 +1116,41 @@ class ModeloRelacional:
             "recursos_promedio": promedio_recursos,
             "amigos_total": num_amigos // 2,
             "enemigos_total": num_enemigos // 2,
-            "num_grupos": len(set(a.grupo_id for a in self.agentes if a.grupo_id is not None))
+            "num_grupos": len(set(a.grupo_id for a in self.agentes if a.grupo_id is not None)),
+            "gini": self.calcular_gini(),
+            "felicidad": self.calcular_felicidad_promedio(),
+            "conflictos": self.track_conflictos()
         })
 
+    def calcular_gini(self):
+        """Calcula el coeficiente de Gini para la desigualdad de recursos."""
+        recursos = sorted([a.recursos + a.dinero for a in self.agentes])
+        n = len(recursos)
+        if n == 0 or sum(recursos) == 0: return 0
+        
+        # Fórmula de Gini: (2 * sum(i * x_i) / (n * sum(x_i))) - (n + 1) / n
+        suma_ponderada = sum((i + 1) * x for i, x in enumerate(recursos))
+        suma_total = sum(recursos)
+        gini = (2 * suma_ponderada / (n * suma_total)) - (n + 1) / n
+        return round(max(0, min(1, gini)), 3)
+
+    def calcular_felicidad_promedio(self):
+        """Calcula la felicidad promedio basada en la satisfacción de necesidades."""
+        felicidades = []
+        for a in self.agentes:
+            # Felicidad = 10 - promedio de necesidades (0-10)
+            nec = a.necesidades
+            promedio_nec = sum([nec.get(k, 0) for k in ["alimento", "social", "seguridad", "descanso", "entretenimiento"]]) / 5
+            felicidad = max(0, 10 - promedio_nec)
+            felicidades.append(felicidad)
+        return round(sum(felicidades) / len(felicidades), 2) if felicidades else 0
+
+    def track_conflictos(self):
+        """Retorna la tasa de conflictos reciente (últimos logs)."""
+        conflictos = [l for l in self.historial_logs[-20:] if l['categoria'] == 'conflict']
+        return len(conflictos)
+
+    def ejecutar_paso_agentes(self):
         # Ejecutar el paso de cada agente
         # Mezclamos el orden para evitar sesgos de prioridad
         agentes_shuffled = list(self.agentes)
@@ -843,8 +1166,8 @@ class ModeloRelacional:
                 amigos = [n for n in agente.memoria.grafo.neighbors(agente.unique_id) 
                           if agente.memoria.obtener_tipo(n) == "amigo"]
                 for id_amigo in amigos:
-                    otro = self.agentes[id_amigo]
-                    if otro.grupo_id is not None:
+                    otro = self.get_agent_by_id(id_amigo)
+                    if otro and otro.grupo_id is not None:
                         agente.grupo_id = otro.grupo_id
                         break
                 else:
@@ -854,7 +1177,9 @@ class ModeloRelacional:
                         agente.grupo_id = nuevo_id
                         self.grupos_creados_este_paso += 1
                         for id_amigo in amigos:
-                            self.agentes[id_amigo].grupo_id = nuevo_id
+                            amigo_obj = self.get_agent_by_id(id_amigo)
+                            if amigo_obj:
+                                amigo_obj.grupo_id = nuevo_id
 
     def ejecutar(self, pasos=50):
         print("\n" + "═"*60)
@@ -929,15 +1254,16 @@ class ModeloRelacional:
         print("----------------------------\n")
 
     def guardar_estado(self):
-        """Guarda el estado actual de todos los agentes en un archivo JSON."""
-        datos = {
+        """Guarda el estado actual en JSON (fallback) y PostgreSQL."""
+        # 1. Guardar en JSON (Fallback)
+        datos_json = {
             "paso_actual": self.paso_actual,
             "objetivos_grupos": self.objetivos_grupos,
             "datos_estadisticos": self.datos,
             "agentes": []
         }
         for a in self.agentes:
-            datos["agentes"].append({
+            datos_json["agentes"].append({
                 "id": a.unique_id,
                 "recursos": a.recursos,
                 "dinero": a.dinero,
@@ -957,15 +1283,84 @@ class ModeloRelacional:
                 "memoria_grafica": a.memoria.exportar_datos()
             })
         
-        datos["economia"] = self.economia
-        datos["relaciones_grupos"] = {f"{k[0]}-{k[1]}": v for k, v in self.relaciones_grupos.items()}
-        datos["historial_logs"] = self.historial_logs
+        datos_json["economia"] = self.economia
+        datos_json["relaciones_grupos"] = {f"{k[0]}-{k[1]}": v for k, v in self.relaciones_grupos.items()}
+        datos_json["historial_logs"] = self.historial_logs
         
         with open("estado_simulacion.json", "w") as f:
-            json.dump(datos, f, indent=4)
+            json.dump(datos_json, f, indent=4)
+
+        # 2. Guardar en PostgreSQL (Si está activo)
+        if self.db_active:
+            try:
+                # Guardar estado del mundo
+                self.db.save_world_state(self.paso_actual, getattr(self, 'lore', ''), getattr(self, 'seed', ''), self.economia)
+                
+                # Guardar agentes y sus memorias
+                for a in self.agentes:
+                    self.db.save_agent(a)
+                    # Guardar relaciones de memoria
+                    mem_data = a.memoria.exportar_datos()
+                    for edge in mem_data.get('aristas', []):
+                        # Solo guardamos relaciones que parten del agente
+                        if edge['u'] == a.unique_id:
+                            self.db.save_memory(a.unique_id, edge['v'], edge['data'])
+                
+                logger.info(f"💾 [DB] Estado guardado en PostgreSQL (Paso {self.paso_actual})")
+            except Exception as e:
+                logger.error(f"❌ Error guardando en DB: {e}")
 
     def cargar_estado(self):
-        """Carga el estado desde el archivo JSON si existe."""
+        """Carga el estado desde PostgreSQL (prioridad) o JSON (fallback)."""
+        # 1. Intentar cargar desde PostgreSQL
+        if self.db_active:
+            try:
+                world_state = self.db.get_world_state()
+                if world_state:
+                    self.paso_actual, self.lore, self.seed, precio, indice, total_dinero = world_state
+                    self.economia["indice_bursatil"] = indice
+                    self.economia["total_dinero"] = total_dinero
+                    self.precio_recurso_actual = precio
+                    
+                    agents_data = self.db.get_agents()
+                    self.agentes = []
+                    for row in agents_data:
+                        # row mapping based on schema: id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico
+                        a_id, rec, din, g_id, rol, prof, ran, rep, pers, nec, exp, con, inv, hitos, etico, _ = row
+                        a = Agente(a_id, self)
+                        a.recursos = rec
+                        a.dinero = din
+                        a.grupo_id = g_id
+                        a.rol = rol
+                        a.profesion = prof
+                        a.rango = ran
+                        a.reputacion = rep
+                        a.personalidad = pers
+                        a.necesidades = nec
+                        a.experiencia = exp
+                        a.conocimientos = con
+                        a.inventario = inv
+                        a.hitos = hitos
+                        a.historial_etico = etico
+                        
+                        # Cargar memorias
+                        memories = self.db.get_memories(a_id)
+                        mem_dict = {"nodos": [{"id": a_id, "data": {"tipo": "yo"}}], "aristas": []}
+                        for m_row in memories:
+                            target_id, tipo, fuerza, rec_v, grp_v = m_row
+                            mem_dict["nodos"].append({"id": target_id, "data": {"tipo": tipo, "recursos_vistos": rec_v, "grupo": grp_v}})
+                            mem_dict["aristas"].append({"u": a_id, "v": target_id, "data": {"tipo": tipo, "fuerza": fuerza}})
+                        
+                        a.memoria.cargar_datos(mem_dict)
+                        self.agentes.append(a)
+                    
+                    self.agentes_cargados = True
+                    logger.info(f"💾 [DB] Estado cargado desde PostgreSQL (Paso {self.paso_actual})")
+                    return
+            except Exception as e:
+                logger.error(f"❌ Error cargando desde DB: {e}")
+
+        # 2. Fallback a JSON
         if os.path.exists("estado_simulacion.json"):
             try:
                 with open("estado_simulacion.json", "r") as f:
@@ -1022,9 +1417,9 @@ class ModeloRelacional:
                     except: pass
 
                 self.agentes_cargados = True
-                self.log(f"💾 [SISTEMA] Estado cargado desde el paso {self.paso_actual}.", categoria="sistema")
+                self.log(f"💾 [SISTEMA] Estado cargado desde JSON (Paso {self.paso_actual}).", categoria="sistema")
             except Exception as e:
-                self.log(f"⚠️ [ERROR] No se pudo cargar el estado: {e}", categoria="sistema")
+                self.log(f"⚠️ [ERROR] No se pudo cargar el estado desde JSON: {e}", categoria="sistema")
                 self.agentes_cargados = False
 
     def asignar_roles_consenso(self):

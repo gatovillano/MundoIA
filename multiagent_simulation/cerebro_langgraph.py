@@ -120,20 +120,32 @@ def razonar_accion(state: AgentState):
             
     # 3. ACCIONES ESTRATÉGICAS Y SOCIALES (Estado estable)
     else:
-        if r < 0.15: accion = "PLANIFICAR"
-        elif r < 0.25: accion = "DEBATIR"
-        elif r < 0.35 and state.get('conocimientos'): accion = "COMPARTIR_INFO"
-        elif r < 0.45 and state['dinero'] > 50: accion = "INVERTIR"
+        # Prioridad de Construcción: Si tiene dinero y recursos, y una necesidad alta
+        if state['dinero'] > 120 and state['recursos'] > 60 and state.get('grupo_id'):
+            if state['necesidades'].get('salud', 10) < 5 and r < 0.4:
+                accion = "CONSTRUIR:Hospital"
+            elif state['necesidades'].get('alimento', 0) > 4 and r < 0.3:
+                accion = "CONSTRUIR:Comedor"
+            elif state['necesidades'].get('entretenimiento', 0) > 4 and r < 0.3:
+                accion = "CONSTRUIR:Centro de Ocio"
+            else:
+                accion = "SOCIALIZAR" # Fallback si no decide construir
+        elif r < 0.20: accion = "PLANIFICAR"
+        elif r < 0.35: accion = "DEBATIR"
+        elif r < 0.45 and state.get('conocimientos'): accion = "COMPARTIR_INFO"
+        elif r < 0.50 and state['dinero'] > 50: accion = "INVERTIR"
         elif r < 0.55: accion = "BUSCAR_INFO"
         elif r < 0.60 and state['recursos'] > 50: accion = "FUNDAR_GRUPO" 
-        elif r < 0.70 and state['dinero'] > 100: accion = "MEJORAR_SEGURIDAD"
-        elif r < 0.80 and comp > 0.7: accion = "COMPETIR" 
-        elif r < 0.85 and amab > 0.6: 
+        elif r < 0.65 and state['dinero'] > 100: accion = "MEJORAR_SEGURIDAD"
+        elif r < 0.75 and comp > 0.7: accion = "COMPETIR" 
+        elif r < 0.80 and amab > 0.6: 
             if state.get("grupo_id"):
                 accion = "INVITAR_A_GRUPO"
             else:
                 accion = "FORMAR_ALIANZA"
-        elif r < 0.95: accion = "SOCIALIZAR"
+        elif r < 0.85 and state['personalidad'].get('curiosidad', 0.5) > 0.7:
+            accion = "EJECUTAR_CODIGO"
+        elif r < 0.98: accion = "SOCIALIZAR" # AUMENTADO: Mucho más social
         else: accion = "RECOLECTAR"
         
     # Decidir si es PRIVADO o GRUPAL
@@ -145,6 +157,7 @@ def razonar_accion(state: AgentState):
     elif accion in ["PLANIFICAR", "COMPARTIR_INFO"] and (comp > 0.6 or r < 0.5):
         privado = True
         
+    print(f"🤖 [DEBUG] Agente {state['agent_id']} decidió: {accion} (r={r:.2f})")
     return {"decision": accion, "privado": privado, "es_grupal": es_grupal}
 
 def ejecutar_herramientas(state: AgentState):
@@ -199,6 +212,11 @@ def ejecutar_herramientas(state: AgentState):
     elif state['decision'] == "DEBATIR":
         temas = ["economía", "seguridad", "expansión", "ética"]
         return {"info_externa": f"DEBATE_SOBRE:{random.choice(temas)}"}
+    elif state['decision'] == "EJECUTAR_CODIGO":
+        # El agente decide qué código ejecutar. Por ahora un ejemplo simple.
+        codigo_ejemplo = "print(sum([1, 2, 3, 4, 5]))"
+        info = herramientas.ejecutar_codigo_seguro(codigo_ejemplo, agente_id=agent_id)
+        return {"info_externa": f"RESULTADO_CODIGO: {info}"}
     
     return {"info_externa": ""}
 
@@ -252,6 +270,7 @@ def generar_comunicacion(state: AgentState):
         updates["privado"] = True
         updates["mensaje_generado"] = mensaje.replace("[PRIVADO]", "").strip()
         
+    print(f"💬 [DEBUG] Agente {state['agent_id']} mensaje: {updates['mensaje_generado'][:50]}...")
     return updates
 
 # Construcción del Grafo Cognitivo
