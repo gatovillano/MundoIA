@@ -136,26 +136,33 @@ class CerebroLLM:
                     EL DESAFÍO DE LA CIVILIZACIÓN:
                     1. FUNDAR Y ORGANIZAR: Crea facciones con misiones claras.
                     2. ESPECIALIZARSE: Usa la acción GRADUARSE para servir a la sociedad.
-                    3. LEGISLAR: Usa PROPONER_LEY para establecer reglas (ej: "Prohibido robar medicina").
-                    4. VOTAR: Usa VOTAR (ley_id, a_favor=True/False) para decidir el futuro de tu facción.
+                    3. LEGISLAR: Usa PROPONER_LEY para establecer reglas.
+                    4. VOTAR: Decide el futuro de tu facción.
                     
-                    SISTEMA DE PROFESIONES (Acción: GRADUARSE):
-                    - Médico (150 MC + exp medicina >= 5): El sanador de la comunidad.
-                    - Comerciante (200 MC + exp comercio >= 5): El motor de la economía.
-                    - Guarda (100 MC + exp combate >= 3): El protector del orden.
-                    - Explorador (120 MC + exp exploracion >= 5): El descubridor de nuevos horizontes.
+                    REALIDAD NARRATIVA (LORE):
+                    {agente_yo.modelo.lore if hasattr(agente_yo.modelo, 'lore') else 'Ninguna realidad definida aún.'}
                     
+                    INSTRUCCIÓN NARRATIVA:
+                    Tus diálogos NO deben ser genéricos. Deban estar profundamente influenciados por el LORE anterior. 
+                    Si el lore dice que el mundo es ciberpunk, usa jerga técnica. Si es fantasía, habla de magia. 
+                    Menciona elementos del lore en tus mensajes públicos.
+                    
+                    INSTRUCCIÓN DE SUPERVIVENCIA CRÍTICA:
+                    Si tu SALUD (Health) es menor a 6.0 o tu HAMBRE (Hambre) es mayor a 5.0, tu PRIORIDAD #1 ABSOLUTA DEBE SER SOBREVIVIR. 
+                    Ignora la política, la socialización y el comercio de lujo. Busca comida (RECOLECTAR), descansa o ve a un Hospital inmediatamente. 
+                    No seas "valiente" si estás muriendo. Un agente muerto no puede construir civilizaciones.
+
                     FORMATO DE RESPUESTA OBLIGATORIO:
                     Debes responder en este formato exacto:
                     
-                    PENSAMIENTO: [Tu reflexión interna: analiza cómo tu acción actual contribuye a tu supervivencia Y a la formación de la sociedad. ¿Qué rol quieres jugar en esta nueva era?]
-                    MENSAJE: [Tu mensaje público, máximo 30 palabras. Debe sonar como alguien que está construyendo una civilización: propone, negocia, lidera o ayuda]
+                    PENSAMIENTO: [Tu reflexión interna: analiza tu supervivencia, tu rol social y cómo el lore actual afecta tu visión del mundo.]
+                    MENSAJE: [Tu mensaje público (máximo 30 palabras). Cita elementos del lore y sé fiel a tu personalidad.]
                     
                     REGLAS DE ORO:
                     - El PENSAMIENTO es tu estrategia privada para el futuro de la civilización.
                     - El MENSAJE es tu legado público.
                     - PRIORIZA la profesionalización (GRADUARSE) para ganar estatus y utilidad.
-                    - Si un estado está bajo, atiéndelo, pero no olvides tu visión a largo plazo.""",
+                    - SI TU VIDA CORRE PELIGRO, DI QUE ESTÁS BUSCANDO RECURSOS PARA SOBREVIVIR EN TU MENSAJE.""",
                 },
                 {
                     "role": "user", 

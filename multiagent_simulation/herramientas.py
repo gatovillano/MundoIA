@@ -115,7 +115,8 @@ class HerramientasAgente:
         safe_globals = {
             "abs": abs, "min": min, "max": max, "sum": sum, "round": round,
             "len": len, "list": list, "dict": dict, "set": set, "range": range,
-            "int": int, "float": float, "str": str, "bool": bool
+            "int": int, "float": float, "str": str, "bool": bool, "print": print,
+            "any": any, "all": all, "sorted": sorted, "type": type
         }
         
         # Añadir acceso limitado al modelo si se pasa el contexto (opcional)
@@ -132,6 +133,10 @@ class HerramientasAgente:
             
             sys.stdout = old_stdout
             result = redirected_output.getvalue()
+            
+            # Truncar resultado para evitar saturar el frontend/LLM
+            if len(result) > 1000:
+                result = result[:1000] + "\n... [Resultado truncado por longitud]"
             
             self._log(f"✅ [PROGRAMMABLE REALITY] Ejecución exitosa.", "herramienta")
             return result if result else "Código ejecutado sin salida."

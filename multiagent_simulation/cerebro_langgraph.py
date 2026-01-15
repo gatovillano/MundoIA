@@ -30,7 +30,11 @@ class AgentState(TypedDict):
     profesion: Optional[str]
     experiencia: Dict[str, int]
     reputacion: float
+    civilizacion_id: Optional[str]
+    x: int
+    y: int
     modelo_instancia: Any # Referencia al objeto ModeloRelacional real
+    lore: str # Contexto global del mundo
 
 
 def percibir_necesidades(state: AgentState):
@@ -81,7 +85,18 @@ def razonar_accion(state: AgentState):
     - FUNDAR_GRUPO (si tienes alto rango y quieres liderar)
     - COMERCIAR (si tienes dinero y necesitas recursos o viceversa)
     - MEJORAR_SEGURIDAD (si tienes dinero y quieres protección)
+    - CONSTRUIR:[Tipo] (Ej: Hospital, Granja, Comisaría. Requiere dinero y experiencia/profesión específica)
     
+    CAPACIDADES DE CONSTRUCCION:
+    - Si eres Médico o tienes XP Medicina: Hospital
+    - Si tienes XP Agricultura: Granja
+    - Si tienes XP Ingenieria: Centro de Recarga
+    - Si tienes mucha Amabilidad: Centro Comunitario
+    - Si eres Guarda o tienes XP Combate: Comisaría
+    - Otros: Centro de Descanso (Básico)
+    
+    CONTEXTO DEL MUNDO (LORE): {state.get('lore', 'Un mundo de agentes IA en simulación.')}
+
     Responde SOLO con la palabra de la acción.
     """
     
@@ -97,14 +112,18 @@ def razonar_accion(state: AgentState):
     
     r = random.random()
     
-    # 1. PRIORIDAD ABSOLUTA: SUPERVIVENCIA (Hambre alta)
-    if state['necesidades'].get('alimento', 0) > 7.0:
-        if state['dinero'] > 20 and r < 0.5:
+    # 1. PRIORIDAD ABSOLUTA: SUPERVIVENCIA (Hambre o Salud Crítica)
+    hambre = state['necesidades'].get('alimento', 0)
+    salud = state['necesidades'].get('salud', 10)
+    
+    if hambre > 5.0 or salud < 6.0:
+        if state['dinero'] > 15 and r < 0.6:
             accion = "COMERCIAR"
-        elif comp > 0.8 and r < 0.4: # Agentes muy competitivos prefieren robar si tienen hambre
+        elif comp > 0.8 and r < 0.3: # Agentes competitivos pueden intentar robar si están desesperados
             accion = "COMPETIR"
         else:
             accion = "RECOLECTAR"
+        print(f"🚨 [MODO SUPERVIVENCIA] Agente {state['agent_id']} priorizando {accion} debido a Hambre: {hambre:.1f}/Salud: {salud:.1f}")
             
     # 2. REACCIÓN A MENSAJES (Si no hay hambre extrema)
     elif state.get('mensaje_recibido'):
@@ -130,7 +149,8 @@ def razonar_accion(state: AgentState):
                 accion = "CONSTRUIR:Centro de Ocio"
             else:
                 accion = "SOCIALIZAR" # Fallback si no decide construir
-        elif r < 0.20: accion = "PLANIFICAR"
+        elif r < 0.15: accion = "MOVER" # Nueva acción de movimiento
+        elif r < 0.25: accion = "PLANIFICAR"
         elif r < 0.35: accion = "DEBATIR"
         elif r < 0.45 and state.get('conocimientos'): accion = "COMPARTIR_INFO"
         elif r < 0.50 and state['dinero'] > 50: accion = "INVERTIR"
@@ -216,7 +236,7 @@ def ejecutar_herramientas(state: AgentState):
         # El agente decide qué código ejecutar. Por ahora un ejemplo simple.
         codigo_ejemplo = "print(sum([1, 2, 3, 4, 5]))"
         info = herramientas.ejecutar_codigo_seguro(codigo_ejemplo, agente_id=agent_id)
-        return {"info_externa": f"RESULTADO_CODIGO: {info}"}
+        return {"info_externa": f"--- RESULTADO_EJECUCION_CODIGO ---\n{info}\n--- FIN_RESULTADO ---"}
     
     return {"info_externa": ""}
 
@@ -232,6 +252,8 @@ def generar_comunicacion(state: AgentState):
         contexto += f" Háblale al Agente {state['objetivo_id']}."
     else:
         contexto += " Habla en voz alta para quien escuche."
+    
+    contexto += f"\nAMBIENTE GLOBAL (LORE): {state.get('lore', '')}\n"
     
     # Usamos el cerebro LLM existente para generar el diálogo
     # Representación activa del agente para el proceso cognitivo
@@ -260,10 +282,12 @@ def generar_comunicacion(state: AgentState):
     
     mensaje, pensamiento = cerebro_llm.generar_interaccion(agente_yo, agente_otro, contexto)
     
-    # Si hay pensamiento del LLM, lo actualizamos en el estado
+    # Si hay pensamiento del LLM, lo actualizamos en el estado y lo loggeamos
     updates = {"mensaje_generado": mensaje}
     if pensamiento:
         updates["pensamiento_actual"] = pensamiento
+        if modelo_real:
+            modelo_real.log(f"[MENTAL] Agente {state['agent_id']}: {pensamiento}", categoria="pensamiento")
     
     # Si el mensaje empieza con [PRIVADO] o la decisión lo marcó, forzar privado
     if mensaje.startswith("[PRIVADO]") or state.get('privado'):
@@ -320,7 +344,11 @@ class CerebroAvanzado:
             "profesion": getattr(agente, 'profesion', None),
             "experiencia": getattr(agente, 'experiencia', {}),
             "reputacion": getattr(agente, 'reputacion', 1.0),
-            "modelo_instancia": agente.modelo
+            "civilizacion_id": getattr(agente, 'civilizacion_id', None),
+            "x": getattr(agente, 'x', 0),
+            "y": getattr(agente, 'y', 0),
+            "modelo_instancia": agente.modelo,
+            "lore": getattr(agente.modelo, 'lore', "")
         }
         
         resultado = cerebro_cognitivo.invoke(inputs)

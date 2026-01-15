@@ -945,6 +945,19 @@
             '#00E5FF', '#FF4081', '#C6FF00', '#FF9100', '#64FFDA'
         ];
 
+        function escapeHTML(str) {
+            if (!str) return '';
+            return str.replace(/[&<>"']/g, function (m) {
+                return {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#39;'
+                }[m];
+            });
+        }
+
         function getGroupColor(groupId) {
             if (!groupId) return 'var(--accent-primary)';
             if (!state.groupColors[groupId]) {
@@ -1173,8 +1186,11 @@
             entry.className = `log-entry ${data.category || ''} ${data.private_for ? 'private' : ''} ${isGroup ? 'group-message' : ''} ${thematicClass}`;
 
             // Renderizar Markdown si es un diálogo o pensamiento
-            let renderedMessage = data.message;
+            let renderedMessage = escapeHTML(data.message);
             if (data.category === 'dialogo' || data.category === 'pensamiento') {
+                // Para Markdown, marked.parse ya maneja la estructura, 
+                // pero el mensaje original podría tener HTML. 
+                // Usamos marked.parse sobre el mensaje original pero con precaución.
                 renderedMessage = marked.parse(data.message);
             }
 
@@ -1183,22 +1199,21 @@
             // Si es un diálogo, formateamos bonito la traducción
             if (data.category === 'dialogo' && data.subtitles) {
                 // El mensaje original trae los glifos
-                // Los subtítulos traen el español
-                const glifos = data.message.split('"')[1] || data.message;
+                const glifos = escapeHTML(data.message.split('"')[1] || data.message);
                 content = `
                     <div style="font-family: 'Courier New', monospace; color: var(--accent-primary); font-size: 1.1em; margin-bottom: 4px;">
                         ${glifos}
                     </div>
                     <div class="log-subtitles" style="color: var(--text-primary); font-style: normal; border-left: 2px solid var(--accent-secondary); padding-left: 8px;">
-                        "${data.subtitles}"
+                        "${escapeHTML(data.subtitles)}"
                     </div>
                 `;
             } else if (data.subtitles) {
-                content += `<div class="log-subtitles">└─ ${data.subtitles}</div>`;
+                content += `<div class="log-subtitles">└─ ${escapeHTML(data.subtitles)}</div>`;
             }
 
             if (data.thought) {
-                content += `<div class="log-thought">🧠 <i>${data.thought}</i></div>`;
+                content += `<div class="log-thought">🧠 <i>${escapeHTML(data.thought)}</i></div>`;
             }
 
             entry.innerHTML = content;

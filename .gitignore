@@ -4,3 +4,8 @@ __pycache__
 venv
 .venv
 multiagent_simulation/estado_simulacion.json
+multiagent_simulation/estado_simulacion.json
+multiagent_simulation/.gemini_interpreter_history
+multiagent_simulation/.kogniterm/history.json
+multiagent_simulation/.kogniterm/vector_db/chroma.sqlite3
+test_env

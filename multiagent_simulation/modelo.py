@@ -52,12 +52,11 @@ class DatabaseManager:
             logger.error(f"❌ Error ejecutando query: {e}")
             return False
 
-    def save_agent(self, agent):
+    def save_agent(self, agent, user_id):
         query = """
-        INSERT INTO agentes (id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, 
-                            personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (id) DO UPDATE SET
+        INSERT INTO agentes (id, user_id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico, civilizacion_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id, user_id) DO UPDATE SET
             recursos = EXCLUDED.recursos,
             dinero = EXCLUDED.dinero,
             grupo_id = EXCLUDED.grupo_id,
@@ -71,77 +70,180 @@ class DatabaseManager:
             conocimientos = EXCLUDED.conocimientos,
             inventario = EXCLUDED.inventario,
             hitos = EXCLUDED.hitos,
-            historial_etico = EXCLUDED.historial_etico;
+            historial_etico = EXCLUDED.historial_etico,
+            civilizacion_id = EXCLUDED.civilizacion_id;
         """
-        params = (
-            str(agent.unique_id), agent.recursos, agent.dinero, agent.grupo_id, agent.rol,
+        self.execute(query, (
+            str(agent.unique_id), user_id, agent.recursos, agent.dinero, agent.grupo_id, agent.rol,
             agent.profesion, agent.rango, agent.reputacion, Json(agent.personalidad),
             Json(agent.necesidades), Json(agent.experiencia), Json(agent.conocimientos),
-            Json(agent.inventario), Json(agent.hitos), Json(agent.historial_etico)
-        )
-        self.execute(query, params)
+            Json(agent.inventario), Json(agent.hitos), Json(agent.historial_etico),
+            agent.civilizacion_id
+        ))
 
-    def save_memory(self, owner_id, target_id, data):
+    def save_civilization(self, civ):
         query = """
-        INSERT INTO memorias (agente_fuente, agente_objetivo, tipo_relacion, fuerza, recursos_percibidos, grupo_percibido)
+        INSERT INTO civilizaciones (id, nombre, color, user_id, recursos_globales, territorio)
         VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (agente_fuente, agente_objetivo) DO UPDATE SET
+        ON CONFLICT (id, user_id) DO UPDATE SET
+            nombre = EXCLUDED.nombre,
+            color = EXCLUDED.color,
+            recursos_globales = EXCLUDED.recursos_globales,
+            territorio = EXCLUDED.territorio;
+        """
+        self.execute(query, (civ.id, civ.nombre, civ.color, civ.user_id, civ.recursos_globales, Json(civ.territorio)))
+
+    def get_civilizations(self):
+        query = "SELECT * FROM civilizaciones;"
+        return self.execute(query)
+
+    def save_user(self, user_id, username, password_hash):
+        query = "INSERT INTO usuarios (id, username, password_hash) VALUES (%s, %s, %s) ON CONFLICT (id) DO NOTHING;"
+        self.execute(query, (user_id, username, password_hash))
+
+    def save_memory(self, owner_id, target_id, data, user_id):
+        query = """
+        INSERT INTO memorias (user_id, agente_fuente, agente_objetivo, tipo_relacion, fuerza, recursos_percibidos, grupo_percibido)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (user_id, agente_fuente, agente_objetivo) DO UPDATE SET
             tipo_relacion = EXCLUDED.tipo_relacion,
             fuerza = EXCLUDED.fuerza,
             recursos_percibidos = EXCLUDED.recursos_percibidos,
             grupo_percibido = EXCLUDED.grupo_percibido;
         """
         params = (
-            str(owner_id), str(target_id), data.get('tipo'), data.get('fuerza', 0.0),
+            user_id, str(owner_id), str(target_id), data.get('tipo'), data.get('fuerza', 0.0),
             data.get('recursos_vistos'), data.get('grupo')
         )
         self.execute(query, params)
 
-    def save_world_state(self, step, lore, seed, economy):
+    def save_world_state(self, user_id, step, lore, seed, economy, relaciones_grupos=None):
         query = """
-        INSERT INTO estado_mundo (paso_actual, lore, seed, precio_recurso, indice_bursatil, total_dinero)
-        VALUES (%s, %s, %s, %s, %s, %s);
+        INSERT INTO estado_mundo (user_id, paso_actual, lore, seed, precio_recurso, indice_bursatil, total_dinero, relaciones_grupos)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (user_id) DO UPDATE SET
+            paso_actual = EXCLUDED.paso_actual,
+            lore = EXCLUDED.lore,
+            seed = EXCLUDED.seed,
+            precio_recurso = EXCLUDED.precio_recurso,
+            indice_bursatil = EXCLUDED.indice_bursatil,
+            total_dinero = EXCLUDED.total_dinero,
+            relaciones_grupos = EXCLUDED.relaciones_grupos;
         """
         params = (
-            step, lore, seed, economy.get('precio_recurso', 2.0),
-            economy.get('indice_bursatil', 1000.0), economy.get('total_dinero', 0.0)
+            user_id, step, lore, seed, economy.get('precio_recurso', 2.0),
+            economy.get('indice_bursatil', 1000.0), economy.get('total_dinero', 0.0),
+            Json(relaciones_grupos) if relaciones_grupos else Json({})
         )
         self.execute(query, params)
 
-    def get_world_state(self):
-        query = "SELECT paso_actual, lore, seed, precio_recurso, indice_bursatil, total_dinero FROM estado_mundo ORDER BY id DESC LIMIT 1;"
-        result = self.execute(query)
+    def get_world_state(self, user_id):
+        query = "SELECT paso_actual, lore, seed, precio_recurso, indice_bursatil, total_dinero, relaciones_grupos FROM estado_mundo WHERE user_id = %s ORDER BY id DESC LIMIT 1;"
+        result = self.execute(query, (user_id,))
         return result[0] if result else None
 
-    def get_agents(self):
-        query = "SELECT * FROM agentes;"
-        return self.execute(query)
+    def get_agents(self, user_id):
+        query = "SELECT * FROM agentes WHERE user_id = %s;"
+        return self.execute(query, (user_id,))
 
-    def get_memories(self, agent_id):
-        query = "SELECT agente_objetivo, tipo_relacion, fuerza, recursos_percibidos, grupo_percibido FROM memorias WHERE agente_fuente = %s;"
-        return self.execute(query, (str(agent_id),))
+    def get_memories(self, agent_id, user_id):
+        query = "SELECT agente_objetivo, tipo_relacion, fuerza, recursos_percibidos, grupo_percibido FROM memorias WHERE agente_fuente = %s AND user_id = %s;"
+        return self.execute(query, (str(agent_id), user_id))
 
-    def clear_database(self):
-        """Limpia todas las tablas de la base de datos."""
-        queries = [
-            "TRUNCATE TABLE memorias CASCADE;",
-            "TRUNCATE TABLE agentes CASCADE;",
-            "TRUNCATE TABLE estado_mundo CASCADE;",
-            "TRUNCATE TABLE eventos_globales CASCADE;",
-            "TRUNCATE TABLE logs_simulacion CASCADE;"
-        ]
-        for q in queries:
-            self.execute(q)
-        logger.info("🗑️ Base de datos limpiada exitosamente.")
+    def clear_database(self, user_id=None):
+        """Limpia las tablas de la base de datos de forma selectiva por usuario."""
+        if not user_id:
+            logger.warning("⚠️ Intento de limpiar DB sin especificar user_id.")
+            return
+
+        # Dado que el esquema actual asocia agentes a civilizaciones y civilizaciones a usuarios...
+        # Primero obtenemos las civilizaciones del usuario
+        query_civs = "SELECT id FROM civilizaciones WHERE user_id = %s;"
+        civs = self.execute(query_civs, (user_id,))
+        civ_ids = [c[0] for c in civs] if civs else []
+
+        if civ_ids:
+            # Borrar memorias de agentes que pertenecen a estas civilizaciones
+            for civ_id in civ_ids:
+                query_mem = """
+                DELETE FROM memorias WHERE agente_fuente IN 
+                (SELECT id FROM agentes WHERE civilizacion_id = %s);
+                """
+                self.execute(query_mem, (civ_id,))
+
+                # Borrar agentes
+                self.execute("DELETE FROM agentes WHERE civilizacion_id = %s;", (civ_id,))
+
+            # Borrar civilizaciones
+            self.execute("DELETE FROM civilizaciones WHERE user_id = %s;", (user_id,))
+
+        # Borrar estado del mundo y otros asociados al usuario
+        self.execute("DELETE FROM estado_mundo WHERE user_id = %s;", (user_id,))
+        self.execute("DELETE FROM logs_simulacion WHERE user_id = %s;", (user_id,))
+        
+        logger.info(f"🗑️ Base de datos limpiada para usuario {user_id}.")
 
 # Cargar configuración
 load_dotenv()
 
+class Civilizacion:
+    def __init__(self, id, nombre, color, user_id=None):
+        self.id = id
+        self.nombre = nombre
+        self.color = color
+        self.user_id = user_id
+        self.recursos_globales = 0.0
+        self.territorio = [] # Lista de (x, y)
+        self.tecnologias = []
+        self.leyes = []
+
+class TerrainType:
+    GRASS = "grass"
+    FOREST = "forest"
+    MOUNTAIN = "mountain"
+    WATER = "water"
+    DESERT = "desert"
+
+class WeatherType:
+    SUNNY = "sunny"
+    RAINY = "rainy"
+    STORM = "storm"
+    FOGGY = "foggy"
+    HEATWAVE = "heatwave"
+
+class Tile:
+    def __init__(self, x, y, terrain_type=TerrainType.GRASS):
+        self.x = x
+        self.y = y
+        self.terrain_type = terrain_type
+        self.resource_node = None # {type: "food"|"wood"|"stone", amount: 100}
+        self.owner_civ_id = None
+        self.buildings = [] # List of building dicts
+        self.difficulty = 1.0
+        
+        if terrain_type == TerrainType.MOUNTAIN: self.difficulty = 2.0
+        if terrain_type == TerrainType.WATER: self.difficulty = 5.0
+    
+    def to_dict(self):
+        return {
+            "x": self.x,
+            "y": self.y,
+            "terrain": self.terrain_type,
+            "resource": self.resource_node,
+            "owner": self.owner_civ_id,
+            "buildings": self.buildings
+        }
+
 class Agente:
-    def __init__(self, unique_id, modelo, recursos=100, necesidades=None, personalidad=None):
+    def __init__(self, unique_id, modelo, recursos=100, necesidades=None, personalidad=None, civ_id=None):
         self.unique_id = unique_id
         self.modelo = modelo
         self.recursos = recursos
+        self.civilizacion_id = civ_id
+        
+        # Posición en el mundo (Mapa de 20x20 por defecto)
+        self.x = random.randint(0, 19)
+        self.y = random.randint(0, 19)
         
         # Necesidades: alimento, seguridad, socialización
         self.necesidades = necesidades if necesidades else {
@@ -304,18 +406,22 @@ class Agente:
         
     def fundar_grupo(self, nombre_mision):
         """El agente crea un nuevo grupo y se convierte en líder."""
-        # Verificar límite por turno
-        if self.modelo.grupos_creados_este_paso >= 2:
-            self.modelo.log(f"⚠️ [SISTEMA] Agente {self.unique_id} intentó fundar un grupo, pero se alcanzó el límite de 2 por turno.", categoria="sistema")
-            return None
-
-        nuevo_id = str(len(self.modelo.objetivos_grupos) + 1)
-        self.grupo_id = nuevo_id
+        nuevo_grupo_id = f"G-{random.randint(100, 999)}"
+        # Asignar un color de la paleta basado en el ID para que sea consistente
+        color_idx = int(nuevo_grupo_id.split("-")[1]) % len(self.modelo.colores_paleta)
+        nuevo_color = self.modelo.colores_paleta[color_idx]
+        
+        self.modelo.civilizaciones[nuevo_grupo_id] = Civilizacion(
+            id=nuevo_grupo_id,
+            nombre=f"Facción {nombre_mision}",
+            color=nuevo_color,
+            user_id=getattr(self.modelo, 'current_user_id', None)
+        )
+        self.grupo_id = nuevo_grupo_id
         self.rol = "Líder"
-        self.modelo.objetivos_grupos[nuevo_id] = nombre_mision
+        self.modelo.log(f"🚩 [FUNDACION] Agente {self.unique_id} ha fundado '{nombre_mision}' con color {nuevo_color}.", categoria="consenso")
         self.modelo.grupos_creados_este_paso += 1
-        self.modelo.log(f"🚩 [FACCION] Agente {self.unique_id} ha fundado la facción {nuevo_id}: {nombre_mision}", categoria="consenso")
-        return nuevo_id
+        return nuevo_grupo_id
 
     def invitar_agente(self, otro_agente):
         """Envía una invitación formal para unirse a su facción."""
@@ -415,8 +521,8 @@ class Agente:
 
     def actualizar_estado(self):
         """Actualiza las necesidades y recursos internos en cada paso."""
-        # Producción pasiva mínima
-        self.recursos += 0.2
+        # Producción pasiva aumentada para mayor resiliencia
+        self.recursos += 0.5
 
         # Procesar inversiones terminadas
         for inv in list(self.inversiones):
@@ -427,16 +533,24 @@ class Agente:
                 resultado = "ganancia" if inv["interes"] > 0 else "pérdida"
                 self.modelo.log(f"💰 [RETORNO] Inversión de {self.unique_id} finalizada: {ganancia:.1f} MC ({resultado}).", categoria="social")
 
-        # El metabolismo consume recursos
-        consumo = 1.0 + (self.necesidades["alimento"] * 0.05)
+        # El metabolismo consume menos recursos para evitar muertes rápidas
+        consumo = 0.5 + (self.necesidades["alimento"] * 0.03)
         self.recursos -= consumo
         
-        # Necesidades aumentan
-        self.necesidades["alimento"] += 0.15
-        self.necesidades["social"] += 0.1
-        self.necesidades["seguridad"] += 0.05
-        self.necesidades["descanso"] += 0.2
-        self.necesidades["entretenimiento"] += 0.1
+        # Necesidades aumentan más lentamente
+        self.necesidades["alimento"] += 0.10
+        self.necesidades["social"] += 0.08
+        self.necesidades["seguridad"] += 0.04
+        self.necesidades["descanso"] += 0.15
+        self.necesidades["entretenimiento"] += 0.08
+        
+        # --- REGENERACIÓN PASIVA ---
+        # Si el agente está bien alimentado y descansado, recupera salud
+        if self.necesidades["alimento"] < 3.0 and self.necesidades["descanso"] < 5.0:
+            self.necesidades["salud"] = min(10.0, self.necesidades["salud"] + 0.1)
+            # Log sutil de bienestar solo de vez en cuando para no saturar
+            if random.random() < 0.1:
+                self.modelo.log(f"✨ [BIENESTAR] Agente {self.unique_id} se está recuperando gracias a su buen estado.", categoria="state")
         
         # --- PROCESAMIENTO DE TRATADOS FORMALES ---
         for tratado in list(self.tratados):
@@ -481,32 +595,88 @@ class Agente:
                 aliado.tratados = [at for at in aliado.tratados if at["socio_id"] != self.unique_id]
                 self.modelo.log(f"⌛ [SISTEMA] El tratado entre {self.unique_id} y {aliado.unique_id} ha expirado.", categoria="sistema")
 
-        # --- BENEFICIOS DE ALIANZAS BÁSICAS ---
-        for aliado_id in self.alianzas:
-            pass # Los beneficios ahora se manejan principalmente por tratados formales
+        if self.necesidades["salud"] <= 0:
+            self.morir("agotamiento total de constantes vitales")
+            return
+
+        # --- INSTINTO DE SUPERVIVENCIA AUTOMÁTICO ---
+        tile = self.modelo.mapa[self.x][self.y]
         
-        # Impacto de la salud
-        if self.necesidades["alimento"] > 9.0 or self.necesidades["descanso"] > 9.0:
-            self.necesidades["salud"] -= 0.2
-            self.modelo.log(f"⚠️ [SALUD] Agente {self.unique_id} se siente débil por falta de cuidados.", categoria="state")
+        # 1. Alimentación automática si hay comida en el suelo y tiene hambre
+        if tile.resource_node and tile.resource_node["type"] == "food" and self.necesidades["alimento"] > 4.0:
+            comida_tomada = min(tile.resource_node["amount"], 2.0)
+            tile.resource_node["amount"] -= comida_tomada
+            self.necesidades["alimento"] = max(0, self.necesidades["alimento"] - (comida_tomada * 2))
+            self.modelo.log(f"🍎 [INSTINTO] Agente {self.unique_id} consumió alimento del terreno automáticamente.", categoria="alimentos")
+            if tile.resource_node["amount"] <= 0: tile.resource_node = None
+
+        # 2. Uso de infraestructura (Hospitales y Centros de Recarga)
+        for edif in tile.buildings:
+            if edif["tipo"].lower() in ["hospital", "clinica"] and self.necesidades["salud"] < 9.0:
+                self.necesidades["salud"] = min(10.0, self.necesidades["salud"] + 1.0)
+                self.modelo.log(f"🏥 [SISTEMA] Agente {self.unique_id} está siendo atendido en el Hospital.", categoria="salud")
+            
+            if "recarga" in edif["tipo"].lower() or "eléctrica" in edif["tipo"].lower():
+                self.necesidades["descanso"] = max(0, self.necesidades["descanso"] - 2.0)
+                self.recursos += 1.0 # Carga de energía/recursos
+                self.modelo.log(f"⚡ [SISTEMA] Agente {self.unique_id} recargando constantes en estación energética.", categoria="ambiente")
+
+    def morir(self, motivo):
+        """Finaliza la existencia del agente en la simulación."""
+        if not self.esta_vivo: return
         
-        if self.necesidades["salud"] < 3.0:
-            self.modelo.log(f"🚑 [CRÍTICO] Agente {self.unique_id} está en estado crítico de salud.", categoria="state")
+        self.esta_vivo = False
+        self.modelo.log(f"🪦 [FUNERAL] El Agente {self.unique_id} ha MUERTO. Motivo: {motivo}.", categoria="sistema")
+        
+        # Eliminar de la lista activa del modelo
+        if self in self.modelo.agentes:
+            self.modelo.agentes.remove(self)
+            
+        # Limpiar tratados y alianzas
+        for aliado_id in list(self.alianzas):
+            aliado = self.modelo.get_agent_by_id(aliado_id)
+            if aliado and self.unique_id in aliado.alianzas:
+                aliado.alianzas.remove(self.unique_id)
+        
+        # Registrar en DB si es posible
+        if self.modelo.db_active:
+            try:
+                self.modelo.db.execute("UPDATE agentes SET reputacion = %s WHERE id = %s", (0.0, self.unique_id))
+            except: pass
 
     def recolectar(self):
-        """El agente busca recursos en el entorno. Los objetos especiales son MUY raros."""
+        """El agente busca recursos en el entorno. Prioriza los nodos de recursos del mapa."""
+        tile = self.modelo.mapa[self.x][self.y]
+        
+        # 1. Recolección de nodo específico
+        if tile.resource_node and tile.resource_node["amount"] > 0:
+            tipo = tile.resource_node["type"]
+            cantidad = min(tile.resource_node["amount"], random.randint(5, 15))
+            tile.resource_node["amount"] -= cantidad
+            
+            if tipo == "food":
+                self.recursos += cantidad
+                self.modelo.log(f"  🍎 [RECOLECCION] Agente {self.unique_id} recolectó {cantidad} de ALIMENTO del terreno.", categoria="alimentos")
+            elif tipo == "wood" or tipo == "stone":
+                # Por ahora wood/stone se convierten en recursos genéricos o se podrían añadir al inventario
+                self.recursos += cantidad * 1.5 # Más valioso
+                self.modelo.log(f"  🪵 [RECOLECCION] Agente {self.unique_id} recolectó {cantidad} de MATERIALES ({tipo}).", categoria="recursos")
+                
+            if tile.resource_node["amount"] <= 0:
+                tile.resource_node = None # Agotado
+                self.modelo.log(f"  ⚠️ [RECOLECCION] El nodo de recursos en ({self.x}, {self.y}) se ha AGOTADO.", categoria="ambiente")
+            return
+
+        # 2. Recolección genérica (baja eficiencia)
         r = random.random()
-        if r < 0.80: # 80% Alimento
-            cantidad = random.uniform(5, 15)
+        if r < 0.60: # 60% Alimento (reducido)
+            cantidad = random.uniform(2, 8)
             self.recursos += cantidad
-            self.modelo.log(f"  🍎 [RECOLECCION] Agente {self.unique_id} encontró {cantidad:.1f} unidades de alimento.", categoria="alimentos")
-        elif r < 0.85: # 5% Medicina (Escaso)
+            self.modelo.log(f"  🌱 [RECOLECCION] Agente {self.unique_id} forrajeó {cantidad:.1f} unidades de alimento.", categoria="alimentos")
+        elif r < 0.65: # 5% Medicina
             self.inventario["medicina"] += 1
             self.modelo.log(f"  💊 [RECOLECCION] Agente {self.unique_id} encontró una MEDICINA RARA.", categoria="recursos")
-        elif r < 0.90: # 5% Ocio (Escaso)
-            self.inventario["ocio"] += 1
-            self.modelo.log(f"  🎮 [RECOLECCION] Agente {self.unique_id} encontró un OBJETO DE OCIO.", categoria="recursos")
-        else: # 10% Nada
+        else:
             self.modelo.log(f"  🍃 [RECOLECCION] Agente {self.unique_id} no encontró nada valioso.", categoria="recursos")
         
         self.necesidades["alimento"] = max(0, self.necesidades["alimento"] - 2)
@@ -520,9 +690,16 @@ class Agente:
                 self.modelo.log(f"🎓 [HITOS] Agente {self.unique_id} ha ganado suficiente experiencia en {area} para profesionalizarse.", categoria="sistema")
 
     def graduarse(self, profesion_deseada):
-        """Intenta declarar una profesión si cumple los requisitos."""
+        """Intenta declarar una profesión si cumple los requisitos y está en una Universidad."""
         if self.profesion:
             return False, "Ya tienes una profesión."
+
+        # VERIFICACIÓN DE UBICACIÓN: Debe haber una Universidad en el tile actual
+        tile = self.modelo.mapa[self.x][self.y]
+        tiene_universidad = any(b["tipo"] == "Universidad" for b in tile.buildings)
+        
+        if not tiene_universidad:
+            return False, "Debes estar en una Universidad para graduarte y obtener tu título oficial. 🏛️"
 
         costos = {
             "Médico": 150,
@@ -783,6 +960,9 @@ class Agente:
                 self.modelo.log(f"  🎭 [ACCION] Agente {self.unique_id} buscó entretenimiento básico.", categoria="state")
             self.decir(mensaje, pensamiento=pensamiento, privado_para=destinatario_id, para_grupo=es_grupal)
 
+        elif decision == "MOVER":
+            pass # El movimiento ahora es parte del ciclo obligatorio del turno
+
         elif decision.startswith("CONSTRUIR:"):
             tipo_edif = decision.split(":")[1]
             exito, msg = self.modelo.construir_edificio(self, tipo_edif)
@@ -856,12 +1036,58 @@ class Agente:
                 self.decir(f"Agradezco la invitación, Agente {emisor_id}, pero por ahora seguiré mi propio camino.")
             self.ultimo_mensaje_recibido = None
 
+        # --- REPOSICIONAMIENTO OBLIGATORIO POR TURNO ---
+        if decision not in ["DESCANSAR", "CONSTRUIR", "GRADUARSE"]:
+            dx, dy = 0, 0
+            
+            # 1. Lógica de Cohesión Grupal (Patrullas)
+            if self.grupo_id:
+                aliados = [a for a in self.modelo.agentes if a.grupo_id == self.grupo_id and a.unique_id != self.unique_id]
+                if aliados:
+                    # Encontrar al aliado más cercano
+                    mas_cercano = min(aliados, key=lambda a: abs(a.x - self.x) + abs(a.y - self.y))
+                    dist = abs(mas_cercano.x - self.x) + abs(mas_cercano.y - self.y)
+                    
+                    if dist > 2: # Si están lejos, ir hacia ellos (cohesión)
+                        dx = 1 if mas_cercano.x > self.x else (-1 if mas_cercano.x < self.x else 0)
+                        dy = 1 if mas_cercano.y > self.y else (-1 if mas_cercano.y < self.y else 0)
+                    else: # Si están cerca, moverse aleatoriamente pero sin alejarse mucho
+                        dx = random.choice([-1, 0, 1])
+                        dy = random.choice([-1, 0, 1])
+                else:
+                    dx, dy = random.choice([-1, 0, 1]), random.choice([-1, 0, 1])
+            else:
+                # 2. Movimiento Errante (Agentes Literales / Sin Grupo)
+                dx = random.choice([-1, 0, 1])
+                dy = random.choice([-1, 0, 1])
+            
+            # Aplicar movimiento con seguridad
+            prob_fallo = 0.6 if self.modelo.weather == "storm" else 0.05
+            
+            if random.random() > prob_fallo:
+                nx = max(0, min(self.modelo.mapa_size - 1, self.x + dx))
+                ny = max(0, min(self.modelo.mapa_size - 1, self.y + dy))
+                
+                # Evitar agua y respetar fronteras si es posible
+                if self.modelo.mapa[nx][ny].terrain_type != "water":
+                    self.x, self.y = nx, ny
+
+        # --- DETECCIÓN DE ENCUENTROS CON OTRAS FACCIONES ---
+        if self.grupo_id:
+            vecinos = [a for a in self.modelo.agentes if abs(a.x - self.x) <= 1 and abs(a.y - self.y) <= 1 and a.unique_id != self.unique_id]
+            for v in vecinos:
+                if v.grupo_id and v.grupo_id != self.grupo_id:
+                    # Probabilidad pequeña por paso para no saturar la diplomacia
+                    if random.random() < 0.2:
+                        self.modelo.gestionar_encuentro_facciones(self, v)
+
         self.actualizar_estado()
 
 class ModeloRelacional:
-    def __init__(self, num_agentes=10, log_callback=None):
+    def __init__(self, num_agentes=10, log_callback=None, user_id=None):
         self.num_agentes = num_agentes
         self.log_callback = log_callback
+        self.user_id = user_id
         self.paso_actual = 0
         
         # Conectar herramientas con el sistema de logs del modelo
@@ -884,6 +1110,11 @@ class ModeloRelacional:
 
         self.historial_relaciones = []
         self.historial_grupos = []
+        self.colores_paleta = [
+            "#ff1744", "#d500f9", "#2979ff", "#00e5ff", "#00e676", 
+            "#ffea00", "#ff9100", "#ff3d00", "#76ff03", "#f50057",
+            "#651fff", "#3d5afe", "#00b0ff", "#00b8d4", "#1de9b6"
+        ]
         self.datos = [] # Mantener para compatibilidad con visualizar_resultados
         self.relaciones_grupos = {} # {(id1, id2): afinidad}
         self.historial_logs = [] # [{mensaje, categoria, ...}]
@@ -900,6 +1131,17 @@ class ModeloRelacional:
         # --- SISTEMA DE INFRAESTRUCTURA ---
         self.infraestructura = [] # Lista de dicts: {"tipo": T, "grupo_id": G, "pos": P, "paso_creacion": S}
         
+        # --- SISTEMA DE CIVILIZACIONES Y TERRITORIOS ---
+        self.civilizaciones = {} # {civ_id: Civilizacion}
+        self.mapa_size = 20
+        # self.mapa = [[None for _ in range(self.mapa_size)] for _ in range(self.mapa_size)] # Matriz de civ_id
+        self.mapa = self.generar_mapa() # Matriz de objetos Tile
+        
+        # --- SISTEMA DE CLIMA ---
+        self.weather = WeatherType.SUNNY
+        self.weather_timer = 0
+        self.weather_duration = 20
+        
         # --- MUNDO ATRIBUTOS ---
         self.lore = ""
         self.seed = ""
@@ -908,12 +1150,125 @@ class ModeloRelacional:
         # Cargar estado previo si existe
         self.cargar_estado()
 
+    def generar_mapa(self):
+        """Genera un mapa procedural básico con diferentes terrenos."""
+        nuevo_mapa = [[None for _ in range(self.mapa_size)] for _ in range(self.mapa_size)]
+        
+        # Generación simple basada en ruido aleatorio (se puede mejorar con Perlin Noise)
+        for x in range(self.mapa_size):
+            for y in range(self.mapa_size):
+                r = random.random()
+                tipo = TerrainType.GRASS
+                
+                # Clusters simples
+                if 0.4 < r < 0.6: tipo = TerrainType.FOREST
+                elif 0.85 < r < 0.95: tipo = TerrainType.MOUNTAIN
+                elif r >= 0.95: tipo = TerrainType.WATER
+                elif r < 0.05: tipo = TerrainType.DESERT
+                
+                tile = Tile(x, y, tipo)
+                
+                # Recursos iniciales según terreno
+                if tipo == TerrainType.FOREST:
+                    tile.resource_node = {"type": "wood", "amount": random.randint(50, 200)}
+                elif tipo == TerrainType.MOUNTAIN:
+                    tile.resource_node = {"type": "stone", "amount": random.randint(50, 200)}
+                elif tipo == TerrainType.GRASS and random.random() < 0.2:
+                    tile.resource_node = {"type": "food", "amount": random.randint(20, 100)}
+                
+                nuevo_mapa[x][y] = tile
+        
+        return nuevo_mapa
+
+    def actualizar_clima(self):
+        """Ciclo de clima dinámico."""
+        self.weather_timer += 1
+        if self.weather_timer >= self.weather_duration:
+            self.weather_timer = 0
+            # Cambiar clima
+            climas = [WeatherType.SUNNY, WeatherType.RAINY, WeatherType.STORM, WeatherType.FOGGY, WeatherType.HEATWAVE]
+            pesos = [0.5, 0.2, 0.1, 0.1, 0.1] # Mayor probabilidad de sol
+            self.weather = random.choices(climas, weights=pesos, k=1)[0]
+            self.weather_duration = random.randint(10, 30)
+            
+            efecto = ""
+            if self.weather == WeatherType.STORM: efecto = "¡Tormenta severa! Movimiento difícil."
+            elif self.weather == WeatherType.RAINY: efecto = "Lluvia. Crecimiento de cultivos."
+            elif self.weather == WeatherType.HEATWAVE: efecto = "Ola de calor. Mayor consumo de agua."
+            
+            self.log(f"🌦️ [CLIMA] El clima ha cambiado a: {self.weather.upper()}. {efecto}", categoria="ambiente")
+
+    def actualizar_territorios(self):
+        """Actualiza la propiedad de las celdas del mapa basada en la presencia de agentes."""
+        # Resetear mapa (opcional, o podemos hacerlo gradual)
+        # Por ahora, la celda pertenece a la civilización con más agentes en ella
+        for x in range(self.mapa_size):
+            for y in range(self.mapa_size):
+                agentes_en_celda = [a for a in self.agentes if a.x == x and a.y == y]
+                if agentes_en_celda:
+                    # Contar agentes por civilización
+                    conteos = {}
+                    for a in agentes_en_celda:
+                        if a.civilizacion_id:
+                            conteos[a.civilizacion_id] = conteos.get(a.civilizacion_id, 0) + 1
+                    
+                    if conteos:
+                        ganador = max(conteos, key=conteos.get)
+                        # self.mapa[x][y] = ganador # OLD
+                        self.mapa[x][y].owner_civ_id = ganador # NEW
+        
+        # Actualizar la lista de territorio en cada civilización
+        for civ in self.civilizaciones.values():
+            civ.territorio = []
+            for x in range(self.mapa_size):
+                for y in range(self.mapa_size):
+                    if self.mapa[x][y].owner_civ_id == civ.id:
+                        civ.territorio.append((x, y))
+
     def step(self):
         """Avanza un paso en la simulación."""
         self.paso_actual += 1
         self.grupos_creados_este_paso = 0
         
-        # Aplicar efectos de infraestructura
+        # Actualizar territorios
+        self.actualizar_territorios()
+        
+        # Actualizar clima
+        self.actualizar_clima()
+        
+        # --- PROCESAR EFECTOS DE EDIFICIOS ---
+        for edif in self.infraestructura:
+            tipo = edif["tipo"]
+            x, y = edif["x"], edif["y"]
+            
+            # Granjas: Generan recursos en el tile
+            if tipo == "Granja":
+                tile = self.mapa[x][y]
+                if not tile.resource_node:
+                    tile.resource_node = {"type": "food", "amount": 20}
+                else:
+                    tile.resource_node["amount"] = min(200, tile.resource_node["amount"] + 10)
+            
+            # Hospitales / Centros: Afectan agentes cercanos
+            agentes_cerca = [a for a in self.agentes if abs(a.x - x) <= 1 and abs(a.y - y) <= 1]
+            for a in agentes_cerca:
+                if tipo == "Hospital":
+                    a.necesidades["salud"] = max(10, a.necesidades["salud"] + 0.5)
+                elif tipo == "Centro de Descanso":
+                    a.necesidades["descanso"] = max(0, a.necesidades["descanso"] - 1.0)
+                elif tipo == "Centro de Recarga":
+                    a.recursos += 5
+                elif tipo == "Centro Comunitario":
+                    a.necesidades["social"] = max(0, a.necesidades["social"] - 0.8)
+                elif tipo == "Universidad":
+                    # XP pasiva: 30% de probabilidad de ganar XP en un área aleatoria
+                    if random.random() < 0.3:
+                        area = random.choice(["medicina", "comercio", "combate", "exploracion", "agricultura", "ingenieria"])
+                        a.ganar_experiencia(area, 1)
+                        if a.unique_id == "42": # Ejemplo para un log específico de estudio
+                            self.log(f"📖 Agente {a.unique_id} está estudiando {area} en la Universidad.", categoria="sistema")
+
+        # Aplicar efectos de infraestructura (antigua lógica, se mantiene para otros tipos de edificios)
         for edif in self.infraestructura:
             beneficiarios = [a for a in self.agentes if a.grupo_id == edif["grupo_id"]]
             for b in beneficiarios:
@@ -933,27 +1288,80 @@ class ModeloRelacional:
         self.actualizar_economia()
         
         # Guardar estado si la DB está activa
-        if self.db_active:
-            self.db.save_world_state(self.paso_actual, self.lore, self.seed, self.economia)
+        if self.db_active and self.user_id:
+            # Convertir claves de tupla a string para JSON
+            rel_str = {f"{k[0]}:{k[1]}": v for k, v in self.relaciones_grupos.items()}
+            self.db.save_world_state(self.user_id, self.paso_actual, self.lore, self.seed, self.economia, rel_str)
             for a in self.agentes:
-                self.db.save_agent(a)
+                self.db.save_agent(a, self.user_id)
         
         # Guardar en archivo cada 10 pasos (respaldo)
         if self.paso_actual % 10 == 0:
             self.guardar_estado()
 
     def construir_edificio(self, agente, tipo):
-        """Permite a un agente construir una infraestructura para su grupo."""
-        costos = {
-            "Hospital": {"dinero": 100, "recursos": 50},
-            "Comedor": {"dinero": 80, "recursos": 40},
-            "Centro de Ocio": {"dinero": 70, "recursos": 30}
+        """Permite a un agente construir una infraestructura basada en sus logros y experiencia."""
+        config_edificios = {
+            "Hospital": {
+                "costo": {"dinero": 150, "recursos": 80},
+                "requisito": lambda a: a.profesion == "Médico" or a.experiencia["medicina"] >= 10,
+                "efecto": "Cura agentes cercanos cada turno."
+            },
+            "Granja": {
+                "costo": {"dinero": 80, "recursos": 50},
+                "requisito": lambda a: a.experiencia["agricultura"] >= 5,
+                "efecto": "Genera recursos de alimento en el tile."
+            },
+            "Centro de Recarga": {
+                "costo": {"dinero": 120, "recursos": 100},
+                "requisito": lambda a: a.experiencia["ingenieria"] >= 8,
+                "efecto": "Restaura energía/recursos rápidamente."
+            },
+            "Centro de Descanso": {
+                "costo": {"dinero": 70, "recursos": 40},
+                "requisito": lambda a: True, # Básico
+                "efecto": "Reduce el estrés y la necesidad de descanso."
+            },
+            "Centro Comunitario": {
+                "costo": {"dinero": 100, "recursos": 60},
+                "requisito": lambda a: a.personalidad.get("amabilidad", 0.5) > 0.7,
+                "efecto": "Mejora las relaciones sociales en el área."
+            },
+            "Comisaría": {
+                "costo": {"dinero": 110, "recursos": 70},
+                "requisito": lambda a: a.profesion == "Guarda" or a.experiencia["combate"] >= 7,
+                "efecto": "Reduce la probabilidad de robos y aumenta la seguridad."
+            },
+            "Universidad": {
+                "costo": {"dinero": 300, "recursos": 200},
+                "requisito": lambda a: a.personalidad.get("curiosidad", 0.5) > 0.8 and a.experiencia["ingenieria"] >= 5,
+                "efecto": "Permite graduarse a los agentes y otorga XP pasiva."
+            }
         }
         
-        if tipo not in costos:
-            return False, "Tipo de edificio no válido."
+        if tipo not in config_edificios:
+            # Posibilidad de "inventar" un edificio si tiene alta curiosidad e ingeniería
+            if agente.experiencia["ingenieria"] >= 5 and agente.personalidad.get("curiosidad", 0.5) > 0.8:
+                config_edificios[tipo] = {
+                    "costo": {"dinero": 200, "recursos": 150},
+                    "requisito": lambda a: True,
+                    "efecto": "Edificio experimental con efectos únicos."
+                }
+            else:
+                return False, "Tipo de edificio no válido o requisitos de invención no cumplidos."
         
-        costo = costos[tipo]
+        tile = self.mapa[agente.x][agente.y]
+        if tile.buildings:
+            return False, "Ya hay un edificio en esta ubicación."
+            
+        if tile.terrain_type in [TerrainType.WATER, TerrainType.MOUNTAIN] and tipo != "Puerto":
+            return False, "No se puede construir en este terreno."
+        
+        config = config_edificios[tipo]
+        if not config["requisito"](agente):
+            return False, f"No cumples los requisitos (XP/Profesión) para construir {tipo}."
+
+        costo = config["costo"]
         if agente.dinero >= costo["dinero"] and agente.recursos >= costo["recursos"]:
             agente.dinero -= costo["dinero"]
             agente.recursos -= costo["recursos"]
@@ -963,10 +1371,14 @@ class ModeloRelacional:
                 "tipo": tipo,
                 "grupo_id": agente.grupo_id,
                 "constructor": agente.unique_id,
-                "paso_creacion": self.paso_actual
+                "paso_creacion": self.paso_actual,
+                "x": agente.x,
+                "y": agente.y
             }
             self.infraestructura.append(nuevo_edif)
-            self.log(f"🏗️ [CONSTRUCCION] Agente {agente.unique_id} ha construido un {tipo} para la Facción {agente.grupo_id}!", categoria="sistema")
+            tile.buildings.append(nuevo_edif) # Add to tile
+            
+            self.log(f"🏗️ [CONSTRUCCION] Agente {agente.unique_id} ha construido un {tipo} en ({agente.x}, {agente.y})!", categoria="sistema")
             return True, f"¡{tipo} construido con éxito!"
         
         return False, "No tienes suficientes recursos o dinero."
@@ -996,28 +1408,42 @@ class ModeloRelacional:
             query = "INSERT INTO eventos_globales (tipo, descripcion, paso_inicio, duracion, impacto) VALUES (%s, %s, %s, %s, %s)"
             self.db.execute(query, (tipo, descripcion, self.paso_actual, duracion, Json(impacto or {})))
 
-    def spawn_agent(self, arquetipo=None):
-        """Spawnea un nuevo agente con un arquetipo específico."""
+    def spawn_agent(self, config=None):
+        """Spawnea un nuevo agente. Puede recibir un objeto AgentConfig o un diccionario."""
         nuevo_id = f"A{len(self.agentes)}"
         
-        personalidad = None
-        if arquetipo == "Merchant":
-            personalidad = {"extroversión": 0.8, "amabilidad": 0.7, "competitividad": 0.6, "curiosidad": 0.5, "lealtad": 0.4, "prudencia": 0.6, "hostilidad": 0.1}
-        elif arquetipo == "Warrior":
-            personalidad = {"extroversión": 0.4, "amabilidad": 0.2, "competitividad": 0.9, "curiosidad": 0.3, "lealtad": 0.8, "prudencia": 0.4, "hostilidad": 0.7}
-        elif arquetipo == "Scientist":
-            personalidad = {"extroversión": 0.2, "amabilidad": 0.5, "competitividad": 0.3, "curiosidad": 0.9, "lealtad": 0.5, "prudencia": 0.8, "hostilidad": 0.1}
+        personalidad_final = None
+        recursos_init = 0.0
+        dinero_init = 100.0
+        pos_init = None
+
+        if config:
+            # Manejar tanto objetos Pydantic como diccionarios
+            if hasattr(config, "model_dump"):
+                cfg_dict = config.model_dump()
+            elif isinstance(config, dict):
+                cfg_dict = config
+            else:
+                cfg_dict = vars(config) if hasattr(config, "__dict__") else {}
+
+            personalidad_final = cfg_dict.get("personality")
+            recursos_init = cfg_dict.get("resources", 0.0)
+            dinero_init = cfg_dict.get("money", 100.0)
+            pos_init = cfg_dict.get("position")
+
+        nuevo_agente = Agente(nuevo_id, self, personalidad=personalidad_final)
+        nuevo_agente.recursos = recursos_init
+        nuevo_agente.dinero = dinero_init
         
-        nuevo_agente = Agente(nuevo_id, self, personalidad=personalidad)
-        if arquetipo:
-            nuevo_agente.profesion = arquetipo
-            nuevo_agente.hitos.append(f"Spawned as {arquetipo}")
+        if pos_init and "x" in pos_init and "y" in pos_init:
+            nuevo_agente.x = pos_init["x"]
+            nuevo_agente.y = pos_init["y"]
             
         self.agentes.append(nuevo_agente)
-        self.log(f"✨ [SPAWNER] Nuevo agente {nuevo_id} ha entrado al mundo como {arquetipo or 'Ciudadano'}.", categoria="sistema")
+        self.log(f"✨ [SPAWNER] Nuevo agente {nuevo_id} ha entrado al mundo.", categoria="sistema")
         
         if self.db_active:
-            self.db.save_agent(nuevo_agente)
+            self.db.save_agent(nuevo_agente, self.user_id)
             
         return nuevo_agente
 
@@ -1027,6 +1453,41 @@ class ModeloRelacional:
             self.agentes_cargados = True
         else:
             self.log(f"💾 [SISTEMA] Continuando simulación con {len(self.agentes)} agentes.", categoria="sistema")
+
+    def gestionar_encuentro_facciones(self, agente_a, agente_b):
+        """Gestiona la interacción cuando dos agentes de distintas facciones se encuentran."""
+        id_a, id_b = agente_a.grupo_id, agente_b.grupo_id
+        if not id_a or not id_b or id_a == id_b: return
+        
+        # Clave única para la relación entre estos dos grupos
+        rel_key = tuple(sorted([id_a, id_b]))
+        if rel_key not in self.relaciones_grupos:
+            self.relaciones_grupos[rel_key] = 0.5 # Neutral inicial
+            
+        afinidad = self.relaciones_grupos[rel_key]
+        
+        # Probabilidad de cooperación basada en afinidad y personalidades
+        prob_cooperar = afinidad * (agente_a.personalidad["amabilidad"] + agente_b.personalidad["amabilidad"]) / 2
+        
+        if random.random() < prob_cooperar:
+            # --- COOPERACIÓN: Gesto de Buena Voluntad ---
+            tipo_ayuda = random.choice(["recursos", "salud", "informacion"])
+            if tipo_ayuda == "recursos" and agente_a.recursos > 20:
+                donado = 10
+                agente_a.recursos -= donado
+                agente_b.recursos += donado
+                self.log(f"🤝 [DIPLOMACIA] Gesto de paz: {agente_a.unique_id} ({id_a}) donó recursos a {agente_b.unique_id} ({id_b}).", categoria="social")
+                self.relaciones_grupos[rel_key] = min(1.0, afinidad + 0.05)
+            elif tipo_ayuda == "salud" and agente_a.inventario["medicina"] > 0:
+                agente_a.inventario["medicina"] -= 1
+                agente_b.necesidades["salud"] = min(10, agente_b.necesidades["salud"] + 2)
+                self.log(f"💊 [DIPLOMACIA] Auxilio médico: {agente_a.unique_id} ({id_a}) curó a un miembro de {id_b}.", categoria="social")
+                self.relaciones_grupos[rel_key] = min(1.0, afinidad + 0.1)
+        else:
+            # --- TENSIÓN: Competencia por territorio ---
+            if random.random() < 0.3:
+                self.log(f"⚠️ [TENSION] Encuentro frío entre patrullas de {id_a} y {id_b} en zona fronteriza.", categoria="social")
+                self.relaciones_grupos[rel_key] = max(0.0, afinidad - 0.02)
 
     def log(self, mensaje, categoria="info", subtitulos=None, tts_text=None, pensamiento=None, privado_para=None):
         """Envía un log al callback o a la terminal y lo guarda en el historial."""
@@ -1286,27 +1747,44 @@ class ModeloRelacional:
         datos_json["economia"] = self.economia
         datos_json["relaciones_grupos"] = {f"{k[0]}-{k[1]}": v for k, v in self.relaciones_grupos.items()}
         datos_json["historial_logs"] = self.historial_logs
+        datos_json["infraestructura"] = self.infraestructura
+        # Serializar mapa de objetos Tile
+        datos_json["mapa"] = [[t.to_dict() for t in row] for row in self.mapa]
+        datos_json["civilizaciones"] = {k: {
+            "nombre": v.nombre,
+            "color": v.color,
+            "user_id": v.user_id,
+            "recursos_globales": v.recursos_globales,
+            "territorio": v.territorio
+        } for k, v in self.civilizaciones.items()}
         
         with open("estado_simulacion.json", "w") as f:
             json.dump(datos_json, f, indent=4)
-
+        
         # 2. Guardar en PostgreSQL (Si está activo)
-        if self.db_active:
+        if self.db_active and self.user_id:
             try:
-                # Guardar estado del mundo
-                self.db.save_world_state(self.paso_actual, getattr(self, 'lore', ''), getattr(self, 'seed', ''), self.economia)
+                # Convertir claves de tupla a string para JSON
+                rel_str = {f"{k[0]}:{k[1]}": v for k, v in self.relaciones_grupos.items()}
+                
+                # Guardar estado del mundo con user_id y relaciones persistentes
+                self.db.save_world_state(self.user_id, self.paso_actual, getattr(self, 'lore', ''), getattr(self, 'seed', ''), self.economia, rel_str)
+                
+                # Guardar civilizaciones
+                for civ in self.civilizaciones.values():
+                    self.db.save_civilization(civ)
                 
                 # Guardar agentes y sus memorias
                 for a in self.agentes:
-                    self.db.save_agent(a)
+                    self.db.save_agent(a, self.user_id)
                     # Guardar relaciones de memoria
                     mem_data = a.memoria.exportar_datos()
                     for edge in mem_data.get('aristas', []):
                         # Solo guardamos relaciones que parten del agente
                         if edge['u'] == a.unique_id:
-                            self.db.save_memory(a.unique_id, edge['v'], edge['data'])
+                            self.db.save_memory(a.unique_id, edge['v'], edge['data'], civ_user_id)
                 
-                logger.info(f"💾 [DB] Estado guardado en PostgreSQL (Paso {self.paso_actual})")
+                logger.info(f"💾 [DB] Estado guardado en PostgreSQL para {civ_user_id} (Paso {self.paso_actual})")
             except Exception as e:
                 logger.error(f"❌ Error guardando en DB: {e}")
 
@@ -1315,18 +1793,29 @@ class ModeloRelacional:
         # 1. Intentar cargar desde PostgreSQL
         if self.db_active:
             try:
-                world_state = self.db.get_world_state()
+                # Obtener el user_id (podría venir de la sesión si esto fuera asíncrono, 
+                # pero aquí intentamos deducirlo o usar uno por defecto temporal)
+                target_user_id = self.user_id or "USER-DEFAULT"
+                world_state = self.db.get_world_state(target_user_id)
                 if world_state:
-                    self.paso_actual, self.lore, self.seed, precio, indice, total_dinero = world_state
+                    self.paso_actual, self.lore, self.seed, precio, indice, total_dinero, rel_data = world_state
                     self.economia["indice_bursatil"] = indice
                     self.economia["total_dinero"] = total_dinero
                     self.precio_recurso_actual = precio
                     
-                    agents_data = self.db.get_agents()
+                    # Restaurar relaciones de grupos (convertir string keys back to tuples)
+                    if rel_data:
+                        self.relaciones_grupos = {}
+                        for k, v in rel_data.items():
+                            parts = k.split(":")
+                            if len(parts) == 2:
+                                self.relaciones_grupos[tuple(parts)] = v
+                    
+                    agents_data = self.db.get_agents(target_user_id)
                     self.agentes = []
                     for row in agents_data:
-                        # row mapping based on schema: id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico
-                        a_id, rec, din, g_id, rol, prof, ran, rep, pers, nec, exp, con, inv, hitos, etico, _ = row
+                        # row mapping based on schema: id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico, timestamp, civilizacion_id
+                        a_id, rec, din, g_id, rol, prof, ran, rep, pers, nec, exp, con, inv, hitos, etico, _, civ_id = row
                         a = Agente(a_id, self)
                         a.recursos = rec
                         a.dinero = din
@@ -1342,9 +1831,10 @@ class ModeloRelacional:
                         a.inventario = inv
                         a.hitos = hitos
                         a.historial_etico = etico
+                        a.civilizacion_id = civ_id
                         
                         # Cargar memorias
-                        memories = self.db.get_memories(a_id)
+                        memories = self.db.get_memories(a_id, target_user_id)
                         mem_dict = {"nodos": [{"id": a_id, "data": {"tipo": "yo"}}], "aristas": []}
                         for m_row in memories:
                             target_id, tipo, fuerza, rec_v, grp_v = m_row
@@ -1364,13 +1854,41 @@ class ModeloRelacional:
         if os.path.exists("estado_simulacion.json"):
             try:
                 with open("estado_simulacion.json", "r") as f:
-                    datos = json.load(f)
+                    datos_json = json.load(f) # Renamed 'datos' to 'datos_json' for clarity
                 
-                self.paso_actual = datos.get("paso_actual", 0)
-                self.objetivos_grupos = datos.get("objetivos_grupos", {})
-                self.datos = datos.get("datos_estadisticos", [])
+                self.paso_actual = datos_json.get("paso_actual", 0)
+                self.objetivos_grupos = datos_json.get("objetivos_grupos", {})
+                self.datos = datos_json.get("datos_estadisticos", [])
+                self.economia = datos_json.get("economia", self.economia)
+                self.economia = datos_json.get("economia", self.economia)
+                self.historial_logs = datos_json.get("historial_logs", [])
+                self.infraestructura = datos_json.get("infraestructura", [])
+                
+                # Cargar mapa
+                mapa_data = datos_json.get("mapa")
+                if mapa_data and isinstance(mapa_data[0][0], dict):
+                    # Cargar desde dicts
+                    for x in range(self.mapa_size):
+                        for y in range(self.mapa_size):
+                            d = mapa_data[x][y]
+                            tile = Tile(d["x"], d["y"], d["terrain"])
+                            tile.resource_node = d.get("resource")
+                            tile.owner_civ_id = d.get("owner")
+                            tile.buildings = d.get("buildings", [])
+                            self.mapa[x][y] = tile
+                else:
+                    # Regenerar si es formato antiguo o no existe
+                    self.mapa = self.generar_mapa()
+                
+                civs_data = datos_json.get("civilizaciones", {})
+                for civ_id, data in civs_data.items():
+                    civ = Civilizacion(civ_id, data["nombre"], data["color"], data.get("user_id"))
+                    civ.recursos_globales = data.get("recursos_globales", 0.0)
+                    civ.territorio = data.get("territorio", [])
+                    self.civilizaciones[civ_id] = civ
+
                 self.agentes = []
-                for a_data in datos.get("agentes", []):
+                for a_data in datos_json.get("agentes", []):
                     a = Agente(a_data["id"], self)
                     a.recursos = a_data.get("recursos", 10.0)
                     a.dinero = a_data.get("dinero", 100.0)
@@ -1405,11 +1923,11 @@ class ModeloRelacional:
                         a.memoria.cargar_datos(a_data["memoria_grafica"])
                     self.agentes.append(a)
                 
-                self.economia = datos.get("economia", self.economia)
-                self.historial_logs = datos.get("historial_logs", [])
+                self.economia = datos_json.get("economia", self.economia)
+                self.historial_logs = datos_json.get("historial_logs", [])
                 
                 # Cargar relaciones grupales (convertir keys de string a tupla)
-                rel_data = datos.get("relaciones_grupos", {})
+                rel_data = datos_json.get("relaciones_grupos", {})
                 for k, v in rel_data.items():
                     try:
                         p1, p2 = k.split("-")

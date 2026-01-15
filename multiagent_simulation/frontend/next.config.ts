@@ -1,8 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: 'standalone',
-  outputFileTracingRoot: '/home/gato/MundoIA/multiagent_simulation/frontend',
+  /* config options here */
 };
 
 export default nextConfig;
