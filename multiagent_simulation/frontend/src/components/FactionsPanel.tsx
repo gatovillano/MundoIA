@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Scale, Flag, Brain, X, TrendingUp, Shield } from 'lucide-react';
+import { Users, Scale, Flag, Brain, X, TrendingUp, Shield, Handshake } from 'lucide-react';
 import useGameStore from '../store/useGameStore';
 
 interface FactionsPanelProps {
@@ -11,166 +11,249 @@ interface FactionsPanelProps {
 }
 
 export default function FactionsPanel({ isOpen, onClose }: FactionsPanelProps) {
-    const { civilizaciones, gruposDinamicos, propuestas, agents, step } = useGameStore();
-    const [activeTab, setActiveTab] = useState<'factions' | 'proposals'>('factions');
+    const { civilizaciones, gruposDinamicos, propuestas, relacionesGrupos, agents, step, relationships } = useGameStore();
+    const [activeTab, setActiveTab] = useState<'groups' | 'proposals' | 'diplomacy'>('groups');
 
-    // Combinar civilizaciones y grupos dinámicos
-    const todasLasFacciones = {
-        ...civilizaciones,
-        ...gruposDinamicos
-    };
-
-    const factionsList = Object.entries(todasLasFacciones).map(([id, data]) => ({
+    const civFactions = Object.entries(civilizaciones || {}).map(([id, data]: [string, any]) => ({
         ...data,
         id,
-        members: agents.filter(a => a.grupo_id === id || a.civilizacion_id === id).length
+        tipo: data.tipo || 'civilizacion',
+        members: typeof data.members === 'number' ? data.members : Array.isArray(data.members) ? data.members.length : agents.filter(a => a.civilizacion_id === id || a.grupo_id === id).length
     }));
 
+    const civFactionIds = new Set(civFactions.map(f => f.id));
+
+    const grupoFactions = Object.entries(gruposDinamicos || {}).filter(([id]) => !civFactionIds.has(id)).map(([id, data]: [string, any]) => ({
+        ...data,
+        id,
+        tipo: data.tipo || 'grupo_dinamico',
+        members: typeof data.members === 'number' ? data.members : Array.isArray(data.members) ? data.members.length : agents.filter(a => a.grupo_id === id).length
+    }));
+
+    const factionsList = [...civFactions, ...grupoFactions];
+
     return (
-        <AnimatePresence>
-            {isOpen && (
-                <motion.div
-                    initial={{ x: '100%', opacity: 0 }}
-                    animate={{ x: 0, opacity: 1 }}
-                    exit={{ x: '100%', opacity: 0 }}
-                    transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                    className="fixed right-0 top-0 h-full w-[450px] glass-panel border-l border-white/10 z-[80] flex flex-col shadow-2xl backdrop-blur-3xl"
-                >
-                    {/* Header */}
-                    <div className="p-8 border-b border-white/5 bg-gradient-to-r from-[#7c4dff]/5 to-transparent">
-                        <div className="flex justify-between items-start mb-6">
-                            <div>
-                                <h2 className="text-3xl font-bold text-white tracking-tight font-mono mb-1">DATA <span className="text-[#00e676]">SOCIETAL</span></h2>
-                                <p className="text-[10px] text-gray-400 uppercase tracking-[0.2em] font-medium">Panel de Control de Facciones y Leyes</p>
-                            </div>
-                            <button
-                                onClick={onClose}
-                                className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/50 hover:text-white"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
+        <div className="flex flex-col h-full">
+            {/* Tabs */}
+            <div className="p-1 bg-black/20 rounded-xl mb-6 flex gap-1 border border-white/5">
+                <TabButton active={activeTab === 'groups'} onClick={() => setActiveTab('groups')} icon={Flag} label="Grupos" />
+                <TabButton active={activeTab === 'proposals'} onClick={() => setActiveTab('proposals')} icon={Scale} label="Leyes" />
+                <TabButton active={activeTab === 'diplomacy'} onClick={() => setActiveTab('diplomacy')} icon={Handshake} label="Diplomacia" />
+            </div>
 
-                        {/* Tabs */}
-                        <div className="flex gap-1 p-1 bg-black/20 rounded-lg">
-                            <TabButton active={activeTab === 'factions'} onClick={() => setActiveTab('factions')} icon={Flag} label="Facciones" />
-                            <TabButton active={activeTab === 'proposals'} onClick={() => setActiveTab('proposals')} icon={Scale} label="Legislación" />
-                        </div>
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-1">
+                {activeTab === 'groups' && (
+                    <div className="space-y-4">
+                        {factionsList.length === 0 ? (
+                            <EmptyState icon={Users} message="No se han detectado grupos activos." />
+                        ) : (
+                            factionsList.map((faction) => {
+                                const membersCount = Array.isArray(faction.members) ? faction.members.length : faction.members;
+                                const factionName = faction.nombre || faction.name || faction.id;
+                                const resources = faction.recursos || faction.resources || faction.recursos_actuales || 0;
+
+                                return (
+                                    <motion.div
+                                        key={faction.id}
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="glass-card p-0 rounded-2xl overflow-hidden group border border-white/5"
+                                    >
+                                        <div className="p-5 flex items-center justify-between relative">
+                                            <div className="absolute top-0 left-0 w-1 h-full" style={{ backgroundColor: faction.color || '#7c4dff' }} />
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-0.5">
+                                                    <h3 className="text-lg font-bold text-white font-outfit">{factionName}</h3>
+                                                    {faction.tipo === 'grupo_dinamico' && (
+                                                        <span className="px-2 py-0.5 text-[8px] font-bold bg-purple-500/20 text-purple-300 rounded border border-purple-500/30 uppercase tracking-widest">
+                                                            Dinámico
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {faction.descripcion && (
+                                                    <p className="text-[10px] text-gray-400 italic mb-1 line-clamp-2 max-w-[200px]">
+                                                        "{faction.descripcion}"
+                                                    </p>
+                                                )}
+                                                <span className="text-[10px] font-mono text-gray-500 uppercase tracking-wider">{faction.id}</span>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="text-2xl font-mono font-bold text-white">{membersCount}</div>
+                                                <div className="text-[9px] text-[#7c4dff] uppercase font-bold tracking-wider opacity-60">Miembros</div>
+                                            </div>
+                                        </div>
+                                        <div className="bg-black/40 p-4 flex gap-6 border-t border-white/5">
+                                            <div className="flex items-center gap-2">
+                                                <TrendingUp className="w-3.5 h-3.5 text-[#00e676]" />
+                                                <div className="flex flex-col">
+                                                    <span className="text-[9px] text-gray-500 uppercase font-medium">Recursos</span>
+                                                    <span className="text-xs font-mono text-[#00e676]">
+                                                        {Number(resources).toFixed(0)}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <Shield className="w-3.5 h-3.5 text-[#ff1744]" />
+                                                <div className="flex flex-col">
+                                                    <span className="text-[9px] text-gray-500 uppercase font-medium">Estabilidad</span>
+                                                    <span className="text-xs font-mono text-[#ff1744]">
+                                                        {(faction.estabilidad || 1.0) * 100}%
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                );
+                            })
+                        )}
                     </div>
+                )}
 
-                    {/* Content */}
-                    <div className="flex-1 overflow-y-auto p-8 custom-scrollbar space-y-4">
-                        {activeTab === 'factions' ? (
-                            <div className="space-y-4">
-                                {factionsList.length === 0 ? (
-                                    <EmptyState icon={Users} message="No se han formado facciones." />
-                                ) : (
-                                    factionsList.map((faction) => (
-                                        <motion.div
-                                            key={faction.id}
-                                            initial={{ opacity: 0, y: 10 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            className="glass-card hover:bg-white/[0.02] p-0 rounded-xl overflow-hidden group border border-white/5"
-                                        >
-                                            <div className="p-5 flex items-center justify-between relative overflow-hidden">
-                                                <div className="absolute top-0 left-0 w-1 h-full" style={{ backgroundColor: faction.color }} />
-                                                <div className="relative z-10">
-                                                    <div className="flex items-center gap-2 mb-0.5">
-                                                        <h3 className="text-lg font-bold text-white">{faction.nombre}</h3>
-                                                        {faction.tipo === 'grupo_dinamico' && (
-                                                            <span className="px-2 py-0.5 text-[8px] font-bold bg-purple-500/20 text-purple-300 rounded border border-purple-500/30 uppercase tracking-wider">
-                                                                Dinámico
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <span className="text-[10px] font-mono text-gray-500 uppercase tracking-wider">{faction.id}</span>
-                                                </div>
-                                                <div className="text-right">
-                                                    <div className="text-2xl font-mono font-bold text-white">{faction.members}</div>
-                                                    <div className="text-[9px] text-[#7c4dff] uppercase font-bold tracking-wider">Miembros</div>
-                                                </div>
+                {activeTab === 'proposals' && (
+                    <div className="space-y-4">
+                        {(!propuestas || propuestas.length === 0) ? (
+                            <EmptyState icon={Scale} message="Sin actividad legislativa." />
+                        ) : (
+                            propuestas.map((prop: any) => (
+                                <motion.div
+                                    key={prop.id}
+                                    initial={{ opacity: 0, x: 20 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    className="glass-card p-5 rounded-2xl border border-white/5 space-y-4 group"
+                                >
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex items-center gap-2">
+                                            <div className="p-1.5 rounded bg-[#7c4dff]/20 text-[#7c4dff]">
+                                                <Scale className="w-3.5 h-3.5" />
                                             </div>
-                                            <div className="bg-black/20 p-4 flex gap-6">
-                                                <div className="flex items-center gap-2">
-                                                    <TrendingUp className="w-3.5 h-3.5 text-[#00e676]" />
-                                                    <div className="flex flex-col">
-                                                        <span className="text-[9px] text-gray-500 uppercase font-medium">Recursos</span>
-                                                        <span className="text-xs font-mono text-[#00e676]">{faction.recursos.toFixed(0)}</span>
-                                                    </div>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <Shield className="w-3.5 h-3.5 text-[#ff1744]" />
-                                                    <div className="flex flex-col">
-                                                        <span className="text-[9px] text-gray-500 uppercase font-medium">Influencia</span>
-                                                        <span className="text-xs font-mono text-[#ff1744]">NIVEL 1</span>
-                                                    </div>
-                                                </div>
+                                            <span className="text-[10px] font-bold text-[#7c4dff] uppercase tracking-widest">{prop.tipo === 'asamblea' ? 'ASAMBLEA' : (prop.tipo || 'LEY')}</span>
+                                        </div>
+                                        <StatusBadge status={prop.estado || 'pendiente'} />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <h4 className="text-sm font-bold text-white leading-tight font-outfit">
+                                            {prop.tipo === 'asamblea' ? `Debate: ${prop.texto}` : (prop.titulo || "Propuesta de Ley")}
+                                        </h4>
+                                        <p className="text-[11px] text-gray-400 leading-relaxed font-mono pl-4 border-l border-white/10 italic">
+                                            {prop.tipo === 'asamblea' ? prop.texto : (prop.contenido || prop.texto)}
+                                        </p>
+                                    </div>
+
+                                    <div className="pt-4 border-t border-white/5 flex justify-between items-end">
+                                        <div className="flex items-center gap-2">
+                                            <Brain className="w-3.5 h-3.5 text-gray-500" />
+                                            <span className="text-xs text-gray-400 font-mono">Proponente: {prop.proponente_id || 'MundoIA'}</span>
+                                        </div>
+                                        {/* Votos */}
+                                        <div className="flex items-center gap-3">
+                                            <div className="flex items-center gap-1.5 text-[#00e676] text-xs font-mono">
+                                                <span>SI</span>
+                                                <span className="font-bold">{prop.tipo === 'asamblea' ? prop.votos_si : Object.values(prop.votos || {}).filter(v => v === 'si' || v === 'yes' || v === true).length}</span>
                                             </div>
-                                        </motion.div>
-                                    ))
-                                )}
-                            </div>
+                                            <div className="w-px h-3 bg-white/20" />
+                                            <div className="flex items-center gap-1.5 text-[#ff1744] text-xs font-mono">
+                                                <span>NO</span>
+                                                <span className="font-bold">{prop.tipo === 'asamblea' ? prop.votos_no : Object.values(prop.votos || {}).filter(v => v === 'no' || v === false).length}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </motion.div>
+                            ))
+                        )}
+                    </div>
+                )}
+
+                {activeTab === 'diplomacy' && (
+                    <div className="space-y-4">
+                        {(!relationships || relationships.filter((r: any) => r.type === 'alianza' || r.type === 'alliance').length === 0) && (!relacionesGrupos || Object.keys(relacionesGrupos).length === 0) ? (
+                            <EmptyState icon={Handshake} message="No hay alianzas formadas." />
                         ) : (
                             <div className="space-y-4">
-                                {propuestas.length === 0 ? (
-                                    <EmptyState icon={Scale} message="Sin actividad legislativa." />
-                                ) : (
-                                    propuestas.map((prop) => (
+                                {/* Relaciones entre Grupos (Tratados) */}
+                                {Object.entries(relacionesGrupos || {}).map(([key, affinity], idx) => {
+                                    const [g1, g2] = key.split(':');
+                                    const n1 = civilizaciones[g1]?.nombre || gruposDinamicos[g1]?.nombre || g1;
+                                    const n2 = civilizaciones[g2]?.nombre || gruposDinamicos[g2]?.nombre || g2;
+                                    const c1 = civilizaciones[g1]?.color || gruposDinamicos[g1]?.color || '#fff';
+                                    const c2 = civilizaciones[g2]?.color || gruposDinamicos[g2]?.color || '#fff';
+
+                                    return (
                                         <motion.div
-                                            key={prop.id}
-                                            initial={{ opacity: 0, x: 20 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            className="glass-card p-5 rounded-xl border border-white/5 space-y-4 group"
+                                            key={`group-rel-${idx}`}
+                                            initial={{ opacity: 0, scale: 0.95 }}
+                                            animate={{ opacity: 1, scale: 1 }}
+                                            className="glass-card p-4 rounded-2xl border border-white/5 flex flex-col gap-3"
                                         >
-                                            <div className="flex justify-between items-start">
+                                            <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-2">
-                                                    <div className="p-1.5 rounded bg-[#7c4dff]/20 text-[#7c4dff]">
-                                                        <Scale className="w-3.5 h-3.5" />
-                                                    </div>
-                                                    <span className="text-[10px] font-bold text-[#7c4dff] uppercase tracking-widest">{prop.tipo}</span>
+                                                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: c1 }} />
+                                                    <span className="text-xs font-bold text-white uppercase">{n1}</span>
                                                 </div>
-                                                <StatusBadge status={prop.estado} />
+                                                <div className="px-2 py-0.5 rounded bg-white/5 text-[9px] font-mono text-gray-400">TRATADO</div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-bold text-white uppercase">{n2}</span>
+                                                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: c2 }} />
+                                                </div>
                                             </div>
-
-                                            <p className="text-sm text-gray-300 leading-relaxed font-mono pl-4 border-l-2 border-white/10 italic">
-                                                "{prop.texto}"
-                                            </p>
-
-                                            <div className="pt-4 border-t border-white/5 flex justify-between items-end">
-                                                <div className="flex items-center gap-2">
-                                                    <Brain className="w-3.5 h-3.5 text-gray-500" />
-                                                    <span className="text-xs text-gray-400 font-mono">Agente {prop.proponente_id}</span>
+                                            <div className="flex items-center gap-3">
+                                                <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                                                    <motion.div
+                                                        className={`h-full ${affinity > 0 ? 'bg-[#00e676]' : 'bg-[#ff1744]'}`}
+                                                        initial={{ width: 0 }}
+                                                        animate={{ width: `${Math.abs(affinity) * 100}%` }}
+                                                    />
                                                 </div>
-                                                <div className="flex items-center gap-3">
-                                                    <div className="flex items-center gap-1.5 text-[#00e676] text-xs font-mono">
-                                                        <span>SI</span>
-                                                        <span className="font-bold">{Object.values(prop.votos).filter(v => v === 'si').length}</span>
-                                                    </div>
-                                                    <div className="w-px h-3 bg-white/20" />
-                                                    <div className="flex items-center gap-1.5 text-[#ff1744] text-xs font-mono">
-                                                        <span>NO</span>
-                                                        <span className="font-bold">{Object.values(prop.votos).filter(v => v === 'no').length}</span>
-                                                    </div>
-                                                </div>
+                                                <span className={`text-[10px] font-mono font-bold ${affinity > 0 ? 'text-[#00e676]' : 'text-[#ff1744]'}`}>
+                                                    {affinity > 0 ? '+' : ''}{(affinity * 100).toFixed(0)}%
+                                                </span>
                                             </div>
                                         </motion.div>
-                                    ))
-                                )}
+                                    );
+                                })}
+
+                                {/* Alianzas entre Agentes */}
+                                {relationships.filter((r: any) => r.type === 'alianza' || r.type === 'alliance').map((rel: any, idx: number) => (
+                                    <motion.div
+                                        key={`agent-rel-${idx}`}
+                                        initial={{ opacity: 0, x: -20 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        className="glass-card p-4 rounded-2xl border border-white/5 flex items-center justify-between"
+                                    >
+                                        <div className="flex items-center gap-4">
+                                            <div className="p-2 bg-[#ffd600]/20 rounded-full text-[#ffd600]">
+                                                <Handshake className="w-4 h-4" />
+                                            </div>
+                                            <div className="flex flex-col">
+                                                <div className="flex items-center gap-2 text-sm font-bold text-white">
+                                                    <span>Agente {rel.source}</span>
+                                                    <span className="text-gray-500 text-xs">↔</span>
+                                                    <span>Agente {rel.target}</span>
+                                                </div>
+                                                <span className="text-[10px] text-gray-400 uppercase tracking-widest mt-0.5">Alianza Estratégica</span>
+                                            </div>
+                                        </div>
+                                        <div className="px-2.5 py-1 rounded-lg bg-[#ffd600]/10 border border-[#ffd600]/20 text-[#ffd600] text-[9px] font-bold">
+                                            ACTIVA
+                                        </div>
+                                    </motion.div>
+                                ))}
                             </div>
                         )}
                     </div>
+                )}
+            </div>
 
-                    {/* Footer Info */}
-                    <div className="p-6 border-t border-white/5 bg-black/40 text-[10px] flex justify-between items-center text-gray-500 font-mono tracking-wider">
-                        <span>Paso de Simulación: <span className="text-white">{step}</span></span>
-                        <div className="flex gap-2 items-center">
-                            <div className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-pulse" />
-                            <span>SISTEMA ACTIVO</span>
-                        </div>
-                    </div>
-                </motion.div>
-            )}
-        </AnimatePresence>
+            {/* Footer Info */}
+            <div className="pt-6 mt-auto border-t border-white/5 flex justify-between items-center text-[10px] text-gray-500 font-mono tracking-wider">
+                <span>Turno: <span className="text-white">{step}</span></span>
+                <div className="flex gap-2 items-center">
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-pulse" />
+                    <span className="opacity-60">SISTEMA NOMINAL</span>
+                </div>
+            </div>
+        </div>
     );
 }
 

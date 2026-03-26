@@ -5,6 +5,10 @@ class MemoriaGrafica:
         self.owner_id = owner_id
         # El grafo mental del agente
         self.grafo = nx.DiGraph()
+        # Historial de mensajes recientes: [{"emisor": id, "mensaje": texto, "timestamp": ms}]
+        self.historial_mensajes = []
+        # Historial de acciones físicas/lógicas propias: ["ACCION", "ACCION"]
+        self.historial_acciones = []
         # Añadirse a sí mismo como nodo central
         self.grafo.add_node(owner_id, tipo="yo", recursos_vistos=None)
 
@@ -28,6 +32,43 @@ class MemoriaGrafica:
         # Modificar la fuerza de la relación
         self.grafo[self.owner_id][otro_id]['fuerza'] += fuerza_cambio
         self.grafo[self.owner_id][otro_id]['tipo'] = tipo_relacion
+        # También guardar datos de percepción en la arista para facilitar persistencia
+        self.grafo[self.owner_id][otro_id]['recursos_vistos'] = recursos_vistos
+        self.grafo[self.owner_id][otro_id]['grupo'] = grupo_visto
+
+    def registrar_mensaje(self, emisor_id, contenido):
+        """Guarda un mensaje en el historial reciente."""
+        self.historial_mensajes.append({
+            "emisor": emisor_id,
+            "contenido": contenido[:100] + "..." if len(contenido) > 100 else contenido
+        })
+        # Limitar a los últimos 5 mensajes para eficiencia de tokens (antes 10)
+        if len(self.historial_mensajes) > 5:
+            self.historial_mensajes.pop(0)
+
+    def registrar_accion(self, nombre_accion):
+        """Guarda una acción realizada en el historial reciente para evitar repeticiones."""
+        self.historial_acciones.append(nombre_accion)
+        # Limitar a 3 acciones para contexto (antes 5)
+        if len(self.historial_acciones) > 3:
+            self.historial_acciones.pop(0)
+
+    def obtener_contexto_acciones(self):
+        """Retorna una cadena con las últimas acciones realizadas."""
+        if not self.historial_acciones:
+            return "No has realizado acciones físicas recientemente."
+        return f"TUS ÚLTIMAS ACCIONES: {', '.join(self.historial_acciones)}"
+
+    def obtener_contexto_mensajes(self):
+        """Retorna una cadena con el historial de mensajes para el prompt."""
+        if not self.historial_mensajes:
+            return "No hay diálogos previos recientes."
+        
+        contexto = "HISTORIAL DE DIÁLOGOS RECIENTES:\n"
+        for m in self.historial_mensajes:
+            emisor = "Tú" if m["emisor"] == self.owner_id else f"Agente {m['emisor']}"
+            contexto += f"- {emisor}: {m['contenido']}\n"
+        return contexto
 
     def obtener_fuerza(self, otro_id):
         """Retorna la fuerza de la relación con un agente."""
@@ -82,7 +123,8 @@ class MemoriaGrafica:
         """Convierte el grafo en una estructura de datos serializable."""
         return {
             "nodos": [{"id": n, "data": self.grafo.nodes[n]} for n in self.grafo.nodes],
-            "aristas": [{"u": u, "v": v, "data": self.grafo[u][v]} for u, v in self.grafo.edges]
+            "aristas": [{"u": u, "v": v, "data": self.grafo[u][v]} for u, v in self.grafo.edges],
+            "historial_mensajes": self.historial_mensajes
         }
 
     def cargar_datos(self, datos):
@@ -92,6 +134,7 @@ class MemoriaGrafica:
             self.grafo.add_node(n["id"], **n["data"])
         for e in datos.get("aristas", []):
             self.grafo.add_edge(e["u"], e["v"], **e["data"])
+        self.historial_mensajes = datos.get("historial_mensajes", [])
 
     def __str__(self):
         return f"Memoria de {self.owner_id}: {self.grafo.number_of_nodes()} conocidos, {self.grafo.number_of_edges()} relaciones."

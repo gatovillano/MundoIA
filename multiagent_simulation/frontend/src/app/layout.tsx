@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Outfit, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import BackgroundEffects from "@/components/BackgroundEffects";
+import SoundManager from "@/components/SoundManager";
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -26,11 +27,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es">
+    <html lang="es" suppressHydrationWarning>
       <body
         className={`${outfit.variable} ${jetbrainsMono.variable} antialiased bg-background text-foreground overflow-hidden relative`}
       >
         <BackgroundEffects />
+        <SoundManager />
         {children}
       </body>
     </html>

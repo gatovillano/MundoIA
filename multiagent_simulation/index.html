@@ -230,21 +230,23 @@
             position: fixed;
             bottom: 20px;
             left: 20px;
-            width: 500px;
-            max-height: 500px;
-            background: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(20px);
+            width: 650px;
+            height: 75vh;
+            max-height: 85vh;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(25px);
             border-radius: 15px;
             border: 1px solid var(--border);
             padding: 15px;
             overflow-y: auto;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             z-index: 50;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
             transition: all 0.3s ease;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
         }
 
         #log-container.minimized {
@@ -975,7 +977,7 @@
         const statusBadge = document.getElementById('status');
 
         function connectWebSocket() {
-            ws = new WebSocket('ws://localhost:8000/ws');
+            ws = new WebSocket('ws://localhost:8005/ws');
 
             ws.onopen = () => {
                 statusBadge.textContent = 'CONECTADO';
@@ -1219,8 +1221,8 @@
             entry.innerHTML = content;
             logContainer.appendChild(entry);
 
-            // Keep only last 50 logs
-            while (logContainer.children.length > 51) { // +1 for toggle button
+            // Keep only last 100 logs
+            while (logContainer.children.length > 101) { // +1 for toggle button
                 logContainer.children[1].remove();
             }
 

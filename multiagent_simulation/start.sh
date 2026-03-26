@@ -27,11 +27,11 @@ if [ $? -ne 0 ]; then
 fi
 
 echo ""
-echo "🚀 Iniciando servidor en http://localhost:8000"
+echo "🚀 Iniciando servidor en http://localhost:8005"
 echo "   Presiona Ctrl+C para detener"
 echo ""
-echo "📊 Abre tu navegador en: http://localhost:8000"
+echo "📊 Abre tu navegador en: http://localhost:8005"
 echo ""
 
 # Iniciar servidor con auto-reload para desarrollo
-uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+uvicorn api:app --host 0.0.0.0 --port 8005 --reload

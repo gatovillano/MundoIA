@@ -1,20 +1,26 @@
 -- Schema for MundoIA Architect Mode
+-- Updated for correct dependency order
 
--- World State
-CREATE TABLE IF NOT EXISTS estado_mundo (
-    id SERIAL PRIMARY KEY,
-    user_id VARCHAR(50) UNIQUE,
-    paso_actual INTEGER DEFAULT 0,
-    lore TEXT,
-    seed TEXT,
-    precio_recurso FLOAT DEFAULT 2.0,
-    indice_bursatil FLOAT DEFAULT 1000.0,
-    total_dinero FLOAT DEFAULT 0.0,
-    relaciones_grupos JSONB DEFAULT '{}',
+-- 1. Users (Base entity)
+CREATE TABLE IF NOT EXISTS usuarios (
+    id VARCHAR(50) PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash TEXT,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Agents
+-- 2. Civilizations (Depends on Users)
+CREATE TABLE IF NOT EXISTS civilizaciones (
+    id VARCHAR(50) PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    color VARCHAR(20) DEFAULT '#00f2ff',
+    user_id VARCHAR(50) REFERENCES usuarios(id),
+    recursos_globales FLOAT DEFAULT 0.0,
+    territorio JSONB DEFAULT '[]',
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. Agents (Depends on Users)
 CREATE TABLE IF NOT EXISTS agentes (
     id VARCHAR(50) PRIMARY KEY,
     user_id VARCHAR(50) REFERENCES usuarios(id),
@@ -32,11 +38,38 @@ CREATE TABLE IF NOT EXISTS agentes (
     inventario JSONB,
     hitos JSONB DEFAULT '[]',
     historial_etico JSONB DEFAULT '[]',
-    civilizacion_id VARCHAR(50),
+    civilizacion_id VARCHAR(50), -- Can be a soft link or FK later
+    alianzas JSONB DEFAULT '[]',
+    tratados JSONB DEFAULT '[]',
+    x INTEGER,
+    y INTEGER,
+    memoria_mensajes JSONB DEFAULT '[]',
+    skills JSONB DEFAULT '{}',
+    skill_factor FLOAT DEFAULT 0.3,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Memories (Graph edges)
+-- 4. World State (References Users implicitly or explicitly)
+CREATE TABLE IF NOT EXISTS estado_mundo (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(50) UNIQUE REFERENCES usuarios(id), -- Added explicit reference
+    paso_actual INTEGER DEFAULT 0,
+    lore TEXT,
+    seed TEXT,
+    precio_recurso FLOAT DEFAULT 2.0,
+    indice_bursatil FLOAT DEFAULT 1000.0,
+    total_dinero FLOAT DEFAULT 0.0,
+    relaciones_grupos JSONB DEFAULT '{}',
+    objetivos_grupos JSONB DEFAULT '{}',
+    mapa JSONB,
+    infraestructura JSONB DEFAULT '[]',
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+ALTER TABLE estado_mundo ADD COLUMN IF NOT EXISTS mapa JSONB;
+ALTER TABLE estado_mundo ADD COLUMN IF NOT EXISTS infraestructura JSONB DEFAULT '[]';
+ALTER TABLE estado_mundo ADD COLUMN IF NOT EXISTS historia JSONB DEFAULT '{}';
+
+-- 5. Memories (Depends on Users and Agents)
 CREATE TABLE IF NOT EXISTS memorias (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) REFERENCES usuarios(id),
@@ -50,7 +83,7 @@ CREATE TABLE IF NOT EXISTS memorias (
     UNIQUE(user_id, agente_fuente, agente_objetivo)
 );
 
--- Global Events
+-- 6. Global Events (Independent)
 CREATE TABLE IF NOT EXISTS eventos_globales (
     id SERIAL PRIMARY KEY,
     tipo VARCHAR(50), -- Famine, Resource Rain, etc.
@@ -61,34 +94,7 @@ CREATE TABLE IF NOT EXISTS eventos_globales (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Users
-CREATE TABLE IF NOT EXISTS usuarios (
-    id VARCHAR(50) PRIMARY KEY,
-    username VARCHAR(50) UNIQUE NOT NULL,
-    password_hash TEXT,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Civilizations
-CREATE TABLE IF NOT EXISTS civilizaciones (
-    id VARCHAR(50) PRIMARY KEY,
-    nombre VARCHAR(100) NOT NULL,
-    color VARCHAR(20) DEFAULT '#00f2ff',
-    user_id VARCHAR(50) REFERENCES usuarios(id),
-    recursos_globales FLOAT DEFAULT 0.0,
-    territorio JSONB DEFAULT '[]',
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Agents (Modified to include civilizacion_id)
--- Note: In a real migration we would use ALTER TABLE, but here we update the schema definition.
--- CREATE TABLE IF NOT EXISTS agentes (
---     ...
---     civilizacion_id VARCHAR(50) REFERENCES civilizaciones(id),
---     ...
--- );
-
--- Logs
+-- 7. Logs (Depends on Users)
 CREATE TABLE IF NOT EXISTS logs_simulacion (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) REFERENCES usuarios(id),
@@ -98,10 +104,12 @@ CREATE TABLE IF NOT EXISTS logs_simulacion (
     categoria VARCHAR(50),
     pensamiento TEXT,
     privado_para VARCHAR(50),
+    subtitulos TEXT,
+    tts_text TEXT,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Proposals & Laws
+-- 8. Proposals & Laws (Depends on Users)
 CREATE TABLE IF NOT EXISTS propuestas (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) REFERENCES usuarios(id),
@@ -112,5 +120,31 @@ CREATE TABLE IF NOT EXISTS propuestas (
     votos JSONB DEFAULT '{}', -- {agente_id: voto}
     estado VARCHAR(20) DEFAULT 'pendiente',
     paso_creacion INTEGER,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 9. Misiones (Depends on Users)
+CREATE TABLE IF NOT EXISTS misiones (
+    id VARCHAR(100), -- ID de la misión del catálogo
+    user_id VARCHAR(50) REFERENCES usuarios(id),
+    titulo VARCHAR(100),
+    descripcion TEXT,
+    tipo VARCHAR(50),
+    dificultad VARCHAR(20),
+    objetivo JSONB,
+    recompensa_puntos INTEGER,
+    estado VARCHAR(20), -- activa, completada, fallida
+    turno_inicio INTEGER,
+    turno_limite INTEGER,
+    completada_por VARCHAR(50),
+    turno_completada INTEGER,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, user_id)
+);
+
+-- 10. Puntajes de Usuario (Depends on Users)
+CREATE TABLE IF NOT EXISTS puntajes_usuarios (
+    user_id VARCHAR(50) PRIMARY KEY REFERENCES usuarios(id),
+    puntos INTEGER DEFAULT 0,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

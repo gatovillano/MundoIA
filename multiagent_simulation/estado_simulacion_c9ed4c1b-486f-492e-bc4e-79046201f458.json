@@ -1,0 +1,1875 @@
+{
+    "paso_actual": 82,
+    "lore": "En esta sociedad existen dos caminos en pugna y cada uno junto a su grupo deben tomar partido. o son una sociedad autoritaria y ordenada, o una sociedad comunalista y ordenada ",
+    "seed": "",
+    "objetivos_grupos": {
+        "GA0": "Cooperaci\u00f3n de Clan de A0",
+        "GA15": "Cooperaci\u00f3n de Clan de A15",
+        "GA29": "Cooperaci\u00f3n de Clan de A29",
+        "GA33": "Cooperaci\u00f3n de Clan de A33",
+        "GA36": "Cooperaci\u00f3n de Clan de A36",
+        "G-140": "Fuerza para proteger, uni\u00f3n para prosperar. Dominamos el mundo, pero cuidamos de los nuestros.",
+        "G-880": "Un grupo donde la competencia nos fortalece y la lealtad nos",
+        "GA39": "Cooperaci\u00f3n de Clan de A39",
+        "GA1": "Cooperaci\u00f3n de Clan de A1",
+        "G-174": "Prosperidad y ayuda mutua.",
+        "G-156": "Loyalty, mutual protection, and prosperous growth.",
+        "G-506": "Cooperaci\u00f3n y prosperidad mutua",
+        "G-308": "Loyalty and mutual protection",
+        "G-191": "Loyalty and mutual protection",
+        "G-948": "Formar m\u00e9dicos y seguir la orden divina de adquirir experiencia en medicina para curar a los necesitados."
+    },
+    "misiones": [
+        {
+            "id": "CIUDAD_SALUD",
+            "titulo": "Ciudad Saludable",
+            "descripcion": "Construye 3 Hospitales para cuidar la salud de tus agentes",
+            "tipo": "construccion",
+            "dificultad": "media",
+            "objetivo": {
+                "meta": "Hospital",
+                "tipo": "construir",
+                "actual": 0,
+                "cantidad": 3
+            },
+            "recompensa_puntos": 500,
+            "estado": "activa",
+            "turno_inicio": 2,
+            "turno_limite": null,
+            "completada_por": null,
+            "turno_completada": null,
+            "progreso": "0/3"
+        },
+        {
+            "id": "METROPOLIS",
+            "titulo": "Metr\u00f3polis",
+            "descripcion": "Alcanza una poblaci\u00f3n de 50 agentes",
+            "tipo": "social",
+            "dificultad": "media",
+            "objetivo": {
+                "tipo": "poblacion",
+                "actual": 22,
+                "cantidad": 50
+            },
+            "recompensa_puntos": 750,
+            "estado": "activa",
+            "turno_inicio": 3,
+            "turno_limite": null,
+            "completada_por": null,
+            "turno_completada": null,
+            "progreso": "22/50"
+        },
+        {
+            "id": "PRIMEROS_PASOS",
+            "titulo": "Primeros Pasos",
+            "descripcion": "Construye tu primer edificio para comenzar la civilizaci\u00f3n",
+            "tipo": "construccion",
+            "dificultad": "facil",
+            "objetivo": {
+                "meta": "cualquiera",
+                "tipo": "construir",
+                "actual": 2,
+                "cantidad": 1
+            },
+            "recompensa_puntos": 100,
+            "estado": "completada",
+            "turno_inicio": 2,
+            "turno_limite": null,
+            "completada_por": "c9ed4c1b-486f-492e-bc4e-79046201f458",
+            "turno_completada": 3,
+            "progreso": "2/1"
+        },
+        {
+            "id": "GRANERO_MUNDIAL",
+            "titulo": "Granero Mundial",
+            "descripcion": "Construye 5 Granjas para asegurar el alimento",
+            "tipo": "construccion",
+            "dificultad": "media",
+            "objetivo": {
+                "meta": "Granja",
+                "tipo": "construir",
+                "actual": 5,
+                "cantidad": 5
+            },
+            "recompensa_puntos": 500,
+            "estado": "completada",
+            "turno_inicio": 2,
+            "turno_limite": null,
+            "completada_por": "c9ed4c1b-486f-492e-bc4e-79046201f458",
+            "turno_completada": 63,
+            "progreso": "5/5"
+        }
+    ],
+    "datos_estadisticos": [
+        {
+            "paso": 45,
+            "recursos_promedio": 1.4548600672045129,
+            "num_grupos": 9,
+            "gini": 0.095,
+            "felicidad": 1.91
+        },
+        {
+            "paso": 46,
+            "recursos_promedio": 5.11185003840282,
+            "num_grupos": 9,
+            "gini": 0.108,
+            "felicidad": 2.0
+        },
+        {
+            "paso": 47,
+            "recursos_promedio": 8.405019598693256,
+            "num_grupos": 9,
+            "gini": 0.122,
+            "felicidad": 2.1
+        },
+        {
+            "paso": 48,
+            "recursos_promedio": 10.460619611012037,
+            "num_grupos": 10,
+            "gini": 0.129,
+            "felicidad": 2.18
+        },
+        {
+            "paso": 49,
+            "recursos_promedio": 11.358354853304037,
+            "num_grupos": 11,
+            "gini": 0.138,
+            "felicidad": 2.26
+        },
+        {
+            "paso": 50,
+            "recursos_promedio": 13.708354149079621,
+            "num_grupos": 11,
+            "gini": 0.152,
+            "felicidad": 2.42
+        },
+        {
+            "paso": 51,
+            "recursos_promedio": 14.186110491739374,
+            "num_grupos": 11,
+            "gini": 0.194,
+            "felicidad": 2.6
+        },
+        {
+            "paso": 52,
+            "recursos_promedio": 14.704050172807689,
+            "num_grupos": 11,
+            "gini": 0.234,
+            "felicidad": 2.7
+        },
+        {
+            "paso": 53,
+            "recursos_promedio": 15.598126854800904,
+            "num_grupos": 11,
+            "gini": 0.273,
+            "felicidad": 2.75
+        },
+        {
+            "paso": 54,
+            "recursos_promedio": 15.7304071571454,
+            "num_grupos": 12,
+            "gini": 0.314,
+            "felicidad": 2.9
+        },
+        {
+            "paso": 55,
+            "recursos_promedio": 17.64234420342948,
+            "num_grupos": 12,
+            "gini": 0.349,
+            "felicidad": 2.94
+        },
+        {
+            "paso": 56,
+            "recursos_promedio": 16.28344602534883,
+            "num_grupos": 11,
+            "gini": 0.365,
+            "felicidad": 3.08
+        },
+        {
+            "paso": 57,
+            "recursos_promedio": 18.699752883833817,
+            "num_grupos": 11,
+            "gini": 0.393,
+            "felicidad": 3.15
+        },
+        {
+            "paso": 58,
+            "recursos_promedio": 18.63935694688631,
+            "num_grupos": 11,
+            "gini": 0.414,
+            "felicidad": 3.25
+        },
+        {
+            "paso": 59,
+            "recursos_promedio": 13.301498903843697,
+            "num_grupos": 11,
+            "gini": 0.343,
+            "felicidad": 2.74
+        },
+        {
+            "paso": 60,
+            "recursos_promedio": 13.902611654763783,
+            "num_grupos": 12,
+            "gini": 0.311,
+            "felicidad": 2.7
+        },
+        {
+            "paso": 61,
+            "recursos_promedio": 13.908428070125604,
+            "num_grupos": 12,
+            "gini": 0.316,
+            "felicidad": 2.71
+        },
+        {
+            "paso": 62,
+            "recursos_promedio": 13.603817520970974,
+            "num_grupos": 12,
+            "gini": 0.322,
+            "felicidad": 2.76
+        },
+        {
+            "paso": 63,
+            "recursos_promedio": 13.127923821893106,
+            "num_grupos": 12,
+            "gini": 0.315,
+            "felicidad": 2.74
+        },
+        {
+            "paso": 64,
+            "recursos_promedio": 13.5964388162733,
+            "num_grupos": 12,
+            "gini": 0.32,
+            "felicidad": 2.73
+        },
+        {
+            "paso": 65,
+            "recursos_promedio": 14.387665022745052,
+            "num_grupos": 12,
+            "gini": 0.352,
+            "felicidad": 2.79
+        },
+        {
+            "paso": 66,
+            "recursos_promedio": 15.228881452835473,
+            "num_grupos": 12,
+            "gini": 0.341,
+            "felicidad": 2.8
+        },
+        {
+            "paso": 67,
+            "recursos_promedio": 16.780850769561276,
+            "num_grupos": 12,
+            "gini": 0.329,
+            "felicidad": 2.8
+        },
+        {
+            "paso": 68,
+            "recursos_promedio": 18.764935041576333,
+            "num_grupos": 11,
+            "gini": 0.29,
+            "felicidad": 2.75
+        },
+        {
+            "paso": 69,
+            "recursos_promedio": 20.473032892329584,
+            "num_grupos": 11,
+            "gini": 0.293,
+            "felicidad": 2.83
+        },
+        {
+            "paso": 70,
+            "recursos_promedio": 22.57741632287157,
+            "num_grupos": 12,
+            "gini": 0.298,
+            "felicidad": 2.84
+        },
+        {
+            "paso": 71,
+            "recursos_promedio": 24.466859224559432,
+            "num_grupos": 12,
+            "gini": 0.315,
+            "felicidad": 2.85
+        },
+        {
+            "paso": 72,
+            "recursos_promedio": 25.62558890983016,
+            "num_grupos": 12,
+            "gini": 0.318,
+            "felicidad": 2.93
+        },
+        {
+            "paso": 73,
+            "recursos_promedio": 26.338525711822857,
+            "num_grupos": 12,
+            "gini": 0.318,
+            "felicidad": 2.94
+        },
+        {
+            "paso": 74,
+            "recursos_promedio": 28.551177768115675,
+            "num_grupos": 12,
+            "gini": 0.336,
+            "felicidad": 2.99
+        },
+        {
+            "paso": 75,
+            "recursos_promedio": 32.53266596022767,
+            "num_grupos": 12,
+            "gini": 0.345,
+            "felicidad": 3.12
+        },
+        {
+            "paso": 76,
+            "recursos_promedio": 30.493166188296517,
+            "num_grupos": 11,
+            "gini": 0.342,
+            "felicidad": 3.18
+        },
+        {
+            "paso": 77,
+            "recursos_promedio": 31.793179209355618,
+            "num_grupos": 11,
+            "gini": 0.334,
+            "felicidad": 3.24
+        },
+        {
+            "paso": 78,
+            "recursos_promedio": 31.824170983724965,
+            "num_grupos": 11,
+            "gini": 0.392,
+            "felicidad": 3.25
+        },
+        {
+            "paso": 79,
+            "recursos_promedio": 33.54821567716986,
+            "num_grupos": 11,
+            "gini": 0.398,
+            "felicidad": 3.31
+        },
+        {
+            "paso": 80,
+            "recursos_promedio": 35.32320969836645,
+            "num_grupos": 11,
+            "gini": 0.395,
+            "felicidad": 3.3
+        },
+        {
+            "paso": 81,
+            "recursos_promedio": 36.41390742603908,
+            "num_grupos": 11,
+            "gini": 0.398,
+            "felicidad": 3.29
+        },
+        {
+            "paso": 82,
+            "recursos_promedio": 36.14831812766799,
+            "num_grupos": 11,
+            "gini": 0.392,
+            "felicidad": 3.35
+        }
+    ],
+    "historia": {
+        "historiador_id": "A1",
+        "entradas": [],
+        "num_entradas": 0
+    },
+    "agentes": [
+        {
+            "id": "A24",
+            "recursos": 12.084041266685578,
+            "dinero": 0.0,
+            "necesidades": {
+                "salud": 6.099999999999996,
+                "social": 9.850000000000003,
+                "alimento": 6.540480583809502,
+                "descanso": 8.470000000000002,
+                "seguridad": 0,
+                "entretenimiento": 5.89367523235705
+            },
+            "personalidad": {
+                "lealtad": 0.37902297462079315,
+                "prudencia": 0.2268624998236849,
+                "amabilidad": 0.8134348946038865,
+                "curiosidad": 0.037692685521822145,
+                "hostilidad": 0.6310441312510544,
+                "extroversi\u00f3n": 0.9471481212945854,
+                "competitividad": 0.9992099022583247
+            },
+            "rol": "Ciudadano",
+            "grupo_id": "GA33",
+            "rango": 2.7000000000000006,
+            "conocimientos": {},
+            "planes": [],
+            "inversiones": [],
+            "alianzas": [
+                "A29"
+            ],
+            "tratados": [
+                {
+                    "socio_id": "A29",
+                    "terminos": {
+                        "tipo": "intercambio",
+                        "da": {
+                            "recurso": "recursos",
+                            "cant": 10
+                        },
+                        "recibe": {
+                            "recurso": "seguridad",
+                            "cant": 0.1
+                        }
+                    },
+                    "pasos_restantes": 7
+                }
+            ],
+            "profesion": null,
+            "experiencia": {
+                "medicina": 0,
+                "comercio": 0,
+                "combate": 10,
+                "exploracion": 0,
+                "social": 13,
+                "ingenieria": 0,
+                "agricultura": 0
+            },
+            "hitos": [],
+            "x": 10,
+            "y": 0,
+            "memoria_grafica": {
+                "nodos": [
+                    {
+                        "id": "A24",
+                        "data": {
+                            "tipo": "yo"
+                        }
+                    },
+                    {
+                        "id": "A23",
+                        "data": {
+                            "tipo": "amigo",
+                            "recursos_vistos": -5.61247967409919,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A33",
+                        "data": {
+                            "tipo": "amigo",
+                            "recursos_vistos": -3.860459982430672,
+                            "grupo": "GA33"
+                        }
+                    },
+                    {
+                        "id": "A46",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 16.581566956799076,
+                            "grupo": "G-174"
+                        }
+                    },
+                    {
+                        "id": "A16",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 38.568661275361805,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A20",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": -7.008912513987482,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A1",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 1.7961185393184784,
+                            "grupo": "GA1"
+                        }
+                    },
+                    {
+                        "id": "A40",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 15.904649785240796,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A29",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 82.41865533008702,
+                            "grupo": "GA29"
+                        }
+                    }
+                ],
+                "aristas": [
+                    {
+                        "u": "A24",
+                        "v": "A23",
+                        "data": {
+                            "tipo": "amigo",
+                            "fuerza": 0.4478228332346688,
+                            "recursos_vistos": -5.61247967409919,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "u": "A24",
+                        "v": "A33",
+                        "data": {
+                            "tipo": "amigo",
+                            "fuerza": 0.44767969526297935,
+                            "recursos_vistos": -3.860459982430672,
+                            "grupo": "GA33"
+                        }
+                    },
+                    {
+                        "u": "A24",
+                        "v": "A46",
+                        "data": {
+                            "fuerza": 0.20669796058452333,
+                            "tipo": "amigo",
+                            "recursos_vistos": 16.581566956799076,
+                            "grupo": "G-174"
+                        }
+                    },
+                    {
+                        "u": "A24",
+                        "v": "A16",
+                        "data": {
+                            "fuerza": -4.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": 38.568661275361805,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "u": "A24",
+                        "v": "A20",
+                        "data": {
+                            "fuerza": -1.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": -7.008912513987482,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "u": "A24",
+                        "v": "A1",
+                        "data": {
+                            "fuerza": 0.12007044918291385,
+                            "tipo": "amigo",
+                            "recursos_vistos": 1.7961185393184784,
+                            "grupo": "GA1"
+                        }
+                    },
+                    {
+                        "u": "A24",
+                        "v": "A40",
+                        "data": {
+                            "fuerza": -0.030205870387042824,
+                            "tipo": "conocido",
+                            "recursos_vistos": 15.904649785240796,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "u": "A24",
+                        "v": "A29",
+                        "data": {
+                            "fuerza": 1.1990231292078994,
+                            "tipo": "alianza",
+                            "recursos_vistos": 82.41865533008702,
+                            "grupo": "GA29"
+                        }
+                    }
+                ],
+                "historial_mensajes": [
+                    {
+                        "emisor": "A24",
+                        "contenido": "A29, mi seguridad est\u00e1 en peligro. \u00bfPodemos formar una alianza para protegernos mutuamente?"
+                    },
+                    {
+                        "emisor": "A36",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A24",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A29",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A23",
+                        "contenido": "Realizando HABLAR..."
+                    }
+                ]
+            }
+        },
+        {
+            "id": "A0",
+            "recursos": 138.0971756049222,
+            "dinero": 136.63464153181897,
+            "necesidades": {
+                "salud": 8.736392100753525,
+                "social": 7.6900000000000395,
+                "alimento": 1.8521960503767612,
+                "descanso": 2.030000000000012,
+                "seguridad": 4.095653030606774,
+                "entretenimiento": 4.601942222731079
+            },
+            "personalidad": {
+                "lealtad": 0.9774365374692138,
+                "prudencia": 0.29355149315827056,
+                "amabilidad": 0.7173503207614458,
+                "curiosidad": 0.6875013169262604,
+                "hostilidad": 0.4801111758510668,
+                "extroversi\u00f3n": 0.05827477524491553,
+                "competitividad": 0.07313774224922143
+            },
+            "rol": "Moderador",
+            "grupo_id": "GA0",
+            "rango": 1.0,
+            "conocimientos": {},
+            "planes": [],
+            "inversiones": [],
+            "alianzas": [],
+            "tratados": [],
+            "profesion": null,
+            "experiencia": {
+                "medicina": 0,
+                "comercio": 0,
+                "combate": 0,
+                "exploracion": 0,
+                "social": 9,
+                "ingenieria": 0,
+                "agricultura": 0
+            },
+            "hitos": [],
+            "x": 2,
+            "y": 9,
+            "memoria_grafica": {
+                "nodos": [
+                    {
+                        "id": "A0",
+                        "data": {
+                            "tipo": "yo"
+                        }
+                    },
+                    {
+                        "id": "A4",
+                        "data": {
+                            "tipo": "amigo",
+                            "recursos_vistos": null,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A6",
+                        "data": {
+                            "tipo": "amigo",
+                            "recursos_vistos": -1.5467621362360013,
+                            "grupo": "GA0"
+                        }
+                    }
+                ],
+                "aristas": [
+                    {
+                        "u": "A0",
+                        "v": "A4",
+                        "data": {
+                            "tipo": "amigo",
+                            "fuerza": 0.1018278505678614
+                        }
+                    },
+                    {
+                        "u": "A0",
+                        "v": "A6",
+                        "data": {
+                            "tipo": "amigo",
+                            "fuerza": 0.9631919992212001
+                        }
+                    }
+                ],
+                "historial_mensajes": [
+                    {
+                        "emisor": "A40",
+                        "contenido": "A0, veo que vas a recolectar alimento. Cuando termine, \u00bfpodemos comerciar? Tengo MC y necesito recur..."
+                    },
+                    {
+                        "emisor": "A40",
+                        "contenido": "\u2705 Compr\u00e9 3 recursos a A0 por el precio del mercado."
+                    },
+                    {
+                        "emisor": "A13",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A40",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A0",
+                        "contenido": "Realizando HABLAR..."
+                    }
+                ]
+            }
+        },
+        {
+            "id": "A19",
+            "recursos": 15.57380568437199,
+            "dinero": 1.3929487127742561,
+            "necesidades": {
+                "salud": 5.010833507757107,
+                "social": 9.730000000000006,
+                "alimento": 3.6440481640230487,
+                "descanso": 9.55,
+                "seguridad": 0,
+                "entretenimiento": 5.521409905479751
+            },
+            "personalidad": {
+                "lealtad": 0.3319368685998947,
+                "prudencia": 0.6679937923082676,
+                "amabilidad": 0.5518422254367633,
+                "curiosidad": 0.4586001604146036,
+                "hostilidad": 0.6723627605833479,
+                "extroversi\u00f3n": 0.2431996574062779,
+                "competitividad": 0.30620265915159095
+            },
+            "rol": "Miembro",
+            "grupo_id": "G-156",
+            "rango": 1.7999999999999998,
+            "conocimientos": {},
+            "planes": [],
+            "inversiones": [],
+            "alianzas": [],
+            "tratados": [],
+            "profesion": null,
+            "experiencia": {
+                "medicina": 0,
+                "comercio": 0,
+                "combate": 18,
+                "exploracion": 0,
+                "social": 3,
+                "ingenieria": 0,
+                "agricultura": 0
+            },
+            "hitos": [],
+            "x": 13,
+            "y": 9,
+            "memoria_grafica": {
+                "nodos": [
+                    {
+                        "id": "A19",
+                        "data": {
+                            "tipo": "yo"
+                        }
+                    },
+                    {
+                        "id": "A3",
+                        "data": {
+                            "tipo": "enemigo",
+                            "recursos_vistos": null,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A34",
+                        "data": {
+                            "tipo": "enemigo",
+                            "recursos_vistos": -4.322833198212953,
+                            "grupo": "G-880"
+                        }
+                    },
+                    {
+                        "id": "A7",
+                        "data": {
+                            "tipo": "enemigo",
+                            "recursos_vistos": -6.794446255427282,
+                            "grupo": "G-140"
+                        }
+                    },
+                    {
+                        "id": "A11",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 30.634347911287794,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A1",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 5.6932775039436745,
+                            "grupo": "GA1"
+                        }
+                    },
+                    {
+                        "id": "A27",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 0.75153524545704,
+                            "grupo": "G-156"
+                        }
+                    },
+                    {
+                        "id": "A32",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": -0.9511082469496281,
+                            "grupo": "G-156"
+                        }
+                    },
+                    {
+                        "id": "A30",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 129.03981364061636,
+                            "grupo": null
+                        }
+                    }
+                ],
+                "aristas": [
+                    {
+                        "u": "A19",
+                        "v": "A3",
+                        "data": {
+                            "tipo": "enemigo",
+                            "fuerza": -1.0
+                        }
+                    },
+                    {
+                        "u": "A19",
+                        "v": "A34",
+                        "data": {
+                            "tipo": "enemigo",
+                            "fuerza": -3.0,
+                            "recursos_vistos": -4.322833198212953,
+                            "grupo": "G-880"
+                        }
+                    },
+                    {
+                        "u": "A19",
+                        "v": "A7",
+                        "data": {
+                            "tipo": "enemigo",
+                            "fuerza": -4.0,
+                            "recursos_vistos": -6.794446255427282,
+                            "grupo": "G-140"
+                        }
+                    },
+                    {
+                        "u": "A19",
+                        "v": "A11",
+                        "data": {
+                            "fuerza": -0.013279933619509687,
+                            "tipo": "conocido",
+                            "recursos_vistos": 30.634347911287794,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "u": "A19",
+                        "v": "A1",
+                        "data": {
+                            "fuerza": -0.002612966575041148,
+                            "tipo": "conocido",
+                            "recursos_vistos": 5.6932775039436745,
+                            "grupo": "GA1"
+                        }
+                    },
+                    {
+                        "u": "A19",
+                        "v": "A27",
+                        "data": {
+                            "fuerza": -1.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": 0.75153524545704,
+                            "grupo": "G-156"
+                        }
+                    },
+                    {
+                        "u": "A19",
+                        "v": "A32",
+                        "data": {
+                            "fuerza": -1.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": -0.9511082469496281,
+                            "grupo": "G-156"
+                        }
+                    },
+                    {
+                        "u": "A19",
+                        "v": "A30",
+                        "data": {
+                            "fuerza": -0.11786810560651093,
+                            "tipo": "conocido",
+                            "recursos_vistos": 129.03981364061636,
+                            "grupo": null
+                        }
+                    }
+                ],
+                "historial_mensajes": [
+                    {
+                        "emisor": "A19",
+                        "contenido": "A40, voy a descansar para recuperar fuerzas. Despu\u00e9s podremos buscar alimento juntos."
+                    },
+                    {
+                        "emisor": "A19",
+                        "contenido": "A40, propongo una alianza de defensa mutua. Juntos podremos vigilarnos y aumentar nuestra seguridad ..."
+                    },
+                    {
+                        "emisor": "A1",
+                        "contenido": "Iniciar\u00e9 la cr\u00f3nica de nuestros tiempos: registrar\u00e9 los lutos y la fundaci\u00f3n de instituciones para q..."
+                    },
+                    {
+                        "emisor": "A19",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A40",
+                        "contenido": "Realizando HABLAR..."
+                    }
+                ]
+            }
+        },
+        {
+            "id": "A40",
+            "recursos": 50.939566775524256,
+            "dinero": 59.739578702613244,
+            "necesidades": {
+                "salud": 9,
+                "social": 6.573464188118837,
+                "alimento": 3.7309464854794383,
+                "descanso": 3.0200000000000093,
+                "seguridad": 7.261288795538865,
+                "entretenimiento": 7.294622092249593
+            },
+            "personalidad": {
+                "lealtad": 0.2951390330664194,
+                "prudencia": 0.3657919458852661,
+                "amabilidad": 0.21439543547239126,
+                "curiosidad": 0.6912510245703555,
+                "hostilidad": 0.5200726905968984,
+                "extroversi\u00f3n": 0.08977246309683617,
+                "competitividad": 0.5118310268041836
+            },
+            "rol": "Moderador",
+            "grupo_id": null,
+            "rango": 1.0,
+            "conocimientos": {},
+            "planes": [],
+            "inversiones": [],
+            "alianzas": [],
+            "tratados": [],
+            "profesion": null,
+            "experiencia": {
+                "medicina": 0,
+                "comercio": 5,
+                "combate": 0,
+                "exploracion": 0,
+                "social": 0,
+                "ingenieria": 0,
+                "agricultura": 0
+            },
+            "hitos": [],
+            "x": 0,
+            "y": 9,
+            "memoria_grafica": {
+                "nodos": [
+                    {
+                        "id": "A40",
+                        "data": {
+                            "tipo": "yo"
+                        }
+                    }
+                ],
+                "aristas": [],
+                "historial_mensajes": [
+                    {
+                        "emisor": "A1",
+                        "contenido": "Iniciar\u00e9 la cr\u00f3nica de nuestros tiempos: registrar\u00e9 los lutos y la fundaci\u00f3n de instituciones para q..."
+                    },
+                    {
+                        "emisor": "A40",
+                        "contenido": "A0, veo que vas a recolectar alimento. Cuando termine, \u00bfpodemos comerciar? Tengo MC y necesito recur..."
+                    },
+                    {
+                        "emisor": "A40",
+                        "contenido": "\u2705 Compr\u00e9 3 recursos a A0 por el precio del mercado."
+                    },
+                    {
+                        "emisor": "A40",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A0",
+                        "contenido": "Realizando HABLAR..."
+                    }
+                ]
+            }
+        },
+        {
+            "id": "A25",
+            "recursos": 106.90730663664876,
+            "dinero": 84.62433530025277,
+            "necesidades": {
+                "salud": 10,
+                "social": 7.6900000000000395,
+                "alimento": 3.1175439536402894,
+                "descanso": 6.410000000000014,
+                "seguridad": 5.889103971465957,
+                "entretenimiento": 5.200952414359728
+            },
+            "personalidad": {
+                "lealtad": 0.0955991711887052,
+                "prudencia": 0.01682108994692111,
+                "amabilidad": 0.10588183747966007,
+                "curiosidad": 0.15460829898635964,
+                "hostilidad": 0.5538217671315435,
+                "extroversi\u00f3n": 0.765434111663791,
+                "competitividad": 0.11762357099542542
+            },
+            "rol": "Miembro",
+            "grupo_id": "G-140",
+            "rango": 1.0,
+            "conocimientos": {},
+            "planes": [],
+            "inversiones": [],
+            "alianzas": [],
+            "tratados": [],
+            "profesion": null,
+            "experiencia": {
+                "medicina": 0,
+                "comercio": 0,
+                "combate": 4,
+                "exploracion": 0,
+                "social": 1,
+                "ingenieria": 4,
+                "agricultura": 0
+            },
+            "hitos": [],
+            "x": 6,
+            "y": 16,
+            "memoria_grafica": {
+                "nodos": [
+                    {
+                        "id": "A25",
+                        "data": {
+                            "tipo": "yo"
+                        }
+                    },
+                    {
+                        "id": "A21",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 13.985710658391532,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A11",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 56.549106754848175,
+                            "grupo": null
+                        }
+                    }
+                ],
+                "aristas": [
+                    {
+                        "u": "A25",
+                        "v": "A21",
+                        "data": {
+                            "tipo": "conocido",
+                            "fuerza": -0.03359658607328958
+                        }
+                    },
+                    {
+                        "u": "A25",
+                        "v": "A11",
+                        "data": {
+                            "fuerza": -2.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": 56.549106754848175,
+                            "grupo": null
+                        }
+                    }
+                ],
+                "historial_mensajes": [
+                    {
+                        "emisor": "A25",
+                        "contenido": "\u00a1Voy a llenar mi bolsa de provisiones antes de que cualquiera se atreva a cruzar mi camino!"
+                    },
+                    {
+                        "emisor": "A1",
+                        "contenido": "Iniciar\u00e9 la cr\u00f3nica de nuestros tiempos: registrar\u00e9 los lutos y la fundaci\u00f3n de instituciones para q..."
+                    },
+                    {
+                        "emisor": "A37",
+                        "contenido": "\u00a1Hey A25! Me alegra verte por aqu\u00ed. \u00bfC\u00f3mo te va con la recolecci\u00f3n? Siempre es buen momento para int..."
+                    },
+                    {
+                        "emisor": "A25",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A37",
+                        "contenido": "Realizando HABLAR..."
+                    }
+                ]
+            }
+        },
+        {
+            "id": "A29",
+            "recursos": 71.99733026989286,
+            "dinero": 94.0,
+            "necesidades": {
+                "salud": 10,
+                "social": 9.610000000000008,
+                "alimento": 2.911915663430521,
+                "descanso": 5.930000000000016,
+                "seguridad": 6.31326863851594,
+                "entretenimiento": 5.978215372840054
+            },
+            "personalidad": {
+                "lealtad": 0.18767241914113653,
+                "prudencia": 0.38979133051821957,
+                "amabilidad": 0.8418030801662127,
+                "curiosidad": 0.8661109408577796,
+                "hostilidad": 0.491833316915377,
+                "extroversi\u00f3n": 0.6803803189754838,
+                "competitividad": 0.31959086565978023
+            },
+            "rol": "Ciudadano",
+            "grupo_id": "GA29",
+            "rango": 2.000000000000001,
+            "conocimientos": {},
+            "planes": [],
+            "inversiones": [],
+            "alianzas": [
+                "A24"
+            ],
+            "tratados": [
+                {
+                    "socio_id": "A24",
+                    "terminos": {
+                        "tipo": "intercambio",
+                        "da": {
+                            "recurso": "recursos",
+                            "cant": 10
+                        },
+                        "recibe": {
+                            "recurso": "seguridad",
+                            "cant": 0.1
+                        }
+                    },
+                    "pasos_restantes": 8
+                }
+            ],
+            "profesion": null,
+            "experiencia": {
+                "medicina": 0,
+                "comercio": 1,
+                "combate": 0,
+                "exploracion": 0,
+                "social": 9,
+                "ingenieria": 0,
+                "agricultura": 0
+            },
+            "hitos": [],
+            "x": 11,
+            "y": 1,
+            "memoria_grafica": {
+                "nodos": [
+                    {
+                        "id": "A29",
+                        "data": {
+                            "tipo": "yo"
+                        }
+                    },
+                    {
+                        "id": "A16",
+                        "data": {
+                            "tipo": "amigo",
+                            "recursos_vistos": null,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A20",
+                        "data": {
+                            "tipo": "amigo",
+                            "recursos_vistos": -2.8172486598578628,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A22",
+                        "data": {
+                            "tipo": "amigo",
+                            "recursos_vistos": 40.83084898545907,
+                            "grupo": "GA29"
+                        }
+                    },
+                    {
+                        "id": "A24",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 2.3874780141427223,
+                            "grupo": "GA33"
+                        }
+                    }
+                ],
+                "aristas": [
+                    {
+                        "u": "A29",
+                        "v": "A16",
+                        "data": {
+                            "tipo": "amigo",
+                            "fuerza": 0.1442090676595424
+                        }
+                    },
+                    {
+                        "u": "A29",
+                        "v": "A20",
+                        "data": {
+                            "tipo": "amigo",
+                            "fuerza": 0.07650568715390316,
+                            "recursos_vistos": -2.8172486598578628,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "u": "A29",
+                        "v": "A22",
+                        "data": {
+                            "tipo": "amigo",
+                            "fuerza": 0.23530734658387473,
+                            "recursos_vistos": 40.83084898545907,
+                            "grupo": "GA29"
+                        }
+                    },
+                    {
+                        "u": "A29",
+                        "v": "A24",
+                        "data": {
+                            "fuerza": 1.1626159777290552,
+                            "tipo": "alianza",
+                            "recursos_vistos": 2.3874780141427223,
+                            "grupo": "GA33"
+                        }
+                    }
+                ],
+                "historial_mensajes": [
+                    {
+                        "emisor": "A24",
+                        "contenido": "A29, mi seguridad est\u00e1 en peligro. \u00bfPodemos formar una alianza para protegernos mutuamente?"
+                    },
+                    {
+                        "emisor": "A36",
+                        "contenido": "\u00a1Prep\u00e1rate, A29! Tus recursos ser\u00e1n m\u00edos y el G-174 se fortalecer\u00e1 con tu ca\u00edda."
+                    },
+                    {
+                        "emisor": "A36",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A24",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A29",
+                        "contenido": "Realizando HABLAR..."
+                    }
+                ]
+            }
+        },
+        {
+            "id": "A41",
+            "recursos": -6.782172749942428,
+            "dinero": 100.0,
+            "necesidades": {
+                "salud": 5.380015664566511,
+                "social": 6.331334905397153,
+                "alimento": 9.154404261385451,
+                "descanso": 7.320000000000005,
+                "seguridad": 7.408911528381978,
+                "entretenimiento": 6.717902865204324
+            },
+            "personalidad": {
+                "lealtad": 0.7230608445160605,
+                "prudencia": 0.1984385649715994,
+                "amabilidad": 0.29104568354097826,
+                "curiosidad": 0.8604127005972453,
+                "hostilidad": 0.8718980980004926,
+                "extroversi\u00f3n": 0.48076097651176253,
+                "competitividad": 0.5969562211550133
+            },
+            "rol": "Ciudadano",
+            "grupo_id": null,
+            "rango": 1.0,
+            "conocimientos": {},
+            "planes": [],
+            "inversiones": [],
+            "alianzas": [],
+            "tratados": [],
+            "profesion": null,
+            "experiencia": {
+                "medicina": 0,
+                "comercio": 0,
+                "combate": 30,
+                "exploracion": 0,
+                "social": 0,
+                "ingenieria": 0,
+                "agricultura": 0
+            },
+            "hitos": [],
+            "x": 10,
+            "y": 16,
+            "memoria_grafica": {
+                "nodos": [
+                    {
+                        "id": "A41",
+                        "data": {
+                            "tipo": "yo"
+                        }
+                    },
+                    {
+                        "id": "A43",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 4.335631211959678,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A28",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": -5.628408758353023,
+                            "grupo": "GA36"
+                        }
+                    },
+                    {
+                        "id": "A46",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 16.24823255843622,
+                            "grupo": "G-174"
+                        }
+                    },
+                    {
+                        "id": "A4",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 55.56154527266805,
+                            "grupo": "GA0"
+                        }
+                    },
+                    {
+                        "id": "A47",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": -2.693452225765296,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A36",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 4.857439934020325,
+                            "grupo": "GA36"
+                        }
+                    },
+                    {
+                        "id": "A42",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": -4.440381408387996,
+                            "grupo": "G-880"
+                        }
+                    },
+                    {
+                        "id": "A45",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 4.527744634079769,
+                            "grupo": "G-880"
+                        }
+                    }
+                ],
+                "aristas": [
+                    {
+                        "u": "A41",
+                        "v": "A43",
+                        "data": {
+                            "fuerza": -4.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": 4.335631211959678,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "u": "A41",
+                        "v": "A28",
+                        "data": {
+                            "fuerza": -4.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": -5.628408758353023,
+                            "grupo": "GA36"
+                        }
+                    },
+                    {
+                        "u": "A41",
+                        "v": "A46",
+                        "data": {
+                            "fuerza": -1.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": 16.24823255843622,
+                            "grupo": "G-174"
+                        }
+                    },
+                    {
+                        "u": "A41",
+                        "v": "A4",
+                        "data": {
+                            "fuerza": -1.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": 55.56154527266805,
+                            "grupo": "GA0"
+                        }
+                    },
+                    {
+                        "u": "A41",
+                        "v": "A47",
+                        "data": {
+                            "fuerza": -3.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": -2.693452225765296,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "u": "A41",
+                        "v": "A36",
+                        "data": {
+                            "fuerza": -1.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": 4.857439934020325,
+                            "grupo": "GA36"
+                        }
+                    },
+                    {
+                        "u": "A41",
+                        "v": "A42",
+                        "data": {
+                            "fuerza": -1.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": -4.440381408387996,
+                            "grupo": "G-880"
+                        }
+                    },
+                    {
+                        "u": "A41",
+                        "v": "A45",
+                        "data": {
+                            "fuerza": -1.0,
+                            "tipo": "enemigo",
+                            "recursos_vistos": 4.527744634079769,
+                            "grupo": "G-880"
+                        }
+                    }
+                ],
+                "historial_mensajes": [
+                    {
+                        "emisor": "A1",
+                        "contenido": "Voy a buscar algo de comer para mantenerme con vida."
+                    },
+                    {
+                        "emisor": "A41",
+                        "contenido": "\u00a1A1, prep\u00e1rate! Tu conocimiento no te salvar\u00e1 de mi fuerza."
+                    },
+                    {
+                        "emisor": "A1",
+                        "contenido": "Iniciar\u00e9 la cr\u00f3nica de nuestros tiempos: registrar\u00e9 los lutos y la fundaci\u00f3n de instituciones para q..."
+                    },
+                    {
+                        "emisor": "A41",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A1",
+                        "contenido": "Realizando HABLAR..."
+                    }
+                ]
+            }
+        },
+        {
+            "id": "A23",
+            "recursos": 47.04637409965889,
+            "dinero": 100.0,
+            "necesidades": {
+                "salud": 9,
+                "social": 5.86510899553002,
+                "alimento": 4.776146639524125,
+                "descanso": 6.980000000000011,
+                "seguridad": 5.8169759939694,
+                "entretenimiento": 6.993037927046631
+            },
+            "personalidad": {
+                "lealtad": 0.17775332775706087,
+                "prudencia": 0.4385819403133615,
+                "amabilidad": 0.40323574771268544,
+                "curiosidad": 0.944962225498504,
+                "hostilidad": 0.1396379812380848,
+                "extroversi\u00f3n": 0.606613459022985,
+                "competitividad": 0.5726297269474413
+            },
+            "rol": "Ciudadano",
+            "grupo_id": null,
+            "rango": 1.0,
+            "conocimientos": {},
+            "planes": [],
+            "inversiones": [],
+            "alianzas": [],
+            "tratados": [],
+            "profesion": null,
+            "experiencia": {
+                "medicina": 0,
+                "comercio": 0,
+                "combate": 0,
+                "exploracion": 0,
+                "social": 0,
+                "ingenieria": 0,
+                "agricultura": 0
+            },
+            "hitos": [],
+            "x": 7,
+            "y": 0,
+            "memoria_grafica": {
+                "nodos": [
+                    {
+                        "id": "A23",
+                        "data": {
+                            "tipo": "yo"
+                        }
+                    },
+                    {
+                        "id": "A16",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 41.973045865424076,
+                            "grupo": null
+                        }
+                    }
+                ],
+                "aristas": [
+                    {
+                        "u": "A23",
+                        "v": "A16",
+                        "data": {
+                            "fuerza": 0.5,
+                            "tipo": "alianza",
+                            "recursos_vistos": 41.973045865424076,
+                            "grupo": null
+                        }
+                    }
+                ],
+                "historial_mensajes": [
+                    {
+                        "emisor": "A1",
+                        "contenido": "Iniciar\u00e9 la cr\u00f3nica de nuestros tiempos: registrar\u00e9 los lutos y la fundaci\u00f3n de instituciones para q..."
+                    },
+                    {
+                        "emisor": "A12",
+                        "contenido": "A23, voy al norte hacia el hospital para obtener medicina y mejorar mi seguridad. Acomp\u00e1\u00f1ame si pued..."
+                    },
+                    {
+                        "emisor": "A24",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A12",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A23",
+                        "contenido": "Realizando HABLAR..."
+                    }
+                ]
+            }
+        },
+        {
+            "id": "A13",
+            "recursos": 9.58692788371573,
+            "dinero": 10.996943636072382,
+            "necesidades": {
+                "salud": 8.899999999999999,
+                "social": 8.073340794155856,
+                "alimento": 8.522805695046594,
+                "descanso": 5.660000000000009,
+                "seguridad": 0,
+                "entretenimiento": 6.831079682292493
+            },
+            "personalidad": {
+                "lealtad": 0.7104247755574875,
+                "prudencia": 0.8443434556552574,
+                "amabilidad": 0.1817023991969846,
+                "curiosidad": 0.578785435750472,
+                "hostilidad": 0.2540596737943679,
+                "extroversi\u00f3n": 0.1852697201762299,
+                "competitividad": 0.481670724476407
+            },
+            "rol": "Moderador",
+            "grupo_id": "G-948",
+            "rango": 1.5999999999999999,
+            "conocimientos": {},
+            "planes": [],
+            "inversiones": [
+                {
+                    "monto": 2.212114201610911,
+                    "paso_final": 83,
+                    "interes": 0.13581366438692605
+                }
+            ],
+            "alianzas": [
+                "A39"
+            ],
+            "tratados": [
+                {
+                    "socio_id": "A39",
+                    "terminos": {
+                        "tipo": "intercambio",
+                        "da": {
+                            "recurso": "recursos",
+                            "cant": 10
+                        },
+                        "recibe": {
+                            "recurso": "seguridad",
+                            "cant": 0.1
+                        }
+                    },
+                    "pasos_restantes": 5
+                }
+            ],
+            "profesion": null,
+            "experiencia": {
+                "medicina": 0,
+                "comercio": 3,
+                "combate": 0,
+                "exploracion": 0,
+                "social": 1,
+                "ingenieria": 2,
+                "agricultura": 1
+            },
+            "hitos": [],
+            "x": 2,
+            "y": 5,
+            "memoria_grafica": {
+                "nodos": [
+                    {
+                        "id": "A13",
+                        "data": {
+                            "tipo": "yo"
+                        }
+                    },
+                    {
+                        "id": "A28",
+                        "data": {
+                            "tipo": "enemigo",
+                            "recursos_vistos": null,
+                            "grupo": null
+                        }
+                    },
+                    {
+                        "id": "A33",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 5.406816708202568,
+                            "grupo": "G-948"
+                        }
+                    },
+                    {
+                        "id": "A39",
+                        "data": {
+                            "tipo": "conocido",
+                            "recursos_vistos": 3.3454834993742173,
+                            "grupo": "G-191"
+                        }
+                    }
+                ],
+                "aristas": [
+                    {
+                        "u": "A13",
+                        "v": "A28",
+                        "data": {
+                            "tipo": "enemigo",
+                            "fuerza": -1.0
+                        }
+                    },
+                    {
+                        "u": "A13",
+                        "v": "A33",
+                        "data": {
+                            "fuerza": 0.13554986607785613,
+                            "tipo": "amigo",
+                            "recursos_vistos": 5.406816708202568,
+                            "grupo": "G-948"
+                        }
+                    },
+                    {
+                        "u": "A13",
+                        "v": "A39",
+                        "data": {
+                            "fuerza": 0.5,
+                            "tipo": "alianza",
+                            "recursos_vistos": 3.3454834993742173,
+                            "grupo": "G-191"
+                        }
+                    }
+                ],
+                "historial_mensajes": [
+                    {
+                        "emisor": "A13",
+                        "contenido": "No he podido fundar la instituci\u00f3n: Se requieren al menos 100 MC para fundar una instituci\u00f3n."
+                    },
+                    {
+                        "emisor": "A39",
+                        "contenido": "Voy a descansar para recuperar energ\u00edas y luego continuar con la misi\u00f3n m\u00e9dica."
+                    },
+                    {
+                        "emisor": "A13",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A49",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A39",
+                        "contenido": "Realizando HABLAR..."
+                    }
+                ]
+            }
+        },
+        {
+            "id": "A1",
+            "recursos": 28.05751699130283,
+            "dinero": 100.0,
+            "necesidades": {
+                "salud": 9,
+                "social": 7.294371712010841,
+                "alimento": 2.1627350589580043,
+                "descanso": 2.810000000000013,
+                "seguridad": 4.168425738266491,
+                "entretenimiento": 4.135242693132411
+            },
+            "personalidad": {
+                "lealtad": 0.27948701967803,
+                "prudencia": 0.8828575132448938,
+                "amabilidad": 0.893327869496158,
+                "curiosidad": 0.2598258544904801,
+                "hostilidad": 0.8237086361052562,
+                "extroversi\u00f3n": 0.7768048345015839,
+                "competitividad": 0.49304095020251226
+            },
+            "rol": "Historiador",
+            "grupo_id": "GA1",
+            "rango": 1.0,
+            "conocimientos": {},
+            "planes": [],
+            "inversiones": [],
+            "alianzas": [],
+            "tratados": [],
+            "profesion": null,
+            "experiencia": {
+                "medicina": 0,
+                "comercio": 0,
+                "combate": 0,
+                "exploracion": 0,
+                "social": 1,
+                "ingenieria": 0,
+                "agricultura": 0
+            },
+            "hitos": [],
+            "x": 9,
+            "y": 17,
+            "memoria_grafica": {
+                "nodos": [
+                    {
+                        "id": "A1",
+                        "data": {
+                            "tipo": "yo"
+                        }
+                    },
+                    {
+                        "id": "A14",
+                        "data": {
+                            "tipo": "amigo",
+                            "recursos_vistos": -1.6222607564009723,
+                            "grupo": null
+                        }
+                    }
+                ],
+                "aristas": [
+                    {
+                        "u": "A1",
+                        "v": "A14",
+                        "data": {
+                            "tipo": "amigo",
+                            "fuerza": 0.005372606098045435
+                        }
+                    }
+                ],
+                "historial_mensajes": [
+                    {
+                        "emisor": "A41",
+                        "contenido": "A1, prep\u00e1rate: pronto caer\u00e1s bajo mi dominio mientras yo adquiere el saber de los m\u00e9dicos."
+                    },
+                    {
+                        "emisor": "A1",
+                        "contenido": "Iniciar\u00e9 la cr\u00f3nica de nuestros tiempos: registrar\u00e9 los lutos y la fundaci\u00f3n de instituciones para q..."
+                    },
+                    {
+                        "emisor": "A38",
+                        "contenido": "Voy a dirigirme al hospital para curarme, mi salud est\u00e1 cr\u00edtica."
+                    },
+                    {
+                        "emisor": "A41",
+                        "contenido": "Realizando HABLAR..."
+                    },
+                    {
+                        "emisor": "A1",
+                        "contenido": "Realizando HABLAR..."
+                    }
+                ]
+            }
+        },
+        {
+            "id": "A12",
+            "recursos": 26.80789247808877,
+            "dinero": 12.615139739593289,
+            "necesidades": {
+                "salud": 4.42900685112742,
+                "social": 9.430000000000012,
+                "alimento": 6.249437047052446,
+                "descanso": 9.010000000000002,
+                "seguridad": 0,
+                "entretenimiento": 5.624193385793385
+            },
+            "personalidad": {
+                "lealtad": 0.9566905648390498,
+                "prudencia": 0.8689161940382536,
+                "amabilidad": 0.11127606486312014,
+                "curiosidad": 0.19710787622596138,
+                "hostilidad": 0.21572197045699926

@@ -15,6 +15,7 @@ import {
     ChevronLeft,
     Play
 } from 'lucide-react';
+import { synthesizer } from '@/utils/SoundSynthesizer';
 
 interface Slide {
     id: number;
@@ -47,7 +48,7 @@ const slides: Slide[] = [
         details: [
             "Constantes Vitales: Monitorea la barra de salud sobre sus cabezas. Si llega a cero, el agente muere 🪦.",
             "Instinto: Los agentes buscan comida y hospitales automáticamente si están heridos.",
-            "Facciones: Los agentes forman grupos con colores únicos, firman tratados y patrullan juntos en formación 🛡️."
+            "Grupos: Los agentes forman grupos con colores únicos, firman tratados y patrullan juntos en formación 🛡️."
         ]
     },
     {
@@ -59,7 +60,7 @@ const slides: Slide[] = [
         details: [
             "Control Climático: Desata tormentas 🌪️ o cielos despejados ☀️ para afectar el movimiento.",
             "Creación de Vida: Spawnea nuevos agentes en cualquier punto del mapa.",
-            "Diplomacia: Observa cómo las facciones cooperan o compiten por el territorio en tiempo real."
+            "Diplomacia: Observa cómo los grupos cooperan o compiten por el territorio en tiempo real."
         ]
     }
 ];
@@ -68,6 +69,7 @@ export default function InstructionOverlay({ onComplete }: { onComplete: () => v
     const [currentSlide, setCurrentSlide] = useState(0);
 
     const nextSlide = () => {
+        synthesizer.resume();
         if (currentSlide < slides.length - 1) {
             setCurrentSlide(currentSlide + 1);
         } else {
@@ -76,6 +78,7 @@ export default function InstructionOverlay({ onComplete }: { onComplete: () => v
     };
 
     const prevSlide = () => {
+        synthesizer.resume();
         if (currentSlide > 0) {
             setCurrentSlide(currentSlide - 1);
         }

@@ -7,7 +7,7 @@ import useGameStore from "@/store/useGameStore";
 export default function NetworkView() {
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const { agents, relationships, selectAgent, selectedAgentId } = useGameStore();
+    const { agents, relationships, selectAgent, selectedAgentId, speechBubbles } = useGameStore();
 
     useEffect(() => {
         if (!svgRef.current || !containerRef.current || agents.length === 0) return;
@@ -29,10 +29,10 @@ export default function NetworkView() {
 
         // 2. Simulación de fuerza
         const simulation = d3.forceSimulation(nodes as any)
-            .force("link", d3.forceLink(links as any).id((d: any) => d.id).distance(120))
-            .force("charge", d3.forceManyBody().strength(-300))
+            .force("link", d3.forceLink(links as any).id((d: any) => d.id).distance(150))
+            .force("charge", d3.forceManyBody().strength(-400))
             .force("center", d3.forceCenter(width / 2, height / 2))
-            .force("collide", d3.forceCollide().radius(25));
+            .force("collide", d3.forceCollide().radius(40));
 
         // 3. Renderizado - Estilo Neon/Cyber
         const g = svg.append("g");
@@ -57,7 +57,7 @@ export default function NetworkView() {
             .selectAll("line")
             .data(links as any[])
             .join("line")
-            .attr("stroke-width", (d) => Math.sqrt(d.strength || 1) * 1.5)
+            .attr("stroke-width", (d) => Math.sqrt(Math.abs(d.strength || 1)) * 1.5)
             .attr("stroke", (d) => {
                 if (d.type === 'amigo') return "#00e676";
                 if (d.type === 'enemigo') return "#ff1744";
@@ -71,6 +71,7 @@ export default function NetworkView() {
             .selectAll("g")
             .data(nodes)
             .join("g")
+            .attr("class", "agent-node")
             .attr("cursor", "pointer")
             .call(d3.drag<any, any>()
                 .on("start", (event, d) => {
@@ -96,7 +97,7 @@ export default function NetworkView() {
         node.append("circle")
             .attr("r", 15)
             .attr("fill", "none")
-            .attr("stroke", (d) => d.grupo_id ? "#00e676" : "#7c4dff")
+            .attr("stroke", (d) => d.color || "#7c4dff")
             .attr("stroke-width", 1)
             .attr("opacity", 0.5)
             .attr("filter", "url(#neon-glow)");
@@ -105,7 +106,7 @@ export default function NetworkView() {
         node.append("circle")
             .attr("r", 8)
             .attr("fill", "#0a0b10")
-            .attr("stroke", (d) => d.id === selectedAgentId ? "#ffffff" : (d.grupo_id ? "#00e676" : "#7c4dff"))
+            .attr("stroke", (d) => d.id === selectedAgentId ? "#ffffff" : (d.color || "#7c4dff"))
             .attr("stroke-width", (d) => d.id === selectedAgentId ? 2 : 1.5);
 
         // Icono/Texto
@@ -128,6 +129,81 @@ export default function NetworkView() {
             .text(d => d.profesion || "Agente")
             .attr("opacity", d => d.id === selectedAgentId ? 1 : 0);
 
+
+        // --- BURBUJAS DE DIÁLOGO ---
+        const bubbleContainer = g.append("g").attr("class", "bubble-container");
+
+        const renderBubbles = () => {
+            bubbleContainer.selectAll("*").remove();
+
+            if (!speechBubbles) return;
+
+            Object.entries(speechBubbles).forEach(([agentId, bubble]) => {
+                const n = nodes.find(node => node.id === agentId);
+                if (n) {
+                    const bx = (n as any).x;
+                    const by = (n as any).y - 25;
+
+                    const bubbleG = bubbleContainer.append("g")
+                        .attr("transform", `translate(${bx}, ${by})`);
+
+                    // Lógica de envuelto idéntica a WorldViewport
+                    const maxWidth = 120;
+                    const words = bubble.text.split(/\s+/);
+                    const lines: string[] = [];
+                    let currentLine = "";
+                    const charsPerLine = Math.floor(maxWidth / 7);
+
+                    words.forEach(word => {
+                        if ((currentLine + word).length > charsPerLine) {
+                            lines.push(currentLine.trim());
+                            currentLine = word + " ";
+                        } else {
+                            currentLine += word + " ";
+                        }
+                    });
+                    lines.push(currentLine.trim());
+
+                    const lineHeight = 12;
+                    const bubblePadding = 10;
+                    const bubbleWidth = (Math.max(...lines.map(l => l.length)) * 7) + 20;
+                    const bubbleHeight = (lines.length * lineHeight) + bubblePadding;
+
+                    // Fondo
+                    bubbleG.append("rect")
+                        .attr("x", -bubbleWidth / 2)
+                        .attr("y", -bubbleHeight)
+                        .attr("width", bubbleWidth)
+                        .attr("height", bubbleHeight)
+                        .attr("rx", 6)
+                        .attr("fill", "rgba(10, 11, 16, 0.95)")
+                        .attr("stroke", "#7c4dff")
+                        .attr("stroke-width", 1.5)
+                        .attr("filter", "url(#neon-glow)");
+
+                    // Flecha
+                    bubbleG.append("path")
+                        .attr("d", `M -5 0 L 5 0 L 0 5 Z`)
+                        .attr("fill", "#7c4dff");
+
+                    // Texto
+                    const textElement = bubbleG.append("text")
+                        .attr("text-anchor", "middle")
+                        .attr("font-size", "10px")
+                        .attr("fill", "#fff")
+                        .attr("font-family", "monospace")
+                        .attr("y", -bubbleHeight + 14);
+
+                    lines.forEach((line, i) => {
+                        textElement.append("tspan")
+                            .attr("x", 0)
+                            .attr("dy", i === 0 ? 0 : lineHeight)
+                            .text(line);
+                    });
+                }
+            });
+        };
+
         // Actualización en cada tick
         simulation.on("tick", () => {
             link
@@ -138,12 +214,27 @@ export default function NetworkView() {
 
             node
                 .attr("transform", (d: any) => `translate(${d.x},${d.y})`);
+
+            // Reposicionar burbujas en el contenedor existente (más eficiente que recrear todo en cada tick)
+            bubbleContainer.selectAll("g")
+                .data(Object.keys(speechBubbles || {}))
+                .each(function (agentId) {
+                    const n = nodes.find(node => node.id === agentId);
+                    if (n) {
+                        d3.select(this).attr("transform", `translate(${(n as any).x}, ${(n as any).y - 25})`);
+                    }
+                });
         });
 
-        // Limpieza
-        return () => simulation.stop();
+        // Si cambian los mensajes, recreamos las burbujas
+        renderBubbles();
 
-    }, [agents, relationships, selectedAgentId, selectAgent]);
+        // Limpieza
+        return () => {
+            simulation.stop();
+        };
+
+    }, [agents, relationships, selectedAgentId, selectAgent, speechBubbles]);
 
     return (
         <div ref={containerRef} className="w-full h-full relative bg-[#030305] overflow-hidden">

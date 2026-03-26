@@ -1,0 +1,275 @@
+from typing import TypedDict, List, Dict, Any, Optional
+from langgraph.graph import StateGraph, END
+try:
+    from langgraph.checkpoint.sqlite import SqliteSaver
+except ImportError:
+    from langgraph.checkpoint import SqliteSaver
+import random
+from cerebro_llm import cerebro_llm
+from herramientas import herramientas
+
+# Contexto global para la instancia de ModeloRelacional
+_GLOBAL_MODELO_INSTANCE = None
+
+def set_global_modelo_instance(modelo_instance):
+    global _GLOBAL_MODELO_INSTANCE
+    _GLOBAL_MODELO_INSTANCE = modelo_instance
+
+def get_global_modelo_instance():
+    global _GLOBAL_MODELO_INSTANCE
+    if _GLOBAL_MODELO_INSTANCE is None:
+        raise RuntimeError("ModeloRelacional instance not set in global context.")
+    return _GLOBAL_MODELO_INSTANCE
+
+# Estado Cognitivo del Agente
+class AgentState(TypedDict):
+    agente_yo_id: str
+    agente_otro_id: Optional[str]
+    
+    # Campos de estado del grafo
+    pensamiento_actual: str
+    accion_elegida: Dict
+    info_externa: str
+    mensaje_generado: str
+    mensaje_llm: str
+    es_global: bool
+    es_grupal: bool
+    privado: bool
+    planes: List[Dict]
+
+def actuar(state: AgentState):
+    """Nodo 1: El agente piensa y decide una acción en un solo paso."""
+    # Reconstruir el objeto Agente a partir de su representación de diccionario
+    # Necesitamos la instancia del modelo para reconstruir el agente
+    modelo_instance = get_global_modelo_instance()
+    agente_yo_id = state['agente_yo_id']
+    print(f"DEBUG: Buscando agente con ID: {agente_yo_id}")
+    agente_yo = modelo_instance.get_agent_by_id(agente_yo_id)
+    print(f"DEBUG: Resultado de get_agent_by_id para {agente_yo_id}: {agente_yo}")
+    
+    agente_otro_id = state.get('agente_otro_id')
+    agente_otro = modelo_instance.get_agent_by_id(agente_otro_id) if agente_otro_id else None
+    
+    if agente_yo is None:
+        print(f"ERROR: Agente con ID {agente_yo_id} no encontrado en el modelo. Terminando el paso del grafo para este agente.")
+        # Devolver un estado que indique que el agente no existe o no puede actuar
+        return {
+            "pensamiento_actual": "Agente no encontrado o inactivo.",
+            "accion_elegida": {"nombre": "NO_ACCION", "argumentos": {}},
+            "mensaje_llm": "Agente no encontrado o inactivo."
+        }
+    
+    print(f"🤔 Agente {agente_yo.unique_id} está pensando...")
+
+    contexto = f"Necesidades: {agente_yo.necesidades}. "
+    if hasattr(agente_yo, 'ultimo_mensaje_recibido') and agente_yo.ultimo_mensaje_recibido:
+        msg = agente_yo.ultimo_mensaje_recibido
+        contexto += f"Mensaje de {msg['emisor']}: '{msg['contenido']}'. "
+    if hasattr(agente_yo, 'mensaje_arquitecto') and agente_yo.mensaje_arquitecto:
+        msg = agente_yo.mensaje_arquitecto
+        contexto += f"¡Orden del Arquitecto!: '{msg['contenido']}'. "
+    
+    decision = cerebro_llm.generar_pensamiento_y_accion(agente_yo, agente_otro, contexto)
+    
+    # Extraer el mensaje del LLM si está disponible
+    mensaje_llm = decision.get("mensaje", "")
+    
+    return {
+        "pensamiento_actual": decision.get("pensamiento", "No pude pensar con claridad."),
+        "accion_elegida": decision.get("accion", {"nombre": "HABLAR", "argumentos": {"mensaje": "Estoy confundido."}}),
+        "mensaje_llm": mensaje_llm
+    }
+
+# Lista de herramientas que requieren ejecución externa y devuelven información
+HERRAMIENTAS_EXTERNAS = ["web_search", "ejecutar_codigo_seguro", "scrapear_url", "consultar_mercado"]
+
+def decidir_ruta(state: AgentState) -> str:
+    """Nodo 2: Decide la ruta basada en el tipo de acción."""
+    # Reconstruir el objeto Agente para acceder a sus atributos
+    modelo_instance = get_global_modelo_instance()
+    agente_yo = modelo_instance.get_agent_by_id(state['agente_yo_id'])
+
+    accion_nombre = state['accion_elegida'].get('nombre', 'HABLAR')
+    if accion_nombre in HERRAMIENTAS_EXTERNAS:
+        print(f"🛠️  Agente {agente_yo.unique_id} usará la herramienta externa: {accion_nombre}")
+        return "ejecutar_herramientas"
+    else:
+        print(f"🎬 Agente {agente_yo.unique_id} realizará la acción de juego: {accion_nombre}")
+        return "comunicar"
+
+def ejecutar_herramientas(state: AgentState):
+    """Nodo 3: Ejecuta una herramienta externa (web search, etc.)."""
+    # Reconstruir el objeto Agente para acceder a sus atributos
+    modelo_instance = get_global_modelo_instance()
+    agente_yo = modelo_instance.get_agent_by_id(state['agente_yo_id'])
+
+    accion = state['accion_elegida']
+    nombre_herramienta = accion.get("nombre")
+    argumentos = accion.get("argumentos", {})
+    
+    resultado = f"La herramienta {nombre_herramienta} no se pudo ejecutar."
+    
+    if hasattr(herramientas, nombre_herramienta):
+        try:
+            funcion_herramienta = getattr(herramientas, nombre_herramienta)
+            import inspect
+            sig = inspect.signature(funcion_herramienta)
+            if 'agente_id' in sig.parameters:
+                argumentos['agente_id'] = agente_yo.unique_id
+            
+            resultado = funcion_herramienta(**argumentos)
+        except Exception as e:
+            resultado = f"Error al ejecutar la herramienta {nombre_herramienta}: {e}"
+    
+    return {"info_externa": str(resultado)}
+
+def comunicar(state: AgentState):
+    """Nodo 4: Genera el mensaje final basado en la acción o el resultado de la herramienta."""
+    # Reconstruir el objeto Agente para acceder a sus atributos
+    modelo_instance = get_global_modelo_instance()
+    agente_yo = modelo_instance.get_agent_by_id(state['agente_yo_id'])
+
+    accion = state['accion_elegida']
+    nombre_accion = accion.get('nombre', 'HABLAR')
+    argumentos = accion.get('argumentos', {})
+    info_externa = state.get('info_externa')
+    pensamiento = state.get('pensamiento_actual', 'Estoy actuando.')
+    mensaje_llm = state.get('mensaje_llm', '')
+
+    mensaje_final = ""
+    
+    if mensaje_llm and mensaje_llm.strip():
+        mensaje_final = mensaje_llm
+    elif nombre_accion == 'HABLAR' and 'mensaje' in argumentos:
+        mensaje_final = argumentos.get('mensaje', "...")
+    elif info_externa:
+        mensaje_final = f"Tras investigar sobre '{argumentos.get('query', 'algo')}', he descubierto que: {info_externa[:150]}..."
+    else:
+        if nombre_accion == 'RECOLECTAR':
+            if agente_yo.necesidades.get('alimento', 5) > 7:
+                mensaje_final = f"¡Necesito comida urgentemente! Voy a buscar recursos ahora mismo."
+            else:
+                mensaje_final = f"Voy a recolectar algunos recursos. Siempre es bueno estar preparado."
+        elif nombre_accion == 'DESCANSAR':
+            mensaje_final = f"Estoy agotado... necesito descansar un momento para recuperar energías."
+        elif nombre_accion == 'CURARSE':
+            mensaje_final = f"Mi salud está baja ({agente_yo.necesidades.get('salud', 10):.1f}/10). Voy a usar medicina para recuperarme."
+        elif nombre_accion == 'CONSTRUIR':
+            tipo_edificio = argumentos.get('tipo_edificio', 'estructura')
+            mensaje_final = f"¡Es hora de progresar! Voy a construir un/a {tipo_edificio} para mejorar nuestra comunidad."
+        elif nombre_accion == 'PROPONER_LEY':
+            titulo = argumentos.get('titulo', 'nueva ley')
+            mensaje_final = f"Propongo formalmente: '{titulo}'. ¡Es momento de cambiar las reglas!"
+        elif nombre_accion == 'FUNDAR_GRUPO':
+            nombre_faccion = argumentos.get('nombre_faccion', 'nueva facción')
+            mensaje_final = f"¡He decidido fundar '{nombre_faccion}'! Únanse a nuestra causa si comparten nuestra visión."
+        elif nombre_accion == 'COMERCIAR':
+            mensaje_final = f"Busco hacer un intercambio comercial. Tengo {agente_yo.recursos:.1f} recursos y {agente_yo.dinero:.1f} MC."
+        elif nombre_accion == 'SOCIALIZAR':
+            if agente_yo.personalidad.get('amabilidad', 0.5) > 0.6:
+                mensaje_final = f"¡Hola! Me gustaría conocerte mejor. ¿Cómo te va?"
+            else:
+                mensaje_final = f"Saludos. Podríamos colaborar si nuestros intereses se alinean."
+        elif nombre_accion == 'COMPETIR':
+            mensaje_final = f"Prepárate. Voy a demostrar quién es superior aquí."
+        elif nombre_accion == 'ATACAR':
+            mensaje_final = f"¡Esto es una advertencia! ¡Prepárate para defenderte!"
+        elif nombre_accion == 'INICIAR_ASAMBLEA':
+            tema = argumentos.get('tema', 'asunto importante')
+            mensaje_final = f"¡Convoco una asamblea! Debemos debatir sobre: {tema}"
+        else:
+            if "necesidad" in pensamiento.lower() or "hambre" in pensamiento.lower():
+                mensaje_final = f"Actúo por necesidad. {pensamiento[:60]}..."
+            elif "ley" in pensamiento.lower() or "norma" in pensamiento.lower():
+                mensaje_final = f"Por el bien común: {pensamiento[:60]}..."
+            else:
+                mensaje_final = f"{pensamiento[:80]}..."
+
+    privado = state.get('privado', False)
+    es_grupal = state.get('es_grupal', False)
+    es_global = "ley" in pensamiento.lower() or agente_yo.personalidad.get('extroversion', 0.5) > 0.8
+
+    print(f"📣 Agente {agente_yo.unique_id} comunica: '{mensaje_final[:80]}...' (Global: {es_global})")
+    
+    return {
+        "mensaje_generado": mensaje_final,
+        "es_global": es_global,
+        "es_grupal": es_grupal,
+        "privado": privado
+    }
+
+# Construcción del Grafo Cognitivo
+workflow = StateGraph(AgentState)
+
+workflow.add_node("actuar", actuar)
+workflow.add_node("ejecutar_herramientas", ejecutar_herramientas)
+workflow.add_node("comunicar", comunicar)
+
+workflow.set_entry_point("actuar")
+workflow.add_conditional_edges("actuar", decidir_ruta, {
+    "comunicar": "comunicar",
+    "ejecutar_herramientas": "ejecutar_herramientas"
+})
+workflow.add_edge("ejecutar_herramientas", "comunicar")
+workflow.add_edge("comunicar", END)
+
+import sqlite3
+conn = sqlite3.connect(":memory:", check_same_thread=False)
+memory = SqliteSaver(conn)
+cerebro_cognitivo = workflow.compile(checkpointer=memory)
+
+class CerebroAvanzado:
+    def __init__(self, agent_id):
+        self.agent_id = agent_id
+
+    def pensar(self, agente, objetivo_id=None):
+        """Ejecuta el nuevo ciclo cognitivo unificado."""
+        
+        # Establecer la instancia de ModeloRelacional en el contexto global
+        set_global_modelo_instance(agente.modelo)
+
+        # Almacenar solo los IDs y una referencia al modelo para reconstruir
+        initial_state = {
+            "agente_yo_id": agente.unique_id,
+            "agente_otro_id": objetivo_id,
+            "pensamiento_actual": "", 
+            "accion_elegida": {}, 
+            "info_externa": "", 
+            "mensaje_generado": "", 
+            "mensaje_llm": "",
+            "es_global": False,
+            "es_grupal": False,
+            "privado": False,
+            "planes": []
+        }
+        
+        # Usamos una configuración de thread_id única para cada ejecución para evitar conflictos de estado
+        config = {"configurable": {"thread_id": f"agent_{agente.unique_id}_{random.random()}"}}
+        
+        # Dado que no estamos usando persistencia de checkpoints real, el invoke es efímero.
+        final_state = cerebro_cognitivo.invoke(initial_state, config)
+        
+        # Limpiar la referencia global después de la invocación
+        set_global_modelo_instance(None)
+        
+        # Formatear la decisión para que el motor de simulación la entienda.
+        accion = final_state.get('accion_elegida', {})
+        nombre_accion = accion.get('nombre', 'N/A')
+        argumentos = accion.get('argumentos', {})
+        
+        decision_str = nombre_accion
+        if argumentos:
+            args_str = ":".join(map(str, argumentos.values()))
+            if args_str:
+                decision_str += ":" + args_str
+
+        return (
+            decision_str,
+            final_state.get('mensaje_generado', ""),
+            final_state.get('pensamiento_actual', ""),
+            final_state.get('privado', False),
+            final_state.get('es_grupal', False),
+            final_state.get('es_global', False),
+            final_state.get('planes', [])
+        )
+

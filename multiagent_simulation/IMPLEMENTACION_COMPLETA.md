@@ -254,7 +254,7 @@ python3 api.py
 ### Abrir Dashboard
 
 ```
-http://localhost:8000
+http://localhost:8005
 ```
 
 ---

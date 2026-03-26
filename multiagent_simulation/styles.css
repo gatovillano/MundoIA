@@ -285,3 +285,18 @@
 .log-entry.consenso div {
     font-size: 1.1rem;
 }
+
+/* Panel Estilo Cristal (Glassmorphism) */
+.glass-panel {
+    background: rgba(10, 11, 16, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Panel Sólido (Alternativo al Glassmorphism) */
+.solid-panel {
+    background: #0d0e14;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}

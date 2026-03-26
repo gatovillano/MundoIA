@@ -15,6 +15,52 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - mundoia_net
+
+  mundoia-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: mundoia-backend
+    env_file: .env
+    environment:
+      - DB_HOST=mundoia-db
+      - DB_PORT=5432
+      - FLASK_ENV=development
+    volumes:
+      - ./:/app
+    ports:
+      - "8005:8000"
+    depends_on:
+      mundoia-db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - mundoia_net
+
+  mundoia-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    container_name: mundoia-frontend
+    command: npm run dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - WATCHPACK_POLLING=true
+    ports:
+      - "3005:3000"
+    depends_on:
+      - mundoia-backend
+    networks:
+      - mundoia_net
 
 volumes:
   mundoia_data:
+
+networks:
+  mundoia_net:
+    driver: bridge

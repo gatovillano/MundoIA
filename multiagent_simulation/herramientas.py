@@ -1,54 +1,24 @@
 import os
 import requests
-from tavily import TavilyClient
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class HerramientasAgente:
     def __init__(self, log_callback=None):
-        self.tavily_key = os.getenv("TAVILY_API_KEY")
         self.brave_key = os.getenv("BRAVE_API_KEY")
         self.log_callback = log_callback
-        if self.tavily_key:
-            self.tavily = TavilyClient(api_key=self.tavily_key)
-        else:
-            self.tavily = None
     
     def _log(self, mensaje, categoria="herramienta"):
         """Envía un log si hay callback configurado."""
         if self.log_callback:
             self.log_callback(mensaje, categoria)
 
-    def buscar_noticias(self, query="noticias del mundo", agente_id=None):
-        """Busca noticias reales usando Tavily."""
-        self._log(f"🔍 [HERRAMIENTA] Agente {agente_id} está buscando: '{query}' usando Tavily", "herramienta")
-        if not self.tavily:
-            return "No tengo acceso a internet en este momento."
-        try:
-            # Buscamos noticias recientes
-            response = self.tavily.search(query=query, search_depth="advanced")
-            # Tomamos los primeros 2 resultados para no saturar el contexto
-            resultados = response.get('results', [])[:2]
-            if not resultados:
-                self._log(f"⚠️ [HERRAMIENTA] Agente {agente_id}: No se encontraron resultados", "herramienta")
-                return "No encontré noticias relevantes."
-            
-            info = "Noticias encontradas: "
-            for r in resultados:
-                info += f"- {r['title']}: {r['content'][:200]}... "
-            self._log(f"✅ [HERRAMIENTA] Agente {agente_id}: Encontró {len(resultados)} resultados", "herramienta")
-            return info
-        except Exception as e:
-            self._log(f"❌ [HERRAMIENTA] Agente {agente_id}: Error - {str(e)}", "herramienta")
-            return f"Error al buscar noticias: {str(e)}"
-
     def obtener_clima(self, ciudad="Madrid"):
-        """Simula o consulta el clima (podría extenderse con una API real)."""
-        # Por ahora simulamos para no depender de más keys, pero Tavily también puede buscar esto
-        if self.tavily:
-            return self.buscar_noticias(f"clima actual en {ciudad}")
-        return f"El clima en {ciudad} parece despejado y propicio para la recolección."
+        """Simula o consulta el clima."""
+        # Podríamos usar web_search aquí si quisiéramos datos reales, 
+        # pero por ahora lo dejamos como una simulación robusta o una búsqueda simple.
+        return f"El clima en {ciudad} parece despejado y propicio para la actividad de los agentes."
 
     def consultar_mercado(self):
         """Devuelve el precio actual de los recursos en MundoCoins."""
@@ -56,11 +26,12 @@ class HerramientasAgente:
         precio = random.uniform(1.5, 5.0)
         return f"El precio actual del recurso es de {precio:.2f} MC por unidad."
 
-    def brave_search(self, query, agente_id=None):
-        """Realiza una búsqueda usando la API de Brave."""
-        self._log(f"🔍 [BRAVE SEARCH] Agente {agente_id} busca: '{query}'", "herramienta")
+    def web_search(self, query, agente_id=None):
+        """Realiza una búsqueda general en la web usando la API de Brave."""
+        self._log(f"🔍 [WEB SEARCH] Agente {agente_id} busca: '{query}'", "herramienta")
         if not self.brave_key:
-            return "No tengo configurada la llave de Brave Search."
+            self._log(f"⚠️ [WEB SEARCH] Sin API Key de Brave", "herramienta")
+            return "No tengo configurada la llave de búsqueda web (Brave)."
         
         try:
             url = "https://api.search.brave.com/res/v1/web/search"
@@ -69,20 +40,24 @@ class HerramientasAgente:
                 "Accept-Encoding": "gzip",
                 "X-Subscription-Token": self.brave_key
             }
-            params = {"q": query, "count": 3}
+            params = {"q": query, "count": 5}
             response = requests.get(url, headers=headers, params=params)
             data = response.json()
             
             results = data.get("web", {}).get("results", [])
             if not results:
-                return "No se encontraron resultados en Brave."
+                self._log(f"⚠️ [WEB SEARCH] Sin resultados", "herramienta")
+                return "No se encontraron resultados relevantes en la web."
             
-            info = "Resultados de Brave: "
+            info = "Resultados de búsqueda web: "
             for r in results:
-                info += f"- {r['title']}: {r['description']} (URL: {r['url']}) "
+                info += f"- {r['title']}: {r['description']} "
+            
+            self._log(f"✅ [WEB SEARCH] Encontrados {len(results)} resultados", "herramienta")
             return info
         except Exception as e:
-            return f"Error en Brave Search: {str(e)}"
+            self._log(f"❌ [WEB SEARCH] Error: {str(e)}", "herramienta")
+            return f"Error en la búsqueda web: {str(e)}"
 
     def scrapear_url(self, url, agente_id=None):
         """Extrae el texto principal de una URL."""
@@ -119,9 +94,6 @@ class HerramientasAgente:
             "any": any, "all": all, "sorted": sorted, "type": type
         }
         
-        # Añadir acceso limitado al modelo si se pasa el contexto (opcional)
-        # Por ahora lo mantenemos puramente matemático/lógico para seguridad
-        
         try:
             # Capturar salida
             import sys
@@ -134,9 +106,9 @@ class HerramientasAgente:
             sys.stdout = old_stdout
             result = redirected_output.getvalue()
             
-            # Truncar resultado para evitar saturar el frontend/LLM
+            # Truncar resultado para evitar saturar el contexto
             if len(result) > 1000:
-                result = result[:1000] + "\n... [Resultado truncado por longitud]"
+                result = result[:1000] + "\n... [Resultado truncado]"
             
             self._log(f"✅ [PROGRAMMABLE REALITY] Ejecución exitosa.", "herramienta")
             return result if result else "Código ejecutado sin salida."

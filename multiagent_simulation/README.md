@@ -78,10 +78,10 @@ source venv/bin/activate
 python3 api.py
 ```
 
-El servidor se iniciará en `http://localhost:8000`
+El servidor se iniciará en `http://localhost:8005`
 
 ### Abrir el dashboard
-Abre tu navegador en: `http://localhost:8000`
+Abre tu navegador en: `http://localhost:8005`
 
 ### Interactuar con la visualización
 - **Haz clic en un nodo** para ver detalles del agente

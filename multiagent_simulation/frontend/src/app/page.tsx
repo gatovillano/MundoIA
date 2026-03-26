@@ -1,51 +1,30 @@
 "use client";
 
-import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowRight, Cpu, Activity, ShieldCheck } from "lucide-react";
+import { Cpu, Activity, ShieldCheck } from "lucide-react";
+import { synthesizer } from "@/utils/SoundSynthesizer";
+import useGameStore from "@/store/useGameStore";
+import RankingPanel from "@/components/RankingPanel";
+import { useEffect } from "react";
 
 export default function Home() {
   const router = useRouter();
-  const [username, setUsername] = useState("");
-  const [loading, setLoading] = useState(false);
+  const { isAuthenticated, connect, socket } = useGameStore();
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!username) return;
-    setLoading(true);
+  useEffect(() => {
+    // Intentar conectar para obtener ranking si no hay socket activo
+    if (!socket) {
+      connect();
+    }
+  }, [socket, connect]);
 
-    try {
-      // Intentar login primero
-      const res = await fetch("http://localhost:8000/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password: "password" }),
-      });
-      const data = await res.json();
-
-      if (data.status === "success") {
-        localStorage.setItem("user_id", data.user_id);
-        localStorage.setItem("username", data.username);
-        router.push("/game");
-      } else {
-        // Si falla, intentar registro
-        const regRes = await fetch("http://localhost:8000/auth/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password: "password" }),
-        });
-        const regData = await regRes.json();
-        if (regData.status === "success") {
-          localStorage.setItem("user_id", regData.user_id);
-          localStorage.setItem("username", username);
-          router.push("/game");
-        }
-      }
-    } catch (error) {
-      console.error("Login error:", error);
-    } finally {
-      setLoading(false);
+  const handleEnter = () => {
+    synthesizer.playSelect();
+    if (isAuthenticated) {
+      router.push("/game");
+    } else {
+      router.push("/auth");
     }
   };
 
@@ -60,105 +39,67 @@ export default function Home() {
       </div>
 
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.8, ease: "easeOut" }}
-        className="relative z-10 w-full max-w-md p-1"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 1 }}
+        className="relative z-10 w-full max-w-6xl px-6 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center"
       >
-        <div className="glass-panel rounded-2xl p-8 backdrop-blur-xl border border-white/10 shadow-2xl relative overflow-hidden group">
-
-          {/* Decorative Border Glow */}
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#7c4dff] to-transparent opacity-50" />
-
-          {/* Header */}
-          <div className="text-center mb-10">
+        {/* Lado Izquierdo: Branding y Acceso */}
+        <div className="lg:col-span-5 space-y-8 flex flex-col items-center lg:items-start text-center lg:text-left">
+          <div className="space-y-4">
             <motion.div
-              initial={{ y: -20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
               transition={{ delay: 0.2 }}
-              className="inline-flex items-center justify-center p-3 mb-4 rounded-xl bg-white/5 ring-1 ring-white/10"
+              className="inline-flex items-center justify-center p-4 rounded-3xl bg-white/5 ring-1 ring-white/10"
             >
-              <Cpu className="w-8 h-8 text-[#7c4dff]" />
+              <Cpu className="w-12 h-12 text-[#7c4dff]" />
             </motion.div>
-            <h1 className="text-4xl font-bold tracking-tight mb-2 font-mono">
+            <h1 className="text-6xl font-bold tracking-tighter mb-2 font-mono">
               <span className="text-white">MUNDO</span>
               <span className="text-gradient">IA</span>
             </h1>
-            <p className="text-sm text-gray-400 font-mono uppercase tracking-[0.3em]">
+            <p className="text-lg text-gray-400 font-mono uppercase tracking-[0.4em]">
               Sistema de Simulación Multiagente
+            </p>
+            <p className="max-w-md text-gray-500 font-serif italic text-sm leading-relaxed">
+              "Donde cada decisión de las máquinas esculpe la historia de una civilización emergente. Observa, construye y guía."
             </p>
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleLogin} className="space-y-6">
-            <div className="space-y-2">
-              <label htmlFor="username" className="text-[10px] font-bold text-[#7c4dff] uppercase tracking-widest ml-1 flex items-center gap-2">
-                <Activity className="w-3 h-3" /> Identificación de Usuario
-              </label>
-              <div className="relative group/input">
-                <input
-                  id="username"
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full bg-[#0a0b10]/50 border border-white/10 rounded-xl px-5 py-4 text-white placeholder:text-gray-600 focus:outline-none focus:border-[#7c4dff] focus:ring-1 focus:ring-[#7c4dff]/50 transition-all font-mono text-sm"
-                  placeholder="Ingrese nombre de agente..."
-                  autoComplete="off"
-                  autoFocus
-                />
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-focus-within/input:opacity-100 transition-opacity">
-                  <div className="w-2 h-2 bg-[#00e676] rounded-full animate-pulse" />
-                </div>
-              </div>
-            </div>
-
+          <div className="w-full max-w-sm space-y-4">
             <button
-              type="submit"
-              disabled={loading || !username}
-              className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-[#7c4dff] to-[#651fff] hover:from-[#651fff] hover:to-[#7c4dff] text-white font-bold tracking-wide shadow-lg shadow-[#7c4dff]/25 hover:shadow-[#7c4dff]/40 hover:-translate-y-0.5 active:translate-y-0 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 overflow-hidden relative"
+              onClick={handleEnter}
+              className="w-full py-5 px-8 rounded-2xl bg-gradient-to-r from-[#7c4dff] to-[#651fff] hover:from-[#651fff] hover:to-[#7c4dff] text-white font-black text-lg tracking-widest shadow-[0_0_30px_rgba(124,77,255,0.3)] hover:shadow-[0_0_40px_rgba(124,77,255,0.5)] hover:-translate-y-1 active:translate-y-0 transition-all flex items-center justify-center gap-4 overflow-hidden"
             >
-              {loading ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span className="font-mono text-sm">INICIALIZANDO...</span>
-                </>
-              ) : (
-                <>
-                  <span>ACCEDER AL SISTEMA</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
+              <span>{isAuthenticated ? "CONTINUAR SIMULACIÓN" : "ACCEDER AL SISTEMA"}</span>
             </button>
-          </form>
 
-          {/* Footer Stats */}
-          <div className="mt-10 pt-6 border-t border-white/5 grid grid-cols-2 gap-4">
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/5">
-              <div className="p-1.5 rounded bg-[#00e676]/10 text-[#00e676]">
-                <Activity className="w-3.5 h-3.5" />
+            <div className="flex justify-between items-center gap-4 px-2">
+              <div className="flex items-center gap-2">
+                <Activity className="w-4 h-4 text-[#00e676]" />
+                <span className="text-[10px] font-mono text-gray-400">SERVER: OK</span>
               </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] text-gray-500 uppercase tracking-wider">Estado</span>
-                <span className="text-xs font-mono text-white/90">OPERATIVO</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/5">
-              <div className="p-1.5 rounded bg-[#7c4dff]/10 text-[#7c4dff]">
-                <ShieldCheck className="w-3.5 h-3.5" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] text-gray-500 uppercase tracking-wider">Seguridad</span>
-                <span className="text-xs font-mono text-white/90">NIVEL 5</span>
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-[#7c4dff]" />
+                <span className="text-[10px] font-mono text-gray-400">ARCHITECT AUTH: ENFORCED</span>
               </div>
             </div>
           </div>
-
         </div>
 
-        <p className="text-center mt-6 text-[10px] text-gray-600 font-mono">
-          © 2026 CORPORACIÓN MUNDO IA. TODOS LOS DERECHOS RESERVADOS.
-        </p>
+        {/* Lado Derecho: Ranking */}
+        <div className="lg:col-span-1" /> {/* Divisor / Espaciador */}
+
+        <div className="lg:col-span-6 flex flex-col gap-6">
+          <RankingPanel />
+        </div>
+
       </motion.div>
+
+      <p className="fixed bottom-6 w-full text-center text-[10px] text-gray-700 font-mono tracking-widest opacity-50">
+        © 2026 KOGNITO AI LABS. PROTOCOLO DE CONSCIENCIA EMERGENTE.
+      </p>
     </main>
   );
 }

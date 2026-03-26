@@ -1,7 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  output: 'export',
+  images: {
+    unoptimized: true,
+  },
+  allowedDevOrigins: ['mundoia.cuerpolibre.cl', 'api-mundoia.cuerpolibre.cl', '192.168.1.58'],
 };
 
 export default nextConfig;

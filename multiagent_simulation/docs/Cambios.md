@@ -33,3 +33,10 @@ Se ha implementado un sistema de mapa dinámico basado en tiles, un ciclo de cli
 - **Punto 4**: Actualización de la lógica de agentes para interactuar con el terreno (bloqueo por agua) y construir en tiles específicos.
 - **Punto 5**: Nuevo componente frontend `WorldMap` para visualizar el terreno, edificios y clima.
 - **Punto 6**: Integración de datos de mapa y clima en la API WebSocket.
+---
+
+## 08-02-26 Corrección de NameError en cerebro_langgraph.py
+
+Se ha corregido un `NameError` en la función `actuar` de `cerebro_langgraph.py` que impedía la correcta definición de la variable `agente_otro`.
+
+- **Punto 1**: Se modificó la función `actuar` en `cerebro_langgraph.py` para recuperar `agente_otro_id` del estado y, si existe, obtener el objeto `agente_otro` del `modelo_instance`. Esto asegura que `agente_otro` esté correctamente definido antes de ser utilizado en la llamada a `cerebro_llm.generar_pensamiento_y_accion`.
