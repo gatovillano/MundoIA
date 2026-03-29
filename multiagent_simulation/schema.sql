@@ -142,9 +142,24 @@ CREATE TABLE IF NOT EXISTS misiones (
     PRIMARY KEY (id, user_id)
 );
 
--- 10. Puntajes de Usuario (Depends on Users)
+-- 11. Puntajes de Usuario (Depends on Users)
 CREATE TABLE IF NOT EXISTS puntajes_usuarios (
     user_id VARCHAR(50) PRIMARY KEY REFERENCES usuarios(id),
     puntos INTEGER DEFAULT 0,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 12. Chat Mensajes (Depends on Users and Agents)
+CREATE TABLE IF NOT EXISTS chat_mensajes (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(50) REFERENCES usuarios(id),
+    agent_id VARCHAR(50) REFERENCES agentes(id),
+    role VARCHAR(10) NOT NULL CHECK (role IN ('user', 'agent')),
+    content TEXT NOT NULL,
+    timestamp_utc DOUBLE PRECISION NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Índice para búsquedas rápidas por usuario+agente
+CREATE INDEX IF NOT EXISTS idx_chat_mensajes_user_agent ON chat_mensajes(user_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_chat_mensajes_timestamp ON chat_mensajes(timestamp_utc);

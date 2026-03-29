@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import useGameStore from "@/store/useGameStore";
-import { Play, Pause, RefreshCw, LogOut, Map as MapIcon, Share2, Zap, Brain, Users, Box, ChevronDown, Clock, Activity, BarChart3, Terminal, X, Flag, CircleDashed, Star, Sun, CloudRain, Landmark } from "lucide-react";
+import { Play, Pause, RefreshCw, LogOut, Map as MapIcon, Share2, Zap, Brain, Users, Box, ChevronDown, Clock, Activity, BarChart3, Terminal, X, Flag, CircleDashed, Star, Sun, CloudRain, Landmark, MessageCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 import WorldViewport from "@/components/WorldViewport";
@@ -23,6 +23,7 @@ import MainSidebar from "@/components/MainSidebar";
 import UnifiedPanel from "@/components/UnifiedPanel";
 import PossessionPanel from "@/components/PossessionPanel";
 import StatsPanel from "@/components/StatsPanel";
+import ChatPanel from "@/components/ChatPanel";
 import { Book, Settings as SettingsIcon } from "lucide-react";
 
 export default function GamePage() {
@@ -346,6 +347,12 @@ function RightPanelManager({ activePanel, onClose, selectedAgentId, userId }: an
     if (!activePanel) return null;
 
     switch (activePanel) {
+        case 'chat':
+            return (
+                <UnifiedPanel isOpen={true} onClose={onClose} title="Chat con Agentes" subtitle="Conversaciones Directas" icon={MessageCircle} color="text-cyan-400">
+                    <ChatPanel userId={userId} onClose={onClose} />
+                </UnifiedPanel>
+            );
         case 'architect':
             return (
                 <UnifiedPanel isOpen={true} onClose={onClose} title="Arquitecto" subtitle="Modo Dios Activo" icon={Terminal} color="text-yellow-500">

@@ -33,6 +33,7 @@ interface GameState {
     sendArchitectMessage: (message: string, agentId?: string) => Promise<void>;
     sendGodAction: (type: string, params: any) => Promise<boolean>;
     socket: WebSocket | null;
+    bubbleCleanupInterval: ReturnType<typeof setInterval> | null;
     userId: string | null;
     isAuthenticated: boolean;
     username: string | null;
@@ -104,6 +105,7 @@ const useGameStore = create(
             instituciones: {},
             agentePoseidoId: null,
             socket: null,
+            bubbleCleanupInterval: null,
             userId: null,
             isAuthenticated: false,
             username: null,
@@ -261,14 +263,34 @@ const useGameStore = create(
                 };
 
                 set({ socket: newSocket });
+
+                // Limpiar speechBubbles expirados periódicamente (cada 2s),
+                // independiente de si llegan nuevos logs.
+                const bubbleCleanupInterval = setInterval(() => {
+                    const state = get();
+                    const now = Date.now();
+                    const bubbles = { ...state.speechBubbles };
+                    let changed = false;
+                    Object.keys(bubbles).forEach(key => {
+                        if (now - bubbles[key].timestamp > 5000) {
+                            delete bubbles[key];
+                            changed = true;
+                        }
+                    });
+                    if (changed) set({ speechBubbles: bubbles });
+                }, 2000);
+                set({ bubbleCleanupInterval });
             },
 
             disconnect: () => {
-                const { socket } = get();
+                const { socket, bubbleCleanupInterval } = get();
+                if (bubbleCleanupInterval) {
+                    clearInterval(bubbleCleanupInterval);
+                }
                 if (socket) {
                     socket.close();
-                    set({ socket: null, isConnected: false });
                 }
+                set({ socket: null, isConnected: false, bubbleCleanupInterval: null });
             },
 
             sendArchitectMessage: async (message, agentId) => {
@@ -340,10 +362,8 @@ const useGameStore = create(
             }
         }),
         {
-            name: 'mundoia-auth', // name of the item in the storage (must be unique)
-            storage: customStorage, // Use localStorage as the storage medium
-            // Custom serializer/deserializer if needed, but default JSON.stringify/parse is usually fine
-            // migrate: (persistedState, version) => { ... } // Optional migration logic
+            name: 'mundoia-auth',
+            storage: customStorage,
         }
     )
 );

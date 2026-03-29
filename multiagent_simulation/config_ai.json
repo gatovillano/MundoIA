@@ -1,4 +1,4 @@
 {
-    "model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
-    "api_key": "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"
+    "model": "openrouter/stepfun/step-3.5-flash:free",
+    "api_key": "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"
 }

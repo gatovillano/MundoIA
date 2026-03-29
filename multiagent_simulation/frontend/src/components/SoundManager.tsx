@@ -46,22 +46,21 @@ export default function SoundManager() {
     // Monitor Logs
     useEffect(() => {
         if (logs.length > 0) {
-            const latestLog = logs[0];
+            const latestLog = logs[logs.length - 1];
             // Only play for new logs that arrived after our last check
             if (latestLog.timestamp > prevLogTime.current) {
 
-                // Debounce slightly to avoid sound chaos if many logs arrive at once
-                // But usually logs come one by one in this loop
-
-                // Text analysis for specific event sounds
                 const message = latestLog.message.toLowerCase();
 
                 if (latestLog.category === 'error' || latestLog.category === 'warning') {
                     synthesizer.playAlert();
-                } else if (latestLog.category === 'dialogo') {
-                    synthesizer.playMessage();
                 } else {
-                    // Specific Event Detection
+                    // For dialogue messages, always play the base message sound first
+                    if (latestLog.category === 'dialogo') {
+                        synthesizer.playMessage();
+                    }
+
+                    // Contextual sound detection (applies to ALL categories)
                     if (message.includes('come') || message.includes('alimenta') || message.includes('recupera energía')) {
                         synthesizer.playEat();
                     } else if (message.includes('ataca') || message.includes('daño') || message.includes('combate') || message.includes('atacado') || message.includes('⚔️')) {
@@ -80,8 +79,9 @@ export default function SoundManager() {
                         }
                     } else if (message.includes('muere') || message.includes('eliminado')) {
                         synthesizer.playDeath();
-                    } else if (latestLog.category === 'info') {
-                        // Generic info sound if no specific keyword matched
+                    } else if (latestLog.category !== 'dialogo') {
+                        // Generic hover sound for info logs with no keyword match
+                        // (dialogue already plays playMessage above)
                         synthesizer.playHover();
                     }
                 }

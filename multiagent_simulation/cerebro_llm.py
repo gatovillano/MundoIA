@@ -21,9 +21,7 @@ class CerebroLLM:
         self.config_path = "config_ai.json"
         self.load_config()
         
-        # Rate Limiter: Máximo 15 peticiones por minuto (margen de seguridad sobre 16)
-        import threading
-        self.lock = threading.Lock()
+        # Rate Limiter: Máximo 15 peticiones por minuto
         self.request_timestamps = deque()
         self.RATE_LIMIT = 15
         self.TIME_WINDOW = 60 # segundos
@@ -128,26 +126,21 @@ class CerebroLLM:
             return False
 
     def _wait_for_rate_limit(self):
-        """Espera si hemos excedido la cuota de peticiones por minuto."""
-        with self.lock:
-            now = time.time()
+        """Espera si hemos excedido la cuota de peticiones por minuto.
+        Diseñado para uso secuencial (sin concurrencia)."""
+        now = time.time()
+        
+        # Limpiar timestamps viejos
+        while self.request_timestamps and now - self.request_timestamps[0] > self.TIME_WINDOW:
+            self.request_timestamps.popleft()
             
-            # Limpiar timestamps viejos
-            while self.request_timestamps and now - self.request_timestamps[0] > self.TIME_WINDOW:
-                self.request_timestamps.popleft()
-                
-            if len(self.request_timestamps) >= self.RATE_LIMIT:
-                # Calcular tiempo de espera hasta que expire la petición más vieja
-                wait_time = self.TIME_WINDOW - (now - self.request_timestamps[0]) + 1.0
-                if wait_time > 0:
-                    print(f"⏳ [RATE LIMIT] Esperando {wait_time:.1f}s para respetar cuota de IA...")
-                    # Soltamos el lock mientras esperamos para no bloquear otras peticiones que podrían estar limpiando su cola
-                    # Aunque en realidad, si estamos en el límite, todos deberán esperar.
-                    # Pero es mejor dormir fuera del lock si es posible, aunque aquí el lock protege la lista.
-                    # Para simplificar, dormimos dentro del lock ya que nadie más puede proceder de todos modos.
-                    time.sleep(wait_time)
-            
-            self.request_timestamps.append(time.time())
+        if len(self.request_timestamps) >= self.RATE_LIMIT:
+            wait_time = self.TIME_WINDOW - (now - self.request_timestamps[0]) + 0.5
+            if wait_time > 0:
+                print(f"⏳ [RATE LIMIT] Esperando {wait_time:.1f}s...")
+                time.sleep(wait_time)
+        
+        self.request_timestamps.append(time.time())
 
     def generar_debate_consenso(self, agente_yo, miembros_grupo, fase="liderazgo", contexto_extra: str = ""):
         """Genera un argumento para el proceso de consenso con contexto rico."""
@@ -257,9 +250,13 @@ Si no resuelves esto AHORA, la simulación terminará para ti."""
 
         elif min_necesidad < 6.0:
             nivel_priority = 1
+            # Identificar cuáles necesidades están por debajo de 6.0
+            bajas = {k: v for k, v in necesidades_normalizadas.items() if v < 6.0}
+            bajas_str = ", ".join(f"{k}={v:.1f}" for k, v in bajas.items())
             prioridad_turno = f"""═══ 🟡 NIVEL 1: ADVERTENCIA (Equilibrio) ═══
-Tus necesidades básicas están bajas ({min_necesidad:.1f}).
-Balancea tu supervivencia con tu personalidad. No te descuides.
+Necesidades bajas: {bajas_str}. Resto están OK.
+Balancea tu supervivencia con tu personalidad. Atiende SOLO lo que esté críticamente bajo (<4.0).
+Si descanso > 5.0, NO necesitas descansar. Enfócate en lo que realmente urge.
 Asegúrate de tener recursos o dinero para el siguiente turno mientras actúas como: {agente_yo.rol}."""
 
         else:
@@ -277,7 +274,8 @@ Asegúrate de tener recursos o dinero para el siguiente turno mientras actúas c
             prioridad_turno = f"""═══ 🟢 NIVEL 2: ESTABLE (Personalidad al Mando) ═══
 Toda tu fisiología está excelente (todas > 6.0).
 {impulso}
-Enfócate en PROGRESAR: INVERTIR, CONSTRUIR, CREAR_HABILIDAD, SOCIALIZAR o DOMINAR."""
+Enfócate en PROGRESAR: INVERTIR, CONSTRUIR, CREAR_HABILIDAD, SOCIALIZAR o DOMINAR.
+⚠️ IMPORTANTE: NO DESCANSES. Tu descanso ({necesidades_normalizadas['descanso']:.1f}/10) está alto. Descansar con energía llena es PERDER UN TURNO. Usa tu energía para ACTUAR."""
         
         acciones_de_juego = f"""
         [
@@ -292,7 +290,7 @@ Enfócate en PROGRESAR: INVERTIR, CONSTRUIR, CREAR_HABILIDAD, SOCIALIZAR o DOMIN
             {{"nombre": "ALIANZA", "descripcion": "Proponer alianza mutua.", "argumentos": {{"interlocutor_id": "ID"}}}},
             {{"nombre": "DECLARAR_GUERRA", "descripcion": "Guerra formal a otro grupo.", "argumentos": {{"objetivo_id": "ID de enemigo"}}}},
             {{"nombre": "NEGOCIAR_PAZ", "descripcion": "Proponer cese al fuego.", "argumentos": {{"objetivo_id": "ID de enemigo"}}}},
-            {{"nombre": "DESCANSAR", "descripcion": "Recuperar energia y salud.", "argumentos": {{}}}},
+            {{"nombre": "DESCANSAR", "descripcion": "Solo cuando descanso<5.0. Recupera +4 descanso, +1 salud. No usar si energia alta.", "argumentos": {{}}}},
             {{"nombre": "CURARSE", "descripcion": f"Usar medicina{' (tienes)' if tiene_medicina else ' (no tienes)'}.", "argumentos": {{}}}},
             {{"nombre": "COMPRAR_MEDICINA", "descripcion": "Comprar kit (10 MC) en hospital.", "argumentos": {{}}}},
             {{"nombre": "CONSTRUIR", "descripcion": "Edificar (Casa, Granja, etc.).", "argumentos": {{"tipo_edificio": "Tipo"}}}},
@@ -337,6 +335,8 @@ DEBES responder con DOS elementos obligatorios:
 2. **`accion`**: Lo que HACES (una acción del menú de arriba, distinta a solo hablar).
 
 FILOSOFÍA: No hay una única respuesta correcta. Si tienes hambre, come. Si tienes dinero, invierte o gasta. Si tienes enemigos, ataca o negocia. Si estás aburrido, explora o crea. Evita repetir siempre la misma acción.
+
+REGLA DE DESCANSO: DESCANSAR solo si tu descanso está por debajo de 5.0. Con descanso alto (>5.0), descansar es PERDER UN TURNO. Tu escala de descanso: 10=llena de energía, 0=agotada. Usa tu energía, no la desperdicies durmiendo.
 
 ═══ ROLES ESPECIALES ═══
 - HISTORIADOR: Si hay 'Hitos Pendientes' en el contexto, usa ESCRIBIR_CRONICA ahora.

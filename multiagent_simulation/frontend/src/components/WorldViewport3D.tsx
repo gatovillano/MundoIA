@@ -1,11 +1,10 @@
 "use client";
 
-import { useRef, useMemo, useState, Suspense } from "react";
+import React, { useRef, useMemo, useState, Suspense } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Text, Stars, Environment, Float, Html, QuadraticBezierLine } from "@react-three/drei";
 import useGameStore from "@/store/useGameStore";
 import * as THREE from "three";
-import { motion } from "framer-motion";
 import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import { synthesizer } from "@/utils/SoundSynthesizer";
 import ErrorBoundary from "./ErrorBoundary";
@@ -177,7 +176,7 @@ function Building({ position, rotation, color }: any) {
 // Superficie del Planeta con Textura Continua y Realista
 function PlanetSurface({ mapa }: { mapa: any[][] }) {
     const { geometry } = useMemo(() => {
-        const g = new THREE.SphereGeometry(PLANET_RADIUS, 160, 160);
+        const g = new THREE.SphereGeometry(PLANET_RADIUS, 80, 80);
         const pos = g.attributes.position;
         const cols = new Float32Array(pos.count * 3);
 
@@ -321,16 +320,16 @@ function PlanetSurface({ mapa }: { mapa: any[][] }) {
     );
 }
 
-// Decoraciones 3D con Orientación Corregida
-function PlanetDecorations({ x, y, tile }: any) {
-    const { civilizaciones, gruposDinamicos, mapa } = useGameStore();
+// Generador de offsets determinísticos (sembrado por posición del tile)
+function seededRandom(seed: number) {
+    const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return x - Math.floor(x);
+}
 
-    const size = useMemo(() => mapa.length, [mapa]);
-
-    // Posición base en la superficie
+// Decoraciones 3D — memoizado para no re-renderizar si el tile no cambió
+// NO suscribirse a useGameStore aquí; todos los datos llegan via props puras.
+const PlanetDecorations = React.memo(function PlanetDecorations({ x, y, tile, size }: any) {
     const basePos = useMemo(() => getSphericalPosition(x, y, size, 0.05), [x, y, size]);
-
-    // Rotación correcta: el elemento debe mirar "hacia arriba" desde la superficie
     const rotation = useMemo(() => {
         const up = new THREE.Vector3(0, 1, 0);
         const normal = basePos.clone().normalize();
@@ -339,128 +338,91 @@ function PlanetDecorations({ x, y, tile }: any) {
         return quaternion;
     }, [basePos]);
 
-    const items = [];
-
-    // MONTAÑAS
-    if (tile.terrain === "mountain") {
-        items.push(
-            <Mountain
-                key="mtn"
-                position={basePos}
-                rotation={rotation}
-                scale={0.65 + Math.random() * 0.35}
-            />
-        );
-    }
-
-    // ÁRBOLES
-    if (tile.terrain === "forest") {
-        for (let i = 0; i < 4; i++) {
-            // Offset en coordenadas locales del tile
-            const localOffsetX = (Math.random() - 0.5) * 0.4;
-            const localOffsetY = (Math.random() - 0.5) * 0.4;
-
-            // Convertir offset local a posición esférica
-            const offsetPos = getSphericalPosition(
-                x + localOffsetX / size * 20,
-                y + localOffsetY / size * 20,
-                size,
-                0.05
+    // Pre-calcular árboles de forma determinística (NO Math.random en render)
+    const trees = useMemo(() => {
+        if (tile.terrain !== "forest") return [];
+        return Array.from({ length: 4 }, (_, i) => {
+            const seed = x * 1000 + y * 100 + i;
+            const ox = (seededRandom(seed) - 0.5) * 0.4;
+            const oy = (seededRandom(seed + 1) - 0.5) * 0.4;
+            const pos = getSphericalPosition(
+                x + (ox / size) * 20,
+                y + (oy / size) * 20,
+                size, 0.05
             );
-
-            const offsetRot = useMemo(() => {
-                const normal = offsetPos.clone().normalize();
-                const quat = new THREE.Quaternion();
-                quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
-                return quat;
-            }, [offsetPos]);
-
-            items.push(
-                <PineTree
-                    key={`t-${i}`}
-                    position={offsetPos}
-                    rotation={offsetRot}
-                />
-            );
-        }
-    }
-
-    // GRANJAS
-    if (tile.buildings && tile.buildings.some((b: any) => b.tipo === "Granja")) {
-        items.push(
-            <Farm
-                key="f"
-                position={basePos}
-                rotation={rotation}
-            />
-        );
-    }
-
-    // EDIFICIOS
-    if (tile.buildings) {
-        const typeToColor: Record<string, string> = {
-            "Hospital": "#ef4444",
-            "Centro de Recarga": "#fbbf24",
-            "Centro de Descanso": "#8b5cf6",
-            "Centro Comunitario": "#ec4899",
-            "Comisaría": "#3b82f6",
-            "Universidad": "#10b981"
-        };
-
-        tile.buildings.forEach((building: any, idx: number) => {
-            if (building.tipo !== "Granja") {
-                const ownerColor = typeToColor[building.tipo] || civilizaciones[tile.owner]?.color ||
-                    gruposDinamicos[tile.owner]?.color || "#3b82f6";
-                items.push(
-                    <Building
-                        key={`bld-${idx}`}
-                        position={basePos}
-                        rotation={rotation}
-                        color={ownerColor}
-                    />
-                );
-            }
+            const normal = pos.clone().normalize();
+            const quat = new THREE.Quaternion();
+            quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+            return { pos, quat };
         });
-    }
+    }, [x, y, size, tile.terrain]);
 
-    // RECURSOS
-    if (tile.resources > 0) {
-        const resourceType = tile.terrain === "desert" ? "gold" :
-            tile.terrain === "mountain" ? "crystal" : "food";
-        const resourcePos = basePos.clone().multiplyScalar(1.06);
+    // Pre-calcular edificios
+    const buildings = useMemo(() => {
+        if (!tile.buildings) return [];
+        const typeToColor: Record<string, string> = {
+            "Hospital": "#ef4444", "Centro de Recarga": "#fbbf24",
+            "Centro de Descanso": "#8b5cf6", "Centro Comunitario": "#ec4899",
+            "Comisaría": "#3b82f6", "Universidad": "#10b981"
+        };
+        return tile.buildings
+            .filter((b: any) => b.tipo !== "Granja")
+            .map((b: any) => ({
+                color: typeToColor[b.tipo] || tile.ownerColor || "#3b82f6"
+            }));
+    }, [tile.buildings, tile.ownerColor]);
 
-        items.push(
-            <Resource
-                key="res"
-                position={[resourcePos.x, resourcePos.y, resourcePos.z]}
-                type={resourceType}
-            />
-        );
-    }
-
-    return <group>{items}</group>;
-}
+    return (
+        <group>
+            {tile.terrain === "mountain" && (
+                <Mountain position={basePos} rotation={rotation}
+                    scale={0.65 + seededRandom(x * 100 + y) * 0.35} />
+            )}
+            {trees.map((t, i) => (
+                <PineTree key={`t-${i}`} position={t.pos} rotation={t.quat} />
+            ))}
+            {tile.buildings?.some((b: any) => b.tipo === "Granja") && (
+                <Farm position={basePos} rotation={rotation} />
+            )}
+            {buildings.map((b: any, idx: number) => (
+                <Building key={`bld-${idx}`} position={basePos} rotation={rotation} color={b.color} />
+            ))}
+            {tile.resources > 0 && (
+                <Resource
+                    position={basePos.clone().multiplyScalar(1.06)}
+                    type={tile.terrain === "desert" ? "gold" : tile.terrain === "mountain" ? "crystal" : "food"}
+                />
+            )}
+        </group>
+    );
+});
 
 // Agente Dron Cibernético Avanzado
 function Agent3D({ agent, isSelected }: any) {
-    const { civilizaciones, gruposDinamicos, speechBubbles, mapa } = useGameStore();
+    const bubble = useGameStore((s) => s.speechBubbles[agent.id]);
+    const mapa = useGameStore((s) => s.mapa);
     const groupRef = useRef<THREE.Group>(null);
     const meshRef = useRef<THREE.Mesh>(null);
     const ring1Ref = useRef<THREE.Mesh>(null);
     const ring2Ref = useRef<THREE.Mesh>(null);
 
-    const bubble = speechBubbles[agent.id];
-    const size = useMemo(() => (mapa.length || 20), [mapa]);
+    const size = mapa.length || 20;
     const groupColor = agent.color || "#ffffff";
     const targetPos = useMemo(() => getSphericalPosition(agent.x, agent.y, size, 1.6), [agent.x, agent.y, size]);
+
+    // Pre-allocated objects to avoid per-frame GC pressure
+    const lookAtMatrix = useRef(new THREE.Matrix4());
+    const lookAtQuat = useRef(new THREE.Quaternion());
+    const sphereCenter = useRef(new THREE.Vector3(0, 0, 0));
+    const upVector = useRef(new THREE.Vector3(0, 1, 0));
 
     useFrame((state, delta) => {
         if (groupRef.current) {
             // Movimiento suave hacia posición objetivo
             groupRef.current.position.lerp(targetPos, delta * 4);
-            const matrix = new THREE.Matrix4();
-            matrix.lookAt(groupRef.current.position, new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0));
-            groupRef.current.quaternion.slerp(new THREE.Quaternion().setFromRotationMatrix(matrix), delta * 5);
+            lookAtMatrix.current.lookAt(groupRef.current.position, sphereCenter.current, upVector.current);
+            lookAtQuat.current.setFromRotationMatrix(lookAtMatrix.current);
+            groupRef.current.quaternion.slerp(lookAtQuat.current, delta * 5);
 
             // Animación del Núcleo
             if (meshRef.current) {
@@ -516,29 +478,17 @@ function Agent3D({ agent, isSelected }: any) {
                 {agent.id.replace('A', '')}
             </Text>
 
-            {/* Burbuja de chat (código original) */}
+            {/* Burbuja de chat — CSS puro sin framer-motion */}
             {bubble && (
                 <Html position={[0, 3.2, 0]} center>
-                    <motion.div
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.3 }}
-                        className="relative"
-                    >
-                        {/* Contenedor Principal - Sincronizado con 2D */}
+                    <div className="bubble-pop relative">
                         <div className="bg-[#0a0b10]/95 backdrop-blur-md p-[12px] rounded-[8px] border-[1.5px] border-[#7c4dff] shadow-[0_0_15px_rgba(124,77,255,0.4)] text-white font-mono min-w-[160px] max-w-[280px] relative">
-                            {/* Texto del mensaje - Sin comillas, 12px mono */}
                             <div className="text-[12px] leading-tight text-gray-100 whitespace-pre-wrap text-center">
                                 {bubble.text}
                             </div>
                         </div>
-
-                        {/* Flecha indicadora abajo - Sincronizada con estilo 2D (10x5px) */}
-                        <div
-                            className="absolute -bottom-[5px] left-1/2 -translate-x-1/2 w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[5px] border-t-[#7c4dff]"
-                        />
-                    </motion.div>
+                        <div className="absolute -bottom-[5px] left-1/2 -translate-x-1/2 w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[5px] border-t-[#7c4dff]" />
+                    </div>
                 </Html>
             )}
         </group>
@@ -547,9 +497,11 @@ function Agent3D({ agent, isSelected }: any) {
 
 // Enlaces curvos sobre la superficie
 function RelationshipLines({ showLinks }: { showLinks: boolean }) {
-    const { relationships, agents, mapa } = useGameStore();
+    const relationships = useGameStore((s) => s.relationships);
+    const agents = useGameStore((s) => s.agents);
+    const mapa = useGameStore((s) => s.mapa);
 
-    const size = useMemo(() => (mapa.length || 20), [mapa]);
+    const size = mapa.length || 20;
 
     // Mapa rápido de posiciones
     const agentPositions = useMemo(() => {
@@ -605,18 +557,38 @@ function RelationshipLines({ showLinks }: { showLinks: boolean }) {
 }
 
 function Planet({ showLinks }: { showLinks: boolean }) {
-    const { agents, mapa, selectedAgentId, selectAgent } = useGameStore();
+    const agents = useGameStore((s) => s.agents);
+    const mapa = useGameStore((s) => s.mapa);
+    const selectedAgentId = useGameStore((s) => s.selectedAgentId);
+    const selectAgent = useGameStore((s) => s.selectAgent);
+    const civilizaciones = useGameStore((s) => s.civilizaciones);
+    const gruposDinamicos = useGameStore((s) => s.gruposDinamicos);
     const planetGroup = useRef<THREE.Group>(null);
     useFrame(() => { if (planetGroup.current) planetGroup.current.rotation.y += 0.0003; });
+
+    // Memoizar las decoraciones del mapa para no recrearlas en cada update de agentes.
+    // Se enriquecen los tiles con ownerColor para que PlanetDecorations no necesite
+    // suscribirse al store (evita 400+ suscripciones que re-renderizan en cada WS message).
+    const decorations = useMemo(() => {
+        if (!mapa) return null;
+        const size = mapa.length;
+        return mapa.flatMap((row: any, x: number) =>
+            row.map((tile: any, y: number) => {
+                const enrichedTile = {
+                    ...tile,
+                    ownerColor: tile.owner
+                        ? (civilizaciones[tile.owner]?.color || gruposDinamicos[tile.owner]?.color || null)
+                        : null
+                };
+                return <PlanetDecorations key={`${x}-${y}`} x={x} y={y} tile={enrichedTile} size={size} />;
+            })
+        );
+    }, [mapa, civilizaciones, gruposDinamicos]);
 
     return (
         <group ref={planetGroup}>
             {mapa && <PlanetSurface mapa={mapa} />}
-            {mapa?.flatMap((row: any, x: number) =>
-                row.map((tile: any, y: number) => (
-                    <PlanetDecorations key={`${x}-${y}`} x={x} y={y} tile={tile} />
-                ))
-            )}
+            {decorations}
             {agents.map((agent: any) => (
                 <group key={agent.id} onClick={() => { selectAgent(agent.id); synthesizer.playSelect(); }}>
                     <Agent3D agent={agent} isSelected={agent.id === selectedAgentId} />
@@ -648,38 +620,42 @@ export default function WorldViewport3D() {
                     </div>
                 }>
                     <Canvas camera={{ position: [30, 20, 30], fov: 38 }} shadows>
-                        <Stars radius={160} count={10000} factor={5} fade />
+                        <Stars radius={160} count={3000} factor={5} fade />
                         <ambientLight intensity={0.7} />
-                        <directionalLight position={[60, 50, 40]} intensity={2.5} castShadow shadow-mapSize={[2048, 2048]} />
+                        <directionalLight position={[60, 50, 40]} intensity={2.5} castShadow shadow-mapSize={[1024, 1024]} />
                         <pointLight position={[-40, -30, -40]} intensity={1.5} color="#7c4dff" />
                         <Planet showLinks={showLinks} />
                         <OrbitControls enableDamping minDistance={15} maxDistance={60} />
                         <Environment preset="city" />
                         <EffectComposer>
-                            <Bloom intensity={1.8} luminanceThreshold={0.35} radius={0.85} />
-                            <Vignette darkness={0.75} />
+                            <Bloom intensity={1.2} luminanceThreshold={0.5} radius={0.8} />
+                            <Vignette darkness={0.6} />
                         </EffectComposer>
                     </Canvas>
 
-                    {/* Botón para toggle de vínculos */}
-                    <button
-                        onClick={() => setShowLinks(!showLinks)}
-                        className="absolute top-6 right-6 glass-panel p-3 rounded-xl border border-white/10 hover:border-purple-500/50 transition-all duration-300 group z-10"
-                        title={showLinks ? "Ocultar vínculos" : "Mostrar vínculos"}
-                    >
-                        {showLinks ? (
-                            <Link className="w-5 h-5 text-purple-400 group-hover:text-purple-300 transition-colors" />
-                        ) : (
-                            <Link2Off className="w-5 h-5 text-gray-500 group-hover:text-gray-400 transition-colors" />
-                        )}
-                    </button>
-
-
                     <style jsx>{`
                         .glass-panel { background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(50px); }
+                        @keyframes bubblePop {
+                            from { opacity: 0; transform: translateY(8px) scale(0.95); }
+                            to   { opacity: 1; transform: translateY(0) scale(1); }
+                        }
+                        .bubble-pop { animation: bubblePop 0.25s ease-out forwards; }
                     `}</style>
                 </Suspense>
             </ErrorBoundary>
+
+            {/* Botón para toggle de vínculos - fuera del Canvas/Suspense para que reciba clicks */}
+            <button
+                onClick={() => setShowLinks(!showLinks)}
+                className="absolute top-6 right-6 glass-panel p-3 rounded-xl border border-white/10 hover:border-purple-500/50 transition-all duration-300 group z-50"
+                title={showLinks ? "Ocultar vínculos" : "Mostrar vínculos"}
+            >
+                {showLinks ? (
+                    <Link className="w-5 h-5 text-purple-400 group-hover:text-purple-300 transition-colors" />
+                ) : (
+                    <Link2Off className="w-5 h-5 text-gray-500 group-hover:text-gray-400 transition-colors" />
+                )}
+            </button>
         </div>
     );
 }

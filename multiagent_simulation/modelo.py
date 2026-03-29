@@ -1,4 +1,5 @@
 import random
+import time
 import matplotlib
 matplotlib.use('Agg') # Backend para entornos sin interfaz gráfica
 import matplotlib.pyplot as plt
@@ -10,7 +11,6 @@ from cerebro_llm import cerebro_llm
 from dotenv import load_dotenv
 import os
 import json
-import concurrent.futures
 import functools
 from herramientas import herramientas
 
@@ -418,6 +418,30 @@ class DatabaseManager:
         # Nota: No borramos el usuario en sí de la tabla 'usuarios'
         
         logger.info(f"✅ Base de datos limpiada completamente para el usuario {user_id}.")
+
+    def save_chat_message(self, user_id, agent_id, role, content, timestamp_utc):
+        """Guarda un mensaje de chat en la base de datos."""
+        query = """
+        INSERT INTO chat_mensajes (user_id, agent_id, role, content, timestamp_utc)
+        VALUES (%s, %s, %s, %s, %s);
+        """
+        self.execute(query, (user_id, agent_id, role, content, timestamp_utc))
+
+    def get_chat_history(self, user_id, agent_id, limit=100):
+        """Recupera el historial de chat entre un usuario y un agente, ordenado por tiempo."""
+        query = """
+        SELECT role, content, timestamp_utc
+        FROM chat_mensajes
+        WHERE user_id = %s AND agent_id = %s
+        ORDER BY timestamp_utc ASC
+        LIMIT %s;
+        """
+        rows = self.execute(query, (user_id, agent_id, limit))
+        # Devuelve lista de dicts: [{"role": ..., "content": ..., "timestamp": ...}, ...]
+        if not rows:
+            return []
+        # La consulta devuelve filas con 3 columnas: role, content, timestamp_utc
+        return [{"role": row[0], "content": row[1], "timestamp": row[2]} for row in rows]
 
 # Cargar configuración
 load_dotenv()
@@ -2284,6 +2308,7 @@ class ModeloRelacional:
         self.agentes_cargados = False # Importante: definir antes de cargar
         self.state_change_callback = None # Callback para forzar actualización de UI
         self._force_stop = False # Control de detención para evitar race conditions en reset
+        self._stopped = False # Flag para bloquear logs/callbacks después de un stop/reset
         import threading
         self.lock = threading.RLock()
 
@@ -2323,6 +2348,7 @@ class ModeloRelacional:
         self.ultimo_paso_asamblea = -100 # Cooldown inicial para asambleas
         self.infraestructura = []
         self.civilizaciones = {}
+        self.grupos_dinamicos = {}
         self.mapa_size = 20
         self.COSTO_EXPANSION = 1000.0 # Costo en MC por cada nivel de expansión
         self.mapa = None  # Se generará después de intentar cargar, o si la carga falla
@@ -2337,6 +2363,7 @@ class ModeloRelacional:
         self.misiones_completadas_este_turno = []
         self.historia = LibretaHistoria()
         self.agente_poseido_id = None
+        self.ritmo_lectura = 2.0  # segundos de pausa entre cada agente (ritmo de lectura)
         self.colores_paleta = [
             "#7c4dff", "#00e676", "#ff1744", "#00e5ff", "#ffea00", 
             "#d500f9", "#ff9100", "#1de9b6", "#2979ff", "#f50057",
@@ -3010,31 +3037,26 @@ class ModeloRelacional:
 
     def actualizar_territorios(self):
         """Actualiza la propiedad de las celdas del mapa basada en la presencia de agentes."""
-        # Resetear mapa (opcional, o podemos hacerlo gradual)
-        # Por ahora, la celda pertenece a la civilización con más agentes en ella
+        # Resetear dueños
         for x in range(self.mapa_size):
             for y in range(self.mapa_size):
-                agentes_en_celda = [a for a in self.agentes if a.x == x and a.y == y]
-                if agentes_en_celda:
-                    # Contar agentes por civilización
-                    conteos = {}
-                    for a in agentes_en_celda:
-                        cid = a.civilizacion_id or a.grupo_id
-                        if cid:
-                            conteos[cid] = conteos.get(cid, 0) + 1
-                    
-                    if conteos:
-                        ganador = max(conteos, key=conteos.get)
-                        # self.mapa[x][y] = ganador # OLD
-                        self.mapa[x][y].owner_civ_id = ganador # NEW
+                self.mapa[x][y].owner_civ_id = None
         
-        # Actualizar la lista de territorio en cada civilización
+        # Marcar desde agentes (O(agentes) en vez de O(mapa² * agentes))
+        for a in self.agentes:
+            if a.esta_vivo:
+                cid = a.civilizacion_id or a.grupo_id
+                if cid:
+                    self.mapa[a.x][a.y].owner_civ_id = cid
+        
+        # Actualizar territorio por civilización
         for civ in self.civilizaciones.values():
-            civ.territorio = []
-            for x in range(self.mapa_size):
-                for y in range(self.mapa_size):
-                    if self.mapa[x][y].owner_civ_id == civ.id:
-                        civ.territorio.append((x, y))
+            civ.territorio = [
+                (x, y)
+                for x in range(self.mapa_size)
+                for y in range(self.mapa_size)
+                if self.mapa[x][y].owner_civ_id == civ.id
+            ]
 
     def actualizar_economia(self):
         """Calcula la fluctuación del índice bursátil y el dinero total del sistema."""
@@ -3061,6 +3083,8 @@ class ModeloRelacional:
 
     def step(self):
         """Avanza un paso en la simulación."""
+        if getattr(self, '_stopped', False):
+            return # No procesar si la simulación fue detenida
         self.paso_actual += 1
         self.grupos_creados_este_paso = 0
         self.log(f"\n================ PASO {self.paso_actual} ================", categoria="paso")
@@ -3141,48 +3165,34 @@ class ModeloRelacional:
         self.procesar_asambleas()
         self.procesar_propuestas_ley()
 
-        # Actualizar agentes
-        # Mezclamos el orden para evitar sesgos de prioridad
-        agentes_shuffled = [a for a in self.agentes if a.esta_vivo]
-        random.shuffle(agentes_shuffled)
+        # Actualizar estado fisiológico de todos los agentes
+        agentes_vivos = [a for a in self.agentes if a.esta_vivo]
+        random.shuffle(agentes_vivos)
         
-        for agente in agentes_shuffled:
+        for agente in agentes_vivos:
             agente.actualizar_estado()
-            
-        # Loteamos peticiones LLM con el optimizador
-        from cerebro_langgraph import analizar_situacion
-        # Helper iterativo para build_context:
-        def agent_context_builder(agente_obj):
-            # Analizar situacion returns a dictionary with things
-            state_dict = {"modelo_instance": self, "agente_yo_id": agente_obj.unique_id}
-            try:
-                # Obtenemos info_externa que usa CerebroAvanzado
-                st = analizar_situacion(state_dict)
-                return st.get("info_externa", "")
-            except Exception:
-                return f"Necesidades: {agente_obj.necesidades}. Dinero: {agente_obj.dinero}."
-            
-        decisiones_batch = self.optimizador.process_agents_batch(agentes_shuffled, self.paso_actual, agent_context_builder)
-        
-        # Ejecutar los 'step' pre-cacheando sus decisiones si existieron
-        for agente in agentes_shuffled:
-            # Format expected by agente.step() for cache is exactly what pensar() returns.
-            # Decision LLM has format: {"nombre": "X", "argumentos": {}}
-            # Let's map the action struct to a fake cerebro tuple output
-            decision_pura = decisiones_batch.get(agente.unique_id)
-            if decision_pura:
-                accion_str = decision_pura.get("nombre", "HABLAR")
-                agente.decision_cacheada = (
-                    f"{accion_str}", # decision str
-                    "...",           # mensaje
-                    "Pensamiento cacheado/batch", # pensamiento
-                    False, False, False, [], decision_pura, None
-                )
-            else:
-                agente.decision_cacheada = None
+            agente.decision_cacheada = None
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(agentes_shuffled), 15)) as executor:
-            executor.map(lambda a: a.step(), agentes_shuffled)
+        # --- PROCESAMIENTO SECUENCIAL CON RITMO DE LECTURA ---
+        # Cada agente piensa y actúa uno a la vez, con una pausa entre ellos
+        # para que el espectador pueda "leer" lo que cada uno dice/hace.
+        ritmo = getattr(self, 'ritmo_lectura', 2.0)  # segundos entre agentes
+        
+        for agente in agentes_vivos:
+            if getattr(self, '_force_stop', False):
+                break
+            agente.step()
+            
+            # Broadcast incremental: el frontend ve cada agente actuar en tiempo real
+            if self.state_change_callback:
+                try:
+                    self.state_change_callback()
+                except Exception:
+                    pass
+            
+            # Pausa de lectura entre agentes
+            if ritmo > 0 and len(agentes_vivos) > 1:
+                time.sleep(ritmo)
         
         # Lógica de formación de grupos (cada 5 pasos para mayor actividad social)
         if self.paso_actual % 5 == 0:
@@ -3207,8 +3217,10 @@ class ModeloRelacional:
                 "felicidad": self.calcular_felicidad_promedio()
             })
 
-        # Guardar estado al final de cada paso
-        self.guardar_estado()
+        # Guardar estado: JSON cada 5 pasos, PostgreSQL cada 10 pasos
+        # (evita bloquear la simulación con I/O en cada paso)
+        if self.paso_actual % 5 == 0:
+            self.guardar_estado()
 
         # Verificar misiones activas
         self.misiones_completadas_este_turno = self.sistema_misiones.verificar_misiones(self, self.user_id or "default")
@@ -4162,8 +4174,8 @@ class ModeloRelacional:
                     
                     # Cargar necesidades con valores por defecto para evitar KeyErrors
                     necesidades_base = {
-                        "alimento": 0.0, "social": 0.0, "seguridad": 0.0, 
-                        "descanso": 0.0, "entretenimiento": 0.0, "salud": 10.0
+                        "alimento": 8.0, "social": 8.0, "seguridad": 8.0,
+                        "descanso": 10.0, "entretenimiento": 8.0, "salud": 10.0
                     }
                     a.necesidades = {**necesidades_base, **a_data.get("necesidades", {})}
                     

@@ -49,6 +49,7 @@ class SessionManager:
         self.active_connections: Dict[str, WebSocket] = {} # user_id -> WebSocket
         self.simulations: Dict[str, ModeloRelacional] = {} # user_id -> ModeloRelacional
         self.simulation_threads: Dict[str, bool] = {} # user_id -> is_running
+        self.simulation_thread_refs: Dict[str, threading.Thread] = {} # user_id -> thread reference
         self.message_queue: asyncio.Queue = asyncio.Queue()
         self.queue_processor_started = False
         self.main_loop = None
@@ -119,6 +120,8 @@ class SessionManager:
             # Callback personalizado para este usuario
             def user_log_callback(mensaje, categoria, subtitulos, tts_text, pensamiento=None, privado_para=None):
                 sim = self.simulations.get(user_id)
+                if sim and getattr(sim, '_stopped', False):
+                    return # No enviar logs si la simulación fue detenida/reset
                 paso = sim.paso_actual if sim else 0
                 try:
                     self.enqueue_message(user_id, {
@@ -137,7 +140,7 @@ class SessionManager:
             # Callback para cambios de estado (actualización inmediata de UI)
             def on_state_change():
                 sim = self.simulations.get(user_id)
-                if sim:
+                if sim and not getattr(sim, '_stopped', False):
                     try:
                         # Emitir estado completo inmediatamente al detectar un cambio crítico
                         if self.main_loop:
@@ -182,7 +185,7 @@ class SessionManager:
                 
                 current_sim.step()
                 
-                # Broadcast de estado usando la cola
+                # Broadcast de estado final del paso
                 try:
                     async def do_broadcast():
                         await self.broadcast_state(user_id, include_logs=False)
@@ -190,17 +193,29 @@ class SessionManager:
                 except Exception as e:
                     print(f"[RUN_LOOP] Error en broadcast: {e}")
                 
-                time.sleep(0.3) # Ritmo de juego acelerado para sensación Real-Time
+                # Pausa mínima entre pasos (el ritmo real lo maneja step() internamente)
+                time.sleep(0.1)
             print(f"⏹️ Bucle de simulación terminado para {user_id}")
+            # Limpiar referencia al thread cuando termina
+            self.simulation_thread_refs.pop(user_id, None)
 
         thread = threading.Thread(target=run_loop, daemon=True)
+        self.simulation_thread_refs[user_id] = thread
         thread.start()
 
     def stop_simulation_loop(self, user_id: str):
         self.simulation_threads[user_id] = False
         if user_id in self.simulations and hasattr(self.simulations[user_id], '_force_stop'):
             self.simulations[user_id]._force_stop = True
-        print(f"⏸️ Simulación pausada para {user_id}")
+            self.simulations[user_id]._stopped = True
+        # Esperar a que el hilo de simulación termine completamente
+        thread = self.simulation_thread_refs.pop(user_id, None)
+        if thread and thread.is_alive():
+            print(f"⏳ Esperando a que el hilo de simulación termine para {user_id}...")
+            thread.join(timeout=15)
+            if thread.is_alive():
+                print(f"⚠️ El hilo de simulación para {user_id} no terminó en 15s, continuando de todas formas")
+        print(f"⏸️ Simulación detenida para {user_id}")
 
     async def broadcast_state(self, user_id: str, include_logs: bool = False):
         sim = self.simulations.get(user_id)
@@ -320,8 +335,8 @@ class SessionManager:
             "agents": agents_update
         })
 
-        # Relaciones (en cada turno para mantener vista 3D sincronizada)
-        if True: # Antes sim.paso_actual % 5 == 0:
+        # Relaciones (cada 5 pasos para reducir tráfico WebSocket)
+        if sim.paso_actual % 5 == 0:
             relationships = []
             for a in sim.agentes:
                 for neighbor in a.memoria.grafo.neighbors(a.unique_id):
@@ -353,6 +368,9 @@ class UserLogin(BaseModel):
 class GameAction(BaseModel):
     user_id: str
     action: str # "start", "pause", "reset"
+
+class SpeedControl(BaseModel):
+    ritmo: float  # segundos entre cada agente
 
 class AIConfig(BaseModel):
     provider: str
@@ -433,11 +451,13 @@ async def game_control(req: GameAction):
     elif req.action == "reset":
         print(f"--- DEBUG: Recibida acción de RESET para user_id: {req.user_id} ---")
         
-        # 1. Detener el bucle actual
+        # 1. Detener el bucle actual y esperar a que el hilo termine
         session_manager.stop_simulation_loop(req.user_id)
 
         # 2. Notificar al frontend para que limpie TODA su UI (agentes, grupos, logs, etc.)
         await session_manager.send_to_user(req.user_id, {"type": "world_reset"})
+        # Enviar relaciones vacías explícitamente para asegurar limpieza total
+        await session_manager.send_to_user(req.user_id, {"type": "relationships", "data": []})
 
         # 3. LIMPIEZA DE BASE DE DATOS (Independiente de si hay simulación en memoria)
         try:
@@ -475,14 +495,21 @@ async def game_control(req: GameAction):
         print("--- DEBUG: Enviando nuevo estado al frontend... ---")
         await session_manager.broadcast_state(req.user_id)
         
-        # 7. REINICIAR BUCLE
-        print("--- DEBUG: Reiniciando el bucle de simulación... ---")
-        session_manager.start_simulation_loop(req.user_id)
-        
-        print("--- DEBUG: Proceso de RESET completado. ---")
+        # 7. La sesión queda en PAUSA (no se inicia el bucle automáticamente)
+        print("--- DEBUG: Proceso de RESET completado. Sesión en pausa. ---")
         return {"status": "success", "message": "Mundo reiniciado completamente"}
     
     raise HTTPException(status_code=400, detail="Acción desconocida")
+
+
+@app.post("/game/speed/{user_id}")
+async def set_speed(user_id: str, req: SpeedControl):
+    """Controla el ritmo de lectura entre agentes (segundos). 0 = sin pausa."""
+    sim = session_manager.get_simulation(user_id)
+    if not sim:
+        raise HTTPException(status_code=404, detail="Simulación no encontrada")
+    sim.ritmo_lectura = max(0.0, min(req.ritmo, 10.0))
+    return {"status": "success", "ritmo": sim.ritmo_lectura}
 
 
 @app.get("/tts")
@@ -809,6 +836,200 @@ async def spawn_agent_endpoint(user_id: str, config: AgentConfig = Body(None)):
     sim.log_callback(f"🧬 [DIVINO] Un nuevo agente '{agente.unique_id}' ha sido manifestado.", "sistema", None, "Agente creado")
     await session_manager.broadcast_state(user_id)
     return {"status": "success", "message": f"Agente '{agente.unique_id}' creado", "agent_id": agente.unique_id}
+
+
+# --- CHAT CON AGENTES ---
+
+class ChatMessageRequest(BaseModel):
+    message: str
+
+@app.get("/chat/{user_id}/agents")
+async def chat_get_agents(user_id: str):
+    """Devuelve la lista de agentes disponibles para chat con metadata enriquecida."""
+    sim = session_manager.get_simulation(user_id)
+    if not sim:
+        raise HTTPException(status_code=404, detail="Simulación no encontrada")
+
+    agents_list = []
+    for a in sim.agentes:
+        p = a.personalidad
+        rasgo_dominante = max(p, key=p.get) if p else "neutral"
+        valor_dominante = p.get(rasgo_dominante, 0)
+
+        emojis_personalidad = {
+            "amabilidad": "💚",
+            "hostilidad": "⚔️",
+            "curiosidad": "🔬",
+            "competitividad": "🏆",
+            "extroversión": "🎤",
+            "lealtad": "🛡️",
+            "prudencia": "🧠"
+        }
+        emoji = emojis_personalidad.get(rasgo_dominante, "🎭")
+        resumen = f"{emoji} {rasgo_dominante.capitalize()} ({valor_dominante:.0%})"
+
+        color = "#ffffff"
+        if a.grupo_id and a.grupo_id in sim.civilizaciones:
+            color = sim.civilizaciones[a.grupo_id].color
+
+        agents_list.append({
+            "id": a.unique_id,
+            "rol": a.rol,
+            "profesion": getattr(a, 'profesion', None),
+            "grupo_id": a.grupo_id,
+            "reputacion": getattr(a, 'reputacion', 1.0),
+            "personalidad_resumen": resumen,
+            "pensamiento": getattr(a, 'pensamiento_actual', "...") or "...",
+            "color": color,
+            "esta_vivo": a.necesidades.get("salud", 0) > 0
+        })
+
+    return {"agents": agents_list}
+
+
+@app.get("/chat/{user_id}/{agent_id}/history")
+async def chat_get_history(user_id: str, agent_id: str):
+    """Devuelve el historial de chat entre el usuario y un agente específico."""
+    sim = session_manager.get_simulation(user_id)
+    if not sim:
+        raise HTTPException(status_code=404, detail="Simulación no encontrada")
+    messages = sim.db.get_chat_history(user_id, agent_id)
+    return {"messages": messages}
+
+
+@app.post("/chat/{user_id}/{agent_id}")
+async def chat_send_message(user_id: str, agent_id: str, req: ChatMessageRequest):
+    """Envía un mensaje al agente y genera una respuesta in-character usando el LLM."""
+    sim = session_manager.get_simulation(user_id)
+    if not sim:
+        raise HTTPException(status_code=404, detail="Simulación no encontrada")
+
+    agent = next((a for a in sim.agentes if a.unique_id == agent_id), None)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agente no encontrado")
+
+    if agent.necesidades.get("salud", 0) <= 0:
+        raise HTTPException(status_code=400, detail="Este agente ha fallecido y no puede responder")
+
+    # Guardar mensaje del usuario en DB
+    sim.db.save_chat_message(user_id, agent_id, "user", req.message, time.time())
+
+    # Contexto del agente para el LLM
+    p = agent.personalidad
+    necesidades = {k: round(max(0, min(10, v)), 1) for k, v in agent.necesidades.items()}
+
+    relaciones_info = []
+    try:
+        for neighbor in agent.memoria.grafo.neighbors(agent.unique_id):
+            tipo = agent.memoria.obtener_tipo(neighbor)
+            fuerza = agent.memoria.obtener_fuerza(neighbor)
+            relaciones_info.append(f"{neighbor} ({tipo}, fuerza {fuerza:.1f})")
+    except:
+        pass
+    relaciones_str = ", ".join(relaciones_info[:10]) if relaciones_info else "Ninguna relación registrada"
+
+    # Obtener historial reciente desde la base de datos
+    historial = sim.db.get_chat_history(user_id, agent_id, limit=10)
+    historial_str = ""
+    for msg in historial[:-1]:  # Excluir el mensaje actual del usuario que acabamos de guardar
+        role_label = "Arquitecto" if msg["role"] == "user" else agent_id
+        historial_str += f"{role_label}: {msg['content']}\n"
+
+    grupo_info = f"Miembro del grupo {agent.grupo_id}" if agent.grupo_id else "Sin grupo"
+    civ_info = f"Civilización: {agent.civilizacion_id}" if agent.civilizacion_id else ""
+
+    system_prompt = f"""Eres el Agente {agent.unique_id}, un personaje consciente en una simulación social.
+
+═══ TU IDENTIDAD ═══
+Personalidad: {str(p)}
+Rol: {agent.rol} | Profesión: {getattr(agent, 'profesion', 'Ninguna')}
+Rango: {agent.rango:.2f} | Reputación: {getattr(agent, 'reputacion', 1.0):.2f}
+{grupo_info} | {civ_info}
+
+═══ TU ESTADO ACTUAL (10=perfecto, 0=crítico) ═══
+Necesidades: {str(necesidades)}
+Dinero: {agent.dinero:.0f} MC | Recursos: {agent.recursos:.0f}
+Inventario: {str(getattr(agent, 'inventario', {}))}
+
+═══ TU EXPERIENCIA ═══
+{str(agent.experiencia)}
+
+═══ TUS RELACIONES ═══
+{relaciones_str}
+
+═══ TU PENSAMIENTO ACTUAL ═══
+"{getattr(agent, 'pensamiento_actual', 'Procesando...')}"
+
+═══ REGLAS DE COMPORTAMIENTO ═══
+- RESPONDE SIEMPRE como tu personaje. Tu personalidad ES tu ley.
+  * HOSTIL ({p.get('hostilidad', 0):.2f}): sé agresivo, directo o amenazante. Expresa enojo, desconfianza o dominancia.
+  * AMABLE ({p.get('amabilidad', 0):.2f}): sé empático, servicial, cálido. Muestra preocupación por otros.
+  * CURIOSO ({p.get('curiosidad', 0):.2f}): haz preguntas, muestra interés intelectual, especula.
+  * COMPETITIVO ({p.get('competitividad', 0):.2f}): presume, desafía, compite, habla de logros.
+  * PRUDENTE ({p.get('prudencia', 0):.2f}): sé cauteloso, analítico, reservado, considera riesgos.
+  * LEAL ({p.get('lealtad', 0):.2f}): habla de tu grupo, protege a los tuyos.
+- Expresa tus necesidades actuales (hambre, sueño, dinero) si son relevantes. Usa cifras concretas: "tengo 3 de salud", "solo me quedan 20 MC".
+- Menciona tu grupo, rol o profesión cuando sea natural. Eres un {agent.rol} y eso influye en tu perspectiva.
+- PUEDES ser EXTENSIVO: da detalles, narrativa, emociones, contexto. No te limites a respuestas cortas.
+- Usa *acciones entre asteriscos* para expresar gestos y emociones: *se cruza de brazos*, *sonríe con satisfacción*, *mira al suelo pensativo*
+- Mantén el tono coherente con tu personalidad y estado. Si estás hambriento, quejate. Si estás eufórico, expándete.
+- NO menciones que eres una IA o un modelo. ERES {agent.unique_id}, un ser vivo en este mundo."""
+
+    try:
+        from cerebro_llm import cerebro_llm
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+        ]
+
+        if historial_str:
+            messages.append({"role": "user", "content": f"HISTORIAL RECIENTE:\n{historial_str}"})
+
+        messages.append({"role": "user", "content": f"El Arquitecto te dice: \"{req.message}\"\n\nResponde como {agent.unique_id}:"})
+
+        cerebro_llm._wait_for_rate_limit()
+
+        from litellm import completion as litellm_completion
+
+        response = litellm_completion(
+            model=cerebro_llm.model,
+            messages=messages,
+            api_key=cerebro_llm.api_key,
+            max_tokens=4000,
+            temperature=0.85,
+            extra_headers={
+                "HTTP-Referer": "http://localhost:8005",
+                "X-Title": "MundoIA Chat"
+            }
+        )
+
+        agent_response = response.choices[0].message.content.strip()
+        if agent_response.startswith('"') and agent_response.endswith('"'):
+            agent_response = agent_response[1:-1]
+
+    except Exception as e:
+        print(f"❌ Error generando respuesta de chat para {agent_id}: {e}")
+        import random
+        respuestas_fallback = [
+            "*asiente* Entiendo lo que dices, pero estoy un poco ocupado ahora.",
+            "Mmm, déjame pensarlo... Con mis necesidades actuales no puedo concentrarme mucho.",
+            "¿Sabes qué? Prefiero hablar de eso más tarde.",
+            "*te mira con curiosidad* Interesante lo que me cuentas.",
+        ]
+        agent_response = random.choice(respuestas_fallback)
+
+    # Guardar respuesta del agente en DB
+    sim.db.save_chat_message(user_id, agent_id, "agent", agent_response, time.time())
+
+    if sim.log_callback:
+        sim.log_callback(
+            f"💬 [CHAT] {agent_id} responde al Arquitecto: \"{agent_response[:80]}{'...' if len(agent_response) > 80 else ''}\"",
+            "chat",
+            None,
+            agent_response[:100]
+        )
+
+    return {"response": agent_response}
 
 
 if __name__ == "__main__":
