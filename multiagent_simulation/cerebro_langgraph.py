@@ -3,7 +3,11 @@ from langgraph.graph import StateGraph, END
 try:
     from langgraph.checkpoint.sqlite import SqliteSaver
 except ImportError:
-    from langgraph.checkpoint import SqliteSaver
+    try:
+        from langgraph.checkpoint import SqliteSaver
+    except ImportError:
+        # Para versiones más nuevas de langgraph
+        from langgraph.checkpoint.base import SqliteSaver
 import random
 from cerebro_llm import cerebro_llm
 from herramientas import herramientas
@@ -33,6 +37,11 @@ class AgentState(TypedDict):
     privado: bool
     destinatario_id: Optional[str]  # ID del agente destinatario si el mensaje es privado
     planes: List[Dict]
+    
+    # BDI persistence
+    beliefs: List[str]
+    desires: List[str]
+    intentions: List[Dict]
 
 def analizar_situacion(state: AgentState):
     """Nodo 1: Percibir entorno y verificar si hay intervención humana."""
@@ -50,7 +59,11 @@ def analizar_situacion(state: AgentState):
     contexto += f"Dinero: {agente_yo.dinero:.1f} MC. Reputación: {agente_yo.reputacion:.2f}. "
     contexto += f"Ubicación: ({agente_yo.x}, {agente_yo.y}). "
 
-    # --- VISIÓN GLOBAL: Todas las facciones del mundo ---
+    # --- VISIÓN GLOBAL: Lore y Facciones ---
+    contexto += "\n=== REALIDAD NARRATIVA (LORE DEL ARQUITECTO) ===\n"
+    lore = getattr(modelo, 'lore', 'Un mundo de posibilidades infinitas.')
+    contexto += f"'{lore}'\n"
+
     contexto += "\n=== ESTADO GLOBAL DEL MUNDO ===\n"
     if modelo.civilizaciones:
         for civ in modelo.civilizaciones.values():
@@ -97,11 +110,28 @@ def analizar_situacion(state: AgentState):
     if tile.resource_node:
         contexto += f"Recursos aquí: {tile.resource_node['amount']} de {tile.resource_node['type']}. "
 
-    # Detectar órdenes directas del usuario
+    # Detectar órdenes directas del usuario (Personal y Global)
+    contexto_arquitecto = ""
+    if hasattr(modelo, 'mensaje_global_arquitecto') and modelo.mensaje_global_arquitecto:
+        contexto_arquitecto += f"📢 [MENSAJE DIVINO GLOBAL]: '{modelo.mensaje_global_arquitecto}'. "
+    
     if hasattr(agente_yo, 'mensaje_arquitecto') and agente_yo.mensaje_arquitecto:
-        contexto += f"¡ORDEN DIVINA!: '{agente_yo.mensaje_arquitecto['contenido']}'. "
+        contexto_arquitecto += f"✨ [ORDEN DIVINA PERSONAL]: '{agente_yo.mensaje_arquitecto['contenido']}'. "
+    
+    if contexto_arquitecto:
+        contexto += f"\n=== INTERVENCIÓN DEL ARQUITECTO ===\n{contexto_arquitecto}\n====================================\n"
 
-    # --- HISTORIAL DE DIÁLOGOS Y ACCIONES ---
+    # --- HISTORIAL DE CHAT CON EL ARQUITECTO (User) ---
+    if modelo.db_active:
+        historial_chat = modelo.db.get_chat_history(modelo.user_id, agente_yo.unique_id, limit=20)
+        if historial_chat:
+            contexto += "\n=== HISTORIAL DE CHAT PERSONAL CON EL ARQUITECTO ===\n"
+            for msg in historial_chat:
+                rol = "Arquitecto" if msg['role'] == "user" else "Tú"
+                contexto += f"  {rol}: {msg['content']}\n"
+            contexto += "===================================================\n"
+
+    # --- HISTORIAL DE DIÁLOGOS Y ACCIONES CON OTROS AGENTES ---
     contexto += f"\n{agente_yo.memoria.obtener_contexto_mensajes()}\n"
     contexto += f"\n{agente_yo.memoria.obtener_contexto_acciones()}\n"
 
@@ -118,9 +148,17 @@ def analizar_situacion(state: AgentState):
     
     # Supervivencia
     if agente_yo.necesidades["alimento"] < 3.0:
-        urgencias.append(f"🔴 HAMBRE CRÍTICA ({agente_yo.necesidades['alimento']:.1f}/10) — RECOLECTA o COMERCIA comida ahora o morirás.")
+        tiene_comida = agente_yo.inventario.get("comida", 0) > 0
+        if tiene_comida:
+            urgencias.append(f"🔴 HAMBRE CRÍTICA ({agente_yo.necesidades['alimento']:.1f}/10) — ¡COME ahora mismo! Tienes comida en el inventario.")
+        else:
+            urgencias.append(f"🔴 HAMBRE CRÍTICA ({agente_yo.necesidades['alimento']:.1f}/10) — RECOLECTA o COMERCIA comida ahora o morirás.")
     elif agente_yo.necesidades["alimento"] < 5.0:
-        urgencias.append(f"🟡 HAMBRE MODERADA ({agente_yo.necesidades['alimento']:.1f}/10) — considera RECOLECTAR pronto.")
+        tiene_comida = agente_yo.inventario.get("comida", 0) > 0
+        if tiene_comida:
+            urgencias.append(f"🟡 HAMBRE MODERADA ({agente_yo.necesidades['alimento']:.1f}/10) — considera COMER pronto para恢复.")
+        else:
+            urgencias.append(f"🟡 HAMBRE MODERADA ({agente_yo.necesidades['alimento']:.1f}/10) — considera RECOLECTAR pronto.")
     
     if agente_yo.necesidades["salud"] < 3.0:
         tiene_med = agente_yo.inventario.get("medicina", 0) > 0
@@ -199,23 +237,54 @@ def analizar_situacion(state: AgentState):
     }
 
 def actuar(state: AgentState):
-    """Nodo 2: El agente decide o cede el control."""
+    """Nodo 2: Toma la decisión basada en Intenciones (BDI)."""
+    modelo = state['modelo_instance']
+    agente_yo = modelo.get_agent_by_id(state['agente_yo_id'])
+    agente_otro = modelo.get_agent_by_id(state.get('agente_otro_id'))
+    
+    # 1. POSESIÓN (Sobreescribe todo)
     if state.get('esta_poseido'):
-        # Si está poseído, el agente "se queda en espera" de la acción manual del API/Frontend
-        # En la práctica, el motor de juego inyectará la acción, aquí solo notificamos
         return {
             "pensamiento_actual": "Mi voluntad ha sido suplantada por el Arquitecto. Él guía mis pasos ahora.",
             "accion_elegida": {"nombre": "POSESIÓN_DIVINA", "argumentos": {}},
             "mensaje_llm": "Mi cuerpo no me pertenece... el Arquitecto me controla."
         }
 
-    modelo = state['modelo_instance']
-    agente_yo = modelo.get_agent_by_id(state['agente_yo_id'])
-    agente_otro = modelo.get_agent_by_id(state.get('agente_otro_id'))
-    
-    # Consultar a la IA
+    # 2. EJECUCIÓN DE INTENCIÓN (Si ya existe un plan y no ha cambiado el estado de forma crítica)
+    intenciones_restantes = getattr(agente_yo, 'intentions', [])
+    if intenciones_restantes:
+        # Verificar si hay que abortar (Emergencia)
+        es_emergencia = (agente_yo.necesidades["salud"] < 3.0 or 
+                         agente_yo.necesidades["alimento"] < 3.0 or
+                         agente_yo.necesidades["descanso"] < 2.0)
+        
+        if not es_emergencia:
+            proxima = intenciones_restantes.pop(0)
+            agente_yo.intentions = intenciones_restantes # Guardar lista restante
+            
+            p_msg = f"Siguiendo plan: {proxima.get('meta', 'sin meta')}"
+            return {
+                "pensamiento_actual": p_msg,
+                "accion_elegida": {"nombre": proxima['accion'], "argumentos": proxima.get('params', {})},
+                "mensaje_llm": f"Estoy enfocado en mi objetivo: {proxima.get('meta', '...')}",
+                "intentions": intenciones_restantes
+            }
+        else:
+            modelo.log(f"⚡ [BDI] Agente {agente_yo.unique_id} aborta planes por emergencia vital.", categoria="sistema")
+            agente_yo.intentions = []
+
+    # 3. DELIBERACIÓN (Llamar a la IA para nuevos deseos e intenciones)
     decision = cerebro_llm.generar_pensamiento_y_accion(agente_yo, agente_otro, state['info_externa'])
     
+    # Extraer BDI de la respuesta de la IA (configurado en el prompt de cerebro_llm)
+    nuevas_intenciones = decision.get("intentions", [])
+    
+    # Si la IA devolvió intenciones, guardarlas (quitando el primer paso que se ejecuta ahora)
+    if nuevas_intenciones and len(nuevas_intenciones) > 1:
+        agente_yo.intentions = nuevas_intenciones[1:]
+    else:
+        agente_yo.intentions = []
+
     return {
         "pensamiento_actual": decision.get("pensamiento", "No pude pensar."),
         "accion_elegida": decision.get("accion", {"nombre": "HABLAR", "argumentos": {"mensaje": "..."}}),
@@ -224,8 +293,9 @@ def actuar(state: AgentState):
         "es_grupal": decision.get("es_grupal", False),
         "privado": bool(decision.get("destinatario_id")),
         "destinatario_id": decision.get("destinatario_id"),
-        "peticion_arquitecto": decision.get("peticion_arquitecto"),
-        "dilema_usuario": decision.get("dilema")
+        "beliefs": decision.get("beliefs", []),
+        "desires": decision.get("desires", []),
+        "intentions": nuevas_intenciones
     }
 
 def decidir_ruta(state: AgentState) -> str:
@@ -347,10 +417,13 @@ class CerebroAvanzado:
             "es_grupal": False,
             "privado": False,
             "destinatario_id": None,
-            "planes": []
+            "planes": [],
+            "beliefs": getattr(agente, 'beliefs_list', []),
+            "desires": getattr(agente, 'desires', []),
+            "intentions": getattr(agente, 'intentions', [])
         }
         
-        config = {"configurable": {"thread_id": f"agent_{agente.unique_id}_{random.random()}"}}
+        config = {"configurable": {"thread_id": f"agent_{agente.unique_id}"}}
         final_state = cerebro_cognitivo.invoke(initial_state, config)
         
         accion = final_state.get('accion_elegida', {})
@@ -359,6 +432,10 @@ class CerebroAvanzado:
         
         # Formato para el motor de simulación
         decision_str = f"{nombre_accion}:" + ":".join(map(str, argumentos.values())) if argumentos else nombre_accion
+
+        agente.beliefs_list = final_state.get('beliefs', [])
+        agente.desires = final_state.get('desires', [])
+        agente.intentions = final_state.get('intentions', [])
 
         return (
             decision_str,

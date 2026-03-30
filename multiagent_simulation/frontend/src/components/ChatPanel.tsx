@@ -59,7 +59,12 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                 const res = await fetch(`${getApiHost()}/chat/${userId}/agents`);
                 if (res.ok) {
                     const data = await res.json();
-                    setChatAgents(data.agents.filter((a: AgentChatInfo) => a.esta_vivo));
+                    const aliveAgents = data.agents.filter((a: AgentChatInfo) => a.esta_vivo);
+                    setChatAgents(aliveAgents);
+                    // Seleccionar automáticamente el primer agente si no hay ninguno seleccionado
+                    if (aliveAgents.length > 0 && !selectedAgentId) {
+                        setSelectedAgentId(aliveAgents[0].id);
+                    }
                 }
             } catch (e) {
                 console.error("Error fetching chat agents:", e);
@@ -78,13 +83,18 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                     const res = await fetch(`${getApiHost()}/chat/${userId}/agents`);
                     if (res.ok) {
                         const data = await res.json();
-                        setChatAgents(data.agents.filter((a: AgentChatInfo) => a.esta_vivo));
+                        const aliveAgents = data.agents.filter((a: AgentChatInfo) => a.esta_vivo);
+                        setChatAgents(aliveAgents);
+                        // Si hay agentes pero no hay seleccionado, seleccionar el primero
+                        if (aliveAgents.length > 0 && !selectedAgentId) {
+                            setSelectedAgentId(aliveAgents[0].id);
+                        }
                     }
                 } catch (e) { /* silent */ }
             };
             fetchAgents();
         }
-    }, [agents, userId, getApiHost]);
+    }, [agents, userId, getApiHost, selectedAgentId]);
 
     // Cargar historial al seleccionar agente
     useEffect(() => {
@@ -116,7 +126,11 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
     }, [selectedAgentId]);
 
     const sendMessage = async () => {
-        if (!inputText.trim() || !selectedAgentId || isLoading) return;
+        console.log('🔍 [ChatPanel] sendMessage called', { inputText, selectedAgentId, isLoading, userId });
+        if (!inputText.trim() || !selectedAgentId || isLoading) {
+            console.warn('⚠️ [ChatPanel] sendMessage blocked', { hasText: !!inputText.trim(), hasAgent: !!selectedAgentId, isLoading });
+            return;
+        }
 
         const userMsg: ChatMessage = {
             role: "user",
@@ -131,15 +145,19 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
         const timeout = setTimeout(() => controller.abort(), 60000);
 
         try {
-            const res = await fetch(`${getApiHost()}/chat/${userId}/${selectedAgentId}`, {
+            const url = `${getApiHost()}/chat/${userId}/${selectedAgentId}`;
+            console.log('🚀 [ChatPanel] POST to:', url, { message: userMsg.content.slice(0, 50) });
+            const res = await fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ message: userMsg.content }),
                 signal: controller.signal,
             });
             clearTimeout(timeout);
+            console.log('📥 [ChatPanel] Response status:', res.status, res.ok);
             if (res.ok) {
                 const data = await res.json();
+                console.log('✅ [ChatPanel] Response data:', data);
                 const agentMsg: ChatMessage = {
                     role: "agent",
                     content: data.response,
@@ -148,12 +166,14 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                 setMessages((prev) => [...prev, agentMsg]);
             } else {
                 const errData = await res.json().catch(() => ({}));
+                console.error('❌ [ChatPanel] Error response:', errData);
                 setMessages((prev) => [
                     ...prev,
                     { role: "agent", content: `*Error: ${errData.detail || "No se pudo conectar con el agente"}*`, timestamp: Date.now() / 1000 },
                 ]);
             }
         } catch (e: any) {
+            console.error('🔥 [ChatPanel] Fetch exception:', e);
             const isTimeout = e?.name === "AbortError";
             setMessages((prev) => [
                 ...prev,
@@ -173,6 +193,8 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
     );
 
     const selectedAgent = chatAgents.find((a) => a.id === selectedAgentId);
+
+    console.log('🔍 [ChatPanel] Debug:', { userId, selectedAgentId, chatAgentsCount: chatAgents.length, filteredCount: filteredAgents.length });
 
     const getPersonalityEmoji = (resumen: string) => {
         if (resumen.includes("amabilidad")) return "";
@@ -250,7 +272,7 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                                 </div>
                             ) : filteredAgents.length === 0 ? (
                                 <div className="text-center py-10 text-white/20 text-xs">
-                                    No se encontraron agentes
+                                    No se encontraron agentes vivos
                                 </div>
                             ) : (
                                 filteredAgents.map((agent) => (
@@ -269,7 +291,6 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                                             >
                                                 {agent.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 3).toUpperCase()}
                                             </div>
-                                            {/* History indicator removed - not persisted previously */}
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2">
@@ -303,6 +324,23 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                         exit={{ opacity: 0, x: 20 }}
                         className="flex-1 flex flex-col min-h-0 mt-3"
                     >
+                        {/* Header con botón volver */}
+                        <div className="flex items-center gap-2 mb-3">
+                            <button
+                                onClick={() => setSelectedAgentId(null)}
+                                className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-white/50 hover:text-white"
+                            >
+                                ← Volver
+                            </button>
+                            <div className="flex items-center gap-2 px-2">
+                                <div
+                                    className="w-2 h-2 rounded-full"
+                                    style={{ backgroundColor: selectedAgent?.color }}
+                                />
+                                <span className="text-xs font-bold text-white">{selectedAgentId}</span>
+                            </div>
+                        </div>
+
                         {/* Info del agente */}
                         <div className="mb-3 p-3 bg-white/[0.02] rounded-xl border border-white/5">
                             <div className="flex items-center gap-2 mb-1">
@@ -327,10 +365,10 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                                         <MessageCircle className="w-6 h-6 text-white/30" />
                                     </div>
                                     <p className="text-xs text-white/30 font-medium">
-                                        Inicia una conversación con {selectedAgentId}
+                                        Escribe un mensaje para {selectedAgentId}
                                     </p>
                                     <p className="text-[10px] text-white/15 mt-1">
-                                        El agente responderá según su personalidad y contexto
+                                        El agente responderá según su personalidad
                                     </p>
                                 </div>
                             )}
@@ -351,10 +389,10 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                                                 <Bot className="w-3 h-3" style={{ color: selectedAgent?.color }} />
                                             )}
                                             <span className="text-[8px] font-bold uppercase tracking-widest text-white/30">
-                                                {msg.role === "user" ? "Arquitecto" : selectedAgentId}
+                                                {msg.role === "user" ? "Tú" : selectedAgentId}
                                             </span>
                                         </div>
-                                        <div className="text-xs leading-relaxed">
+                                        <div className="text-xs leading-relaxed break-words">
                                             <ReactMarkdown>{msg.content}</ReactMarkdown>
                                         </div>
                                     </div>
@@ -383,7 +421,7 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                                 value={inputText}
                                 onChange={(e) => setInputText(e.target.value)}
                                 onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                                placeholder={`Hablar con ${selectedAgentId}...`}
+                                placeholder={`Mensaje a ${selectedAgentId}...`}
                                 disabled={isLoading}
                                 className="w-full pr-12 pl-4 py-3 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder:text-white/20 focus:border-cyan-500/30 focus:outline-none transition-all disabled:opacity-40"
                             />

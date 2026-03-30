@@ -1,4 +1,5 @@
 {
-    "model": "openrouter/stepfun/step-3.5-flash:free",
-    "api_key": "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"
+    "model": "ollama/cogito-2.1:671b",
+    "api_key": "b2147ce5a75842b48ca6cee762c9965d.c8WoUA34TkbAxMc0F-OUs3rK",
+    "base_url": "https://ollama.com"
 }

@@ -27,6 +27,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Middleware para logging de requests
+@app.middleware("http")
+async def log_requests(request, call_next):
+    print(f"📥 [HTTP] {request.method} {request.url.path}")
+    response = await call_next(request)
+    print(f"📤 [HTTP] {request.method} {request.url.path} -> {response.status_code}")
+    return response
+
 # --- LIFESPAN para iniciar el processor de la cola ---
 from contextlib import asynccontextmanager
 
@@ -217,7 +225,7 @@ class SessionManager:
                 print(f"⚠️ El hilo de simulación para {user_id} no terminó en 15s, continuando de todas formas")
         print(f"⏸️ Simulación detenida para {user_id}")
 
-    async def broadcast_state(self, user_id: str, include_logs: bool = False):
+    async def broadcast_state(self, user_id: str, include_logs: bool = False, include_map: bool = False):
         sim = self.simulations.get(user_id)
         if not sim: return
 
@@ -279,13 +287,12 @@ class SessionManager:
                 "votos_no": asamblea["votos_no"]
             })
 
-        # Stats Globales + Civilizaciones + Grupos Dinámicos + Propuestas + Relaciones + Misiones
-        await self.send_to_user(user_id, {
+        # Preparamos el payload de stats
+        stats_payload = {
             "type": "stats",
             "step": sim.paso_actual,
             "groups": len(set(a.grupo_id for a in sim.agentes if a.grupo_id)),
             "economy": sim.economia,
-            "mapa": [[t.to_dict() if t else None for t in row] for row in sim.mapa],
             "weather": sim.weather,
             "lore": sim.lore,
             "civilizaciones": civilizaciones_viz,
@@ -301,7 +308,14 @@ class SessionManager:
             "ranking": [{"user_id": r[0], "username": r[1], "puntos": r[2]} for r in sim.db.get_ranking()] if sim.db_active else [],
             "logs": sim.historial_logs if include_logs else [],
             "agente_poseido_id": getattr(sim, 'agente_poseido_id', None)
-        })
+        }
+
+        # Solo incluir el mapa si se solicita explícitamente (ahorro masivo de ancho de banda)
+        if include_map:
+            stats_payload["mapa"] = [[t.to_dict() if t else None for t in row] for row in sim.mapa]
+
+        # Stats Globales + Civilizaciones + Grupos Dinámicos + Propuestas + Relaciones + Misiones
+        await self.send_to_user(user_id, stats_payload)
 
         # Agentes
         agents_update = []
@@ -376,6 +390,7 @@ class AIConfig(BaseModel):
     provider: str
     api_key: str
     model: str
+    base_url: Optional[str] = None
 
 # --- ENDPOINTS ---
 
@@ -405,8 +420,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         print(f"🔌 WS: Creando simulación para {user_id}")
         sim = session_manager.create_simulation(user_id)
     
-    # Enviar estado inicial con logs históricos
-    await session_manager.broadcast_state(user_id, include_logs=True)
+    # Enviar estado inicial con logs históricos y MAPA completo
+    await session_manager.broadcast_state(user_id, include_logs=True, include_map=True)
     
     try:
         while True:
@@ -491,9 +506,9 @@ async def game_control(req: GameAction):
             print("--- DEBUG: Guardando nueva simulación inicial VACÍA en DB... ---")
             new_sim.guardar_estado()
         
-        # 6. ENVIAR ESTADO INICIAL
+        # 6. ENVIAR ESTADO INICIAL (Con mapa nuevo)
         print("--- DEBUG: Enviando nuevo estado al frontend... ---")
-        await session_manager.broadcast_state(req.user_id)
+        await session_manager.broadcast_state(req.user_id, include_map=True)
         
         # 7. La sesión queda en PAUSA (no se inicia el bucle automáticamente)
         print("--- DEBUG: Proceso de RESET completado. Sesión en pausa. ---")
@@ -612,6 +627,11 @@ async def god_mode(user_id: str, req: GodAction):
         new_lore = req.params.get("lore")
         sim.lore = new_lore
         sim.log_callback(f"📜 [NARRATIVA] El Arquitecto ha redefinido la realidad: '{new_lore}'", "sistema", None, "Contexto actualizado")
+        
+        # Persistencia inmediata del LORE para evitar pérdida en reinicios
+        if hasattr(sim, "persistir_estado"):
+            sim.persistir_estado()
+            
         await session_manager.broadcast_state(user_id)
         return {"status": "success", "message": "Lore actualizado"}
 
@@ -752,20 +772,189 @@ async def god_mode(user_id: str, req: GodAction):
     elif req.action_type == "EXPAND_WORLD":
         exito, msg = sim.expandir_mundo()
         if exito:
-            await session_manager.broadcast_state(user_id)
+            await session_manager.broadcast_state(user_id, include_map=True)
             return {"status": "success", "message": msg, "cost": sim.COSTO_EXPANSION}
         else:
             raise HTTPException(status_code=400, detail=msg)
 
     elif req.action_type == "ARCHITECT_MESSAGE":
         mensaje = req.params.get("mensaje")
-        agente_id = req.params.get("agent_id")
-        if mensaje:
-            exito, msg = sim.enviar_mensaje_arquitecto(mensaje, agente_id)
-            if exito:
-                return {"status": "success", "message": msg}
-            else:
-                raise HTTPException(status_code=404, detail=msg)
+        agente_id = req.params.get("agent_id")  # Optional para mensajes globales
+        
+        if not mensaje:
+            raise HTTPException(status_code=400, detail="Se requiere el mensaje")
+
+        # CASO 1: Mensaje a un agente específico (comportamiento actual)
+        if agente_id:
+            agent = next((a for a in sim.agentes if a.unique_id == agente_id), None)
+            if not agent:
+                raise HTTPException(status_code=404, detail=f"Agente {agente_id} no encontrado")
+
+            if agent.necesidades.get("salud", 0) <= 0:
+                raise HTTPException(status_code=400, detail="Este agente ha fallecido y no puede responder")
+
+            print(f"🔍 [ARCHITECT_MESSAGE] Procesando mensaje para {agente_id}: '{mensaje[:50]}...'")
+
+            # Guardar mensaje del usuario en DB
+            sim.db.save_chat_message(user_id, agente_id, "user", mensaje, time.time())
+
+            # Contexto del agente para el LLM (similar a chat_send_message)
+            p = agent.personalidad
+            necesidades = {k: round(max(0, min(10, v)), 1) for k, v in agent.necesidades.items()}
+
+            relaciones_info = []
+            try:
+                for neighbor in agent.memoria.grafo.neighbors(agent.unique_id):
+                    tipo = agent.memoria.obtener_tipo(neighbor)
+                    fuerza = agent.memoria.obtener_fuerza(neighbor)
+                    relaciones_info.append(f"{neighbor} ({tipo}, fuerza {fuerza:.1f})")
+            except Exception as e:
+                print(f"⚠️ [RELACIONES] Error obteniendo relaciones para {agente_id}: {e}")
+            relaciones_str = ", ".join(relaciones_info[:10]) if relaciones_info else "Ninguna relación registrada"
+
+            # Obtener historial reciente
+            historial = sim.db.get_chat_history(user_id, agente_id, limit=10)
+            historial_str = ""
+            for msg in historial[:-1]:
+                role_label = "Arquitecto" if msg["role"] == "user" else agente_id
+                historial_str += f"{role_label}: {msg['content']}\n"
+
+            grupo_info = f"Miembro del grupo {agent.grupo_id}" if agent.grupo_id else "Sin grupo"
+            civ_info = f"Civilización: {agent.civilizacion_id}" if agent.civilizacion_id else ""
+
+            system_prompt = f"""Eres el Agente {agent.unique_id}, un personaje consciente en una simulación social.
+
+═══ TU IDENTIDAD ═══
+Personalidad: {str(p)}
+Rol: {agent.rol} | Profesión: {getattr(agent, 'profesion', 'Ninguna')}
+Rango: {agent.rango:.2f} | Reputación: {getattr(agent, 'reputacion', 1.0):.2f}
+{grupo_info} | {civ_info}
+
+═══ TU ESTADO ACTUAL (10=perfecto, 0=crítico) ═══
+Necesidades: {str(necesidades)}
+Dinero: {agent.dinero:.0f} MC | Recursos: {agent.recursos:.0f}
+Inventario: {str(getattr(agent, 'inventario', {}))}
+
+═══ TU EXPERIENCIA ═══
+{str(agent.experiencia)}
+
+═══ TUS RELACIONES ═══
+{relaciones_str}
+
+═══ TU PENSAMIENTO ACTUAL ═══
+"{getattr(agent, 'pensamiento_actual', 'Procesando...')}"
+
+═══ REGLAS DE COMPORTAMIENTO ═══
+- RESPONDE SIEMPRE como tu personaje. Tu personalidad ES tu ley.
+  * HOSTIL ({p.get('hostilidad', 0):.2f}): sé agresivo, directo o amenazante. Expresa enojo, desconfianza o dominancia.
+  * AMABLE ({p.get('amabilidad', 0):.2f}): sé empático, servicial, cálido. Muestra preocupación por otros.
+  * CURIOSO ({p.get('curiosidad', 0):.2f}): haz preguntas, muestra interés intelectual, especula.
+  * COMPETITIVO ({p.get('competitividad', 0):.2f}): presume, desafía, compite, habla de logros.
+  * PRUDENTE ({p.get('prudencia', 0):.2f}): sé cauteloso, analítico, reservado, considera riesgos.
+  * LEAL ({p.get('lealtad', 0):.2f}): habla de tu grupo, protege a los tuyos.
+- Expresa tus necesidades actuales (hambre, sueño, dinero) si son relevantes. Usa cifras concretas: "tengo 3 de salud", "solo me quedan 20 MC".
+- Menciona tu grupo, rol o profesión cuando sea natural. Eres un {agent.rol} y eso influye en tu perspectiva.
+- PUEDES ser EXTENSIVO: da detalles, narrativa, emociones, contexto. No te limites a respuestas cortas.
+- Usa *acciones entre asteriscos* para expresar gestos y emociones: *se cruza de brazos*, *sonríe con satisfacción*, *mira al suelo pensativo*
+- Mantén el tono coherente con tu personalidad y estado. Si estás hambriento, quejate. Si estás eufórico, expándete.
+- NO menciones que eres una IA o un modelo. ERES {agent.unique_id}, un ser vivo en este mundo."""
+
+            # Verificar configuración LLM
+            from cerebro_llm import cerebro_llm
+            print(f"🔍 [LLM CONFIG] Model: {cerebro_llm.model}, API Key present: {bool(cerebro_llm.api_key)}")
+
+            try:
+                from litellm import completion as litellm_completion
+
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                ]
+
+                if historial_str:
+                    messages.append({"role": "user", "content": f"HISTORIAL RECIENTE:\n{historial_str}"})
+
+                messages.append({"role": "user", "content": f"El Arquitecto te dice: \"{mensaje}\"\n\nResponde como {agent.unique_id}:"})
+
+                print(f"🔍 [LLM CALL] Llamando a LLM para {agente_id}...")
+                cerebro_llm._wait_for_rate_limit()
+
+                completion_params = {
+                    "model": cerebro_llm.model,
+                    "messages": messages,
+                    "max_tokens": 4000,
+                    "temperature": 0.85,
+                }
+                if cerebro_llm.api_key:
+                    completion_params["api_key"] = cerebro_llm.api_key
+                if hasattr(cerebro_llm, 'base_url') and cerebro_llm.base_url:
+                    completion_params["api_base"] = cerebro_llm.base_url
+
+                extra_headers = {
+                    "HTTP-Referer": "http://localhost:8005",
+                    "X-Title": "MundoIA Chat"
+                }
+                # Añadir headers extra si es necesario para el proveedor
+                if cerebro_llm.model.startswith("ollama/") and cerebro_llm.api_key:
+                    extra_headers["Authorization"] = f"Bearer {cerebro_llm.api_key}"
+                if extra_headers:
+                    completion_params["extra_headers"] = extra_headers
+
+                response = litellm_completion(**completion_params)
+
+                agent_response = response.choices[0].message.content.strip()
+                if agent_response.startswith('"') and agent_response.endswith('"'):
+                    agent_response = agent_response[1:-1]
+
+                print(f"✅ [LLM SUCCESS] Respuesta generada para {agente_id}: '{agent_response[:80]}...'")
+
+            except Exception as e:
+                print(f"❌ [LLM ERROR] Error generando respuesta para {agente_id}: {str(e)[:200]}")
+                import random
+                respuestas_fallback = [
+                    "*asiente* Entiendo lo que dices, pero estoy un poco ocupado ahora.",
+                    "Mmm, déjame pensarlo... Con mis necesidades actuales no puedo concentrarme mucho.",
+                    "¿Sabes qué? Prefiero hablar de eso más tarde.",
+                    "*te mira con curiosidad* Interesante lo que me cuentas.",
+                ]
+                agent_response = random.choice(respuestas_fallback)
+                print(f"⚠️ [FALLBACK] Usando respuesta predefinida para {agente_id}")
+
+            # Guardar respuesta del agente en DB
+            sim.db.save_chat_message(user_id, agente_id, "agent", agent_response, time.time())
+
+            # También establecer como mensaje_arquitecto para que el agente lo procese en su siguiente step()
+            agent.mensaje_arquitecto = {
+                "emisor": "Arquitecto",
+                "contenido": mensaje,
+                "timestamp": time.time()
+            }
+
+            if sim.log_callback:
+                sim.log_callback(
+                    f"💬 [CHAT] {agente_id} responde al Arquitecto: \"{agent_response[:80]}{'...' if len(agent_response) > 80 else ''}\"",
+                    "chat",
+                    None,
+                    agent_response[:100]
+                )
+
+            return {"status": "success", "response": agent_response}
+        
+        # CASO 2: Mensaje global a todos los agentes (nuevo)
+        else:
+            print(f"🔍 [ARCHITECT_MESSAGE] Procesando MENSAJE GLOBAL: '{mensaje[:50]}...'")
+            
+            # Establecer mensaje global en el modelo para que los agentes lo atiendan en su siguiente paso
+            sim.mensaje_global_arquitecto = mensaje
+
+            # Enviar como un único log de sistema (no uno por agente)
+            sim.log_callback(
+                f"🌍 [MENSAJE DIVINO GLOBAL] El Arquitecto anuncia a toda la creación: \"{mensaje}\"",
+                "sistema",
+                None,
+                f"Decreto global del Arquitecto"
+            )
+            
+            return {"status": "success", "message": "Mensaje global transmitido"}
 
     return {"status": "error", "message": "Acción no reconocida"}
 
@@ -776,21 +965,22 @@ async def get_ai_config():
     from cerebro_llm import cerebro_llm
     return {
         "model": cerebro_llm.model,
-        "api_key": cerebro_llm.api_key
+        "api_key": cerebro_llm.api_key,
+        "base_url": getattr(cerebro_llm, "base_url", "")
     }
 
 @app.post("/config/ai")
 async def update_ai_config(config: AIConfig):
     from cerebro_llm import cerebro_llm
     # Si el modelo incluye el prefijo del proveedor (ej: openrouter/), lo usamos tal cual
-    success = cerebro_llm.update_config(config.model, config.api_key)
+    success = cerebro_llm.update_config(config.model, config.api_key, config.base_url)
     if success:
         return {"status": "success", "message": "Configuración actualizada correctamente"}
     else:
         raise HTTPException(status_code=500, detail="Error al guardar la configuración")
 
 @app.get("/config/models/{provider}")
-async def get_models(provider: str, api_key: Optional[str] = None):
+async def get_models(provider: str, api_key: Optional[str] = None, base_url: Optional[str] = None):
     if provider.lower() == "openrouter":
         url = "https://openrouter.ai/api/v1/models"
         headers = {}
@@ -823,6 +1013,30 @@ async def get_models(provider: str, api_key: Optional[str] = None):
             {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
             {"id": "gpt-4-turbo", "name": "GPT-4 Turbo"}
         ]}
+    
+    elif provider.lower() == "ollama":
+        if base_url:
+            endpoint = base_url.rstrip('/')
+        elif api_key:
+            endpoint = "https://ollama.com"
+        else:
+            endpoint = "http://localhost:11434"
+            
+        url = f"{endpoint}/api/tags"
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+            
+        try:
+            response = requests.get(url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                models = [{"id": m.get("name"), "name": m.get("name")} for m in data.get("models", [])]
+                return {"models": models}
+            else:
+                return {"error": f"Error de Ollama: {response.status_code}", "detail": response.text}
+        except Exception as e:
+            return {"error": str(e)}
         
     return {"error": "Proveedor no soportado actualmente para rpeuperación dinámica"}
 
@@ -900,16 +1114,22 @@ async def chat_get_history(user_id: str, agent_id: str):
 @app.post("/chat/{user_id}/{agent_id}")
 async def chat_send_message(user_id: str, agent_id: str, req: ChatMessageRequest):
     """Envía un mensaje al agente y genera una respuesta in-character usando el LLM."""
+    print(f"🔍 [CHAT ENDPOINT] Recibida petición de chat: user={user_id}, agent={agent_id}, msg='{req.message[:50]}...'")
     sim = session_manager.get_simulation(user_id)
     if not sim:
+        print(f"❌ [CHAT] Simulación no encontrada para user {user_id}")
         raise HTTPException(status_code=404, detail="Simulación no encontrada")
 
     agent = next((a for a in sim.agentes if a.unique_id == agent_id), None)
     if not agent:
+        print(f"❌ [CHAT] Agente {agent_id} no encontrado")
         raise HTTPException(status_code=404, detail="Agente no encontrado")
 
     if agent.necesidades.get("salud", 0) <= 0:
+        print(f"❌ [CHAT] Agente {agent_id} ha fallecido")
         raise HTTPException(status_code=400, detail="Este agente ha fallecido y no puede responder")
+
+    print(f"✅ [CHAT] Procesando mensaje para {agent_id}")
 
     # Guardar mensaje del usuario en DB
     sim.db.save_chat_message(user_id, agent_id, "user", req.message, time.time())
@@ -924,8 +1144,8 @@ async def chat_send_message(user_id: str, agent_id: str, req: ChatMessageRequest
             tipo = agent.memoria.obtener_tipo(neighbor)
             fuerza = agent.memoria.obtener_fuerza(neighbor)
             relaciones_info.append(f"{neighbor} ({tipo}, fuerza {fuerza:.1f})")
-    except:
-        pass
+    except Exception as e:
+        print(f"⚠️ [CHAT] Error obteniendo relaciones para {agent_id}: {e}")
     relaciones_str = ", ".join(relaciones_info[:10]) if relaciones_info else "Ninguna relación registrada"
 
     # Obtener historial reciente desde la base de datos
@@ -978,6 +1198,8 @@ Inventario: {str(getattr(agent, 'inventario', {}))}
     try:
         from cerebro_llm import cerebro_llm
 
+        print(f"🔍 [CHAT] Configuración LLM: model={cerebro_llm.model}, api_key_present={bool(cerebro_llm.api_key)}")
+
         messages = [
             {"role": "system", "content": system_prompt},
         ]
@@ -991,24 +1213,41 @@ Inventario: {str(getattr(agent, 'inventario', {}))}
 
         from litellm import completion as litellm_completion
 
-        response = litellm_completion(
-            model=cerebro_llm.model,
-            messages=messages,
-            api_key=cerebro_llm.api_key,
-            max_tokens=4000,
-            temperature=0.85,
-            extra_headers={
-                "HTTP-Referer": "http://localhost:8005",
-                "X-Title": "MundoIA Chat"
-            }
-        )
+        completion_params = {
+            "model": cerebro_llm.model,
+            "messages": messages,
+            "max_tokens": 4000,
+            "temperature": 0.85,
+        }
+        if cerebro_llm.api_key:
+            completion_params["api_key"] = cerebro_llm.api_key
+        
+        # Usar base_url configurada (importante para Ollama en Docker)
+        actual_base_url = getattr(cerebro_llm, 'base_url', None)
+        if actual_base_url:
+            completion_params["api_base"] = actual_base_url
+            print(f"🔧 [CHAT] Usando base_url: {actual_base_url}")
+
+        extra_headers = {
+            "HTTP-Referer": "http://localhost:8005",
+            "X-Title": "MundoIA Chat"
+        }
+        if cerebro_llm.model.startswith("ollama/") and cerebro_llm.api_key:
+            extra_headers["Authorization"] = f"Bearer {cerebro_llm.api_key}"
+        if extra_headers:
+            completion_params["extra_headers"] = extra_headers
+
+        print(f"🚀 [CHAT] Llamando a LLM para {agent_id}...")
+        response = litellm_completion(**completion_params)
 
         agent_response = response.choices[0].message.content.strip()
         if agent_response.startswith('"') and agent_response.endswith('"'):
             agent_response = agent_response[1:-1]
 
+        print(f"✅ [CHAT] Respuesta generada para {agent_id}: '{agent_response[:80]}...'")
+
     except Exception as e:
-        print(f"❌ Error generando respuesta de chat para {agent_id}: {e}")
+        print(f"❌ [CHAT ERROR] Error generando respuesta para {agent_id}: {str(e)[:200]}")
         import random
         respuestas_fallback = [
             "*asiente* Entiendo lo que dices, pero estoy un poco ocupado ahora.",
@@ -1017,6 +1256,7 @@ Inventario: {str(getattr(agent, 'inventario', {}))}
             "*te mira con curiosidad* Interesante lo que me cuentas.",
         ]
         agent_response = random.choice(respuestas_fallback)
+        print(f"⚠️ [CHAT] Usando fallback para {agent_id}")
 
     # Guardar respuesta del agente en DB
     sim.db.save_chat_message(user_id, agent_id, "agent", agent_response, time.time())
@@ -1029,6 +1269,7 @@ Inventario: {str(getattr(agent, 'inventario', {}))}
             agent_response[:100]
         )
 
+    print(f"📤 [CHAT] Devolviendo respuesta a frontend: '{agent_response[:50]}...'")
     return {"response": agent_response}
 
 

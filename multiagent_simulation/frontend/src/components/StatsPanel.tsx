@@ -51,7 +51,7 @@ export default function StatsPanel({ isOpen, onClose }: StatsPanelProps) {
         drawPieChart();
     }, [isOpen, step, agents, relationships, gruposDinamicos, instituciones]);
 
-    const drawLineChart = () => {
+    function drawLineChart() {
         if (!lineChartRef.current || historyRef.current.length < 2) return;
 
         const svg = d3.select(lineChartRef.current);
@@ -108,7 +108,7 @@ export default function StatsPanel({ isOpen, onClose }: StatsPanelProps) {
         });
     };
 
-    const drawBarChart = () => {
+    function drawBarChart() {
         if (!barChartRef.current || historyRef.current.length === 0) return;
 
         const svg = d3.select(barChartRef.current);
@@ -159,7 +159,7 @@ export default function StatsPanel({ isOpen, onClose }: StatsPanelProps) {
             .attr('rx', 3);
     };
 
-    const drawPieChart = () => {
+    function drawPieChart() {
         if (!pieChartRef.current || !agents.length) return;
 
         const svg = d3.select(pieChartRef.current);

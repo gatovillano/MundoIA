@@ -10,9 +10,15 @@ export default function SoundManager() {
     const isConnected = useGameStore(state => state.isConnected);
 
     const prevAgentId = useRef<string | null>(null);
-    const prevLogTime = useRef<number>(Date.now());
+    const prevLogTime = useRef<number>(0);
     const prevConnected = useRef<boolean>(false);
     const hasMounted = useRef(false);
+
+    useEffect(() => {
+        if (prevLogTime.current === 0) {
+            prevLogTime.current = Date.now();
+        }
+    }, []);
 
     // Monitor connection status
     useEffect(() => {

@@ -88,6 +88,10 @@ class DatabaseManager:
                     logger.info(f"📜 Intentando ejecutar esquema desde: {schema_path}")
                     with self.conn.cursor() as cur:
                         cur.execute(schema_sql)
+                        # Migraciones BDI
+                        cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS beliefs JSONB DEFAULT '[]';")
+                        cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS desires JSONB DEFAULT '[]';")
+                        cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS intentions JSONB DEFAULT '[]';")
                     logger.info(f"✅ Esquema {schema_file} verificado/inicializado.")
                 else:
                     logger.warning(f"⚠️ No se encontró {schema_file} en {os.path.dirname(__file__)}")
@@ -101,9 +105,59 @@ class DatabaseManager:
                    # Migración para logs
                    cur.execute("ALTER TABLE logs_simulacion ADD COLUMN IF NOT EXISTS subtitulos TEXT;")
                    cur.execute("ALTER TABLE logs_simulacion ADD COLUMN IF NOT EXISTS tts_text TEXT;")
+                   
+                   # --- MIGRACIÓN CRÍTICA: CLAVES PRIMARIAS COMPUESTAS (Para evitar filtraciones entre usuarios) ---
+                   # 1. Agentes
+                   cur.execute("""
+                       DO $$ BEGIN
+                           IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agentes_pkey' AND contype = 'p') THEN
+                               -- Verificar si ya es compuesta (id, user_id)
+                               IF NOT EXISTS (
+                                   SELECT 1 FROM information_schema.key_column_usage 
+                                   WHERE table_name = 'agentes' AND constraint_name = 'agentes_pkey' AND column_name = 'user_id'
+                               ) THEN
+                                   -- LIMPIEZA PREVIA: Borrar huérfanos que impedirían la FK compuesta
+                                   DELETE FROM memorias m 
+                                   WHERE NOT EXISTS (SELECT 1 FROM agentes a WHERE a.id = m.agente_fuente AND a.user_id = m.user_id)
+                                   OR NOT EXISTS (SELECT 1 FROM agentes a WHERE a.id = m.agente_objetivo AND a.user_id = m.user_id);
+                                   
+                                   DELETE FROM chat_mensajes c
+                                   WHERE NOT EXISTS (SELECT 1 FROM agentes a WHERE a.id = c.agent_id AND a.user_id = c.user_id);
+
+                                   ALTER TABLE memorias DROP CONSTRAINT IF EXISTS memorias_agente_fuente_fkey;
+                                   ALTER TABLE memorias DROP CONSTRAINT IF EXISTS memorias_agente_objetivo_fkey;
+                                   ALTER TABLE chat_mensajes DROP CONSTRAINT IF EXISTS chat_mensajes_agent_id_fkey;
+                                   
+                                   ALTER TABLE agentes DROP CONSTRAINT agentes_pkey;
+                                   ALTER TABLE agentes ADD PRIMARY KEY (id, user_id);
+                                   
+                                   -- Re-enlazar con FK compuestas
+                                   ALTER TABLE memorias ADD FOREIGN KEY (agente_fuente, user_id) REFERENCES agentes(id, user_id);
+                                   ALTER TABLE memorias ADD FOREIGN KEY (agente_objetivo, user_id) REFERENCES agentes(id, user_id);
+                                   ALTER TABLE chat_mensajes ADD FOREIGN KEY (agent_id, user_id) REFERENCES agentes(id, user_id);
+                               END IF;
+                           END IF;
+                       END $$;
+                   """)
+                   
+                   # 2. Civilizaciones
+                   cur.execute("""
+                       DO $$ BEGIN
+                           IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'civilizaciones_pkey' AND contype = 'p') THEN
+                               IF NOT EXISTS (
+                                   SELECT 1 FROM information_schema.key_column_usage 
+                                   WHERE table_name = 'civilizaciones' AND constraint_name = 'civilizaciones_pkey' AND column_name = 'user_id'
+                               ) THEN
+                                   ALTER TABLE civilizaciones DROP CONSTRAINT civilizaciones_pkey;
+                                   ALTER TABLE civilizaciones ADD PRIMARY KEY (id, user_id);
+                               END IF;
+                           END IF;
+                       END $$;
+                   """)
+                   
                    self.conn.commit()
             except Exception as e:
-                logger.warning(f"Nota: Migración de columnas adicionales ya aplicada o error: {e}")
+                logger.warning(f"Nota: Migración automática o error: {e}")
                 self.conn.rollback()
 
             return True
@@ -170,6 +224,8 @@ class DatabaseManager:
             with self.conn.cursor() as cur:
                 # 1. Tablas que referencian a agentes
                 cur.execute("DELETE FROM memorias WHERE user_id = %s;", (user_id,))
+                # 1.5. Mensajes de chat interactivos
+                cur.execute("DELETE FROM chat_mensajes WHERE user_id = %s;", (user_id,))
                 # 2. Logs de simulación
                 cur.execute("DELETE FROM logs_simulacion WHERE user_id = %s;", (user_id,))
                 # 3. Propuestas y leyes
@@ -196,10 +252,9 @@ class DatabaseManager:
 
     def save_agent(self, agent, user_id):
         query = """
-        INSERT INTO agentes (id, user_id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico, civilizacion_id, alianzas, tratados, memoria_mensajes, x, y, skills, skill_factor)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (id) DO UPDATE SET
-            user_id = EXCLUDED.user_id,
+        INSERT INTO agentes (id, user_id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico, civilizacion_id, alianzas, tratados, memoria_mensajes, x, y, skills, skill_factor, beliefs, desires, intentions)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id, user_id) DO UPDATE SET
             recursos = EXCLUDED.recursos,
             dinero = EXCLUDED.dinero,
             grupo_id = EXCLUDED.grupo_id,
@@ -221,7 +276,10 @@ class DatabaseManager:
             x = EXCLUDED.x,
             y = EXCLUDED.y,
             skills = EXCLUDED.skills,
-            skill_factor = EXCLUDED.skill_factor;
+            skill_factor = EXCLUDED.skill_factor,
+            beliefs = EXCLUDED.beliefs,
+            desires = EXCLUDED.desires,
+            intentions = EXCLUDED.intentions;
         """
         self.execute(query, (
             str(agent.unique_id), user_id, agent.recursos, agent.dinero, agent.grupo_id, agent.rol,
@@ -230,8 +288,13 @@ class DatabaseManager:
             Json(agent.inventario), Json(getattr(agent, 'hitos', [])), Json(agent.historial_etico),
             agent.civilizacion_id, Json(getattr(agent, 'alianzas', [])), Json(getattr(agent, 'tratados', [])),
             Json(agent.memoria.historial_mensajes),
-            agent.x, agent.y, Json(agent.skills), agent.skill_factor
+            agent.x, agent.y, Json(agent.skills), agent.skill_factor,
+            Json(getattr(agent, 'beliefs_list', [])), Json(getattr(agent, 'desires', [])), Json(getattr(agent, 'intentions', []))
         ))
+
+    def get_agents(self, user_id):
+        query = "SELECT id, user_id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico, civilizacion_id, alianzas, tratados, memoria_mensajes, x, y, skills, skill_factor, beliefs, desires, intentions FROM agentes WHERE user_id = %s;"
+        return self.execute(query, (user_id,))
 
     def save_civilization(self, civ):
         query = """
@@ -303,15 +366,6 @@ class DatabaseManager:
         query = "SELECT paso_actual, lore, seed, precio_recurso, indice_bursatil, total_dinero, relaciones_grupos, objetivos_grupos, mapa, infraestructura, historia FROM estado_mundo WHERE user_id = %s ORDER BY id DESC LIMIT 1;"
         result = self.execute(query, (user_id,))
         return result[0] if result else None
-
-    def get_agents(self, user_id):
-        query = """
-            SELECT id, user_id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, 
-                   personalidad, necesidades, experiencia, conocimientos, inventario, hitos, 
-                   historial_etico, civilizacion_id, alianzas, tratados, memoria_mensajes, x, y, skills, skill_factor, timestamp 
-            FROM agentes WHERE user_id = %s;
-        """
-        return self.execute(query, (user_id,))
 
     def get_memories(self, agent_id, user_id):
         query = "SELECT agente_objetivo, tipo_relacion, fuerza, recursos_percibidos, grupo_percibido FROM memorias WHERE agente_fuente = %s AND user_id = %s;"
@@ -408,12 +462,16 @@ class DatabaseManager:
         """
         self.execute(query, (user_id, paso, mensaje, categoria, pensamiento, privado_para, subtitulos, tts_text, agente_id))
 
-    def get_logs(self, user_id, limit=500):
+    def get_logs(self, user_id, limit=2000):
         query = """
         SELECT paso, mensaje, categoria, pensamiento, privado_para, subtitulos, tts_text, agente_id
-        FROM logs_simulacion WHERE user_id = %s ORDER BY timestamp ASC LIMIT %s;
+        FROM logs_simulacion WHERE user_id = %s ORDER BY timestamp DESC LIMIT %s;
         """
-        return self.execute(query, (user_id, limit))
+        rows = self.execute(query, (user_id, limit))
+        if rows:
+            # Invertir para que el orden temporal sea ascendente (del más antiguo al más nuevo)
+            return rows[::-1]
+        return []
 
         # Nota: No borramos el usuario en sí de la tabla 'usuarios'
         
@@ -698,6 +756,16 @@ class Agente:
             "agricultura": 0
         }
         self.hitos = [] # Lista de logros alcanzados
+
+        # --- MODELO BDI (Belief-Desire-Intention) ---
+        self.beliefs = {
+            "world_knowledge": {}, # Tiles conocidos: {(x,y): {terrain, resource, owner...}}
+            "social_map": self.memoria.grafo.nodes, # Referencia a conocidos
+            "perceptions": [] # Últimas percepciones críticas
+        }
+        self.desires = [] # Objetivos de alto nivel (ej: "Sobrevivir", "Ser Líder", "Paz")
+        self.intentions = [] # Planes de acción actuales comprometidos a ejecución
+        # self.planes actúan como intenciones compartidas en el modelo actual
         
         # --- SISTEMA POLÍTICO ---
         self.reputacion = 1.0 # 0.0 a 1.0 (Prestigio social)
@@ -1012,6 +1080,16 @@ class Agente:
     @synchronized
     def fundar_grupo(self, nombre_grupo, descripcion):
         """El agente crea un nuevo grupo con una idea central y se convierte en líder."""
+        if not nombre_grupo or not descripcion:
+             self.modelo.log(f"⚠️ [RECHAZADO] Agente {self.unique_id} intentó fundar un grupo sin nombre o descripción.", categoria="sistema")
+             return None
+             
+        # Comprobar si el nombre es genérico (ej: "Grupo de A1", "Clan de A1", etc.)
+        patron_generico = f"(grupo|clan|tribu|equipo|alianza) de {self.unique_id}".lower()
+        if patron_generico in nombre_grupo.lower() or nombre_grupo.lower() == f"grupo de {self.unique_id}".lower():
+            self.modelo.log(f"⚠️ [RECHAZADO] Agente {self.unique_id} intentó usar un nombre genérico: '{nombre_grupo}'.", categoria="sistema")
+            return None
+
         if self.modelo.grupos_creados_este_paso >= 3:
             self.modelo.log(f"⚠️ [LIMITE] Agente {self.unique_id} intentó fundar un grupo, pero se alcanzó el límite de 3 por turno.", categoria="sistema")
             return None
@@ -1662,6 +1740,32 @@ class Agente:
         if hasattr(self, 'decision_cacheada') and self.decision_cacheada:
             resultado_pensar = self.decision_cacheada
         else:
+            # --- INTERCEPCIÓN PARA ASAMBLEAS OBLIGATORIAS ---
+            asamblea_activa = next((a for a in self.modelo.asambleas_globales if a["estado"] in ["DEBATE", "VOTACION"]), None)
+            
+            if asamblea_activa:
+                if asamblea_activa["estado"] == "DEBATE" and self.unique_id not in asamblea_activa.get("participantes_opinaron", []):
+                    # FORZAR OPINIÓN
+                    argumento, pensamiento = cerebro_llm.generar_debate_consenso(self, [a.unique_id for a in self.modelo.agentes], fase="debate_asamblea", contexto_extra=f"Tema asamblea: {asamblea_activa['tema']}. DEBES dar tu opinión.")
+                    self.decir(f"🗣️ [OPINION ASAMBLEA] {argumento}", pensamiento=pensamiento)
+                    if "participantes_opinaron" not in asamblea_activa: asamblea_activa["participantes_opinaron"] = []
+                    asamblea_activa["participantes_opinaron"].append(self.unique_id)
+                    # Una vez que opina, termina su turno para dar paso al siguiente
+                    return
+
+                elif asamblea_activa["estado"] == "VOTACION" and self.unique_id not in asamblea_activa.get("votantes", []):
+                    # FORZAR VOTO
+                    # Usamos un pensamiento simplificado para decidir el voto
+                    ctx_voto = f"Situación asamblea: {asamblea_activa['tema']}. Propuesta formal: {asamblea_activa.get('ley_sintetizada', {}).get('titulo', 'Sin título')}. DEBES votar 'si' o 'no'."
+                    decision_voto = cerebro_llm.generar_pensamiento_y_accion(self, None, ctx_voto)
+                    mensaje_voto = decision_voto.get("mensaje", "Voto según mis convicciones.")
+                    
+                    # Heurística para extraer voto del mensaje si no viene en accion
+                    voto = "si" if "sí" in mensaje_voto.lower() or "si" in mensaje_voto.lower() or "favor" in mensaje_voto.lower() else "no"
+                    self.modelo.registrar_voto(self.unique_id, asamblea_activa["id"], voto)
+                    # Una vez que vota, termina su turno
+                    return
+
             resultado_pensar = self.cerebro.pensar(self, objetivo_id=objetivo_cercano.unique_id if objetivo_cercano else None)
         
         # Desempaquetar result (puede tener 8 o 9 valores según la versión)
@@ -1678,13 +1782,13 @@ class Agente:
         elif decision:
             nombre_accion = str(decision).split(":")[0].upper()
 
+        # Registrar la acción en el historial de la memoria (para evitar repeticiones en el prompt)
+        self.memoria.registrar_accion(nombre_accion)
+
         if nuevos_planes:
             # Primero, actualizamos los planes del agente actual
             self.planes = nuevos_planes
-            
-            # Registrar la acción en el historial de la memoria (para evitar repeticiones en el prompt)
-            self.memoria.registrar_accion(nombre_accion)
-            
+
             # Ahora, nos aseguramos de que todos los participantes tengan el plan
             for plan in nuevos_planes:
                 # Comprobamos si el plan tiene participantes
@@ -1765,29 +1869,17 @@ class Agente:
         elif nombre_accion in ["FUNDAR_GRUPO", "FUNDAR_FACCION", "FUNDAR_FACCIÓN", "FACCION_CREAR", "CREAR_FACCIÓN"]:
             args = accion_data.get("argumentos", {})
             nombre_propuesto = args.get("nombre") or args.get("nombre_faccion")
-            idea_central = args.get("idea") or args.get("descripcion") or args.get("ideologia") or args.get("objetivo_faccion") or "Prosperidad y ayuda mutua."
+            idea_central = args.get("idea") or args.get("descripcion") or args.get("ideologia") or args.get("objetivo_faccion") or args.get("contenido")
             
-            # Fallback if arguments are missing or unstructured
-            if not nombre_propuesto:
-                import re
-                match = re.search(r'["«]([^"»]+)["»]|Fundamos (?:la |el |los |las )?([^!.]+)', mensaje)
-                nombre_propuesto = (match.group(1) or match.group(2)) if match else f"Grupo de {self.unique_id}"
-
-            # Validar que no sea un nombre vacío o demasiado genérico
-            if not nombre_propuesto or len(nombre_propuesto) < 3:
-                nombre_propuesto = f"Grupo de {self.unique_id}"
-
-            # Asegurar unicidad: Si el nombre ya existe, la fundación falla
-            nombres_en_uso = [c.nombre for c in self.modelo.civilizaciones.values()]
-            if nombre_propuesto in nombres_en_uso:
-                self.decir(f"⚠️ El nombre de grupo '{nombre_propuesto}' ya está en uso.", global_broadcast=False)
+            if not nombre_propuesto or not idea_central:
+                self.decir("He intentado fundar un grupo, pero me he dado cuenta de que necesito un nombre identitario y una descripción clara de nuestro propósito.", pensamiento="Error de fundacion: faltan datos obligatorios.")
             else:
                 nuevo_id = self.fundar_grupo(nombre_propuesto, idea_central)
                 if nuevo_id:
                     self.rol = "Líder"
-                    self.decir(f"¡He fundado el grupo '{nombre_propuesto}'! Idea: {idea_central}.", global_broadcast=True)
+                    self.decir(f"¡He fundado el grupo '{nombre_propuesto}'! Propósito: {idea_central}.", global_broadcast=True)
                 else:
-                    self.decir(f"Intenté fundar el grupo '{nombre_propuesto}', pero las leyes del mundo no permiten más fundaciones en este momento.", pensamiento="Límite de grupos alcanzado.")
+                    self.decir(f"Mi intento de fundar '{nombre_propuesto}' ha fallado. Quizás el nombre es demasiado genérico o hemos alcanzado el límite de grupos.", pensamiento="Fallo en la fundación del grupo.")
 
         elif nombre_accion == "FUNDAR_INSTITUCION":
             import re
@@ -1987,6 +2079,17 @@ class Agente:
                 self.modelo.log(f"  🏥 [ACCION] Agente {self.unique_id} usó medicina avanzada para curarse.", categoria="state")
             else:
                 self.decir("¡Necesito medicina! Debo ir al Hospital a comprar suministros.", pensamiento=pensamiento)
+
+        elif nombre_accion == "COMER":
+            if self.inventario.get("comida", 0) > 0:
+                self.inventario["comida"] -= 1
+                # Aumentar alimento 2-4 puntos aleatorios
+                aumento = random.randint(2, 4)
+                self.necesidades["alimento"] = min(10.0, self.necesidades["alimento"] + aumento)
+                self.ganar_experiencia("agricultura", 1)
+                self.modelo.log(f"  🍽️ [COMER] Agente {self.unique_id} consumió comida. Alimento +{aumento}.", categoria="alimentos")
+            else:
+                self.decir("No tengo comida. Necesito RECOLECTAR o comprar.", pensamiento=pensamiento)
 
         elif nombre_accion == "COMPRAR_MEDICINA":
             # Verificar si está en un hospital o farmacia
@@ -2222,8 +2325,8 @@ class Agente:
 
         # --- REPOSICIONAMIENTO OBLIGATORIO POR TURNO ---
         # Una acción por turno: O se quedan a trabajar/interactuar, o se mueven a una nueva casilla.
-        acciones_estacionarias = ["RECOLECTAR", "DESCANSAR", "CONSTRUIR", "CURARSE", "GRADUARSE", 
-                                 "INTERACCIONAR", "SOCIALIZAR", "COMERCIAR", "FUNDAR_GRUPO", 
+        acciones_estacionarias = ["RECOLECTAR", "DESCANSAR", "CONSTRUIR", "CURARSE", "COMER", "GRADUARSE",
+                                 "INTERACCIONAR", "SOCIALIZAR", "COMERCIAR", "FUNDAR_GRUPO",
                                  "FUNDAR_INSTITUCION", "CREAR_HABILIDAD", "ESCRIBIR_CRONICA", "VOTAR", "PROPONER_LEY"]
         
         # Determinar si la decisión implica quedarse en el sitio
@@ -2298,6 +2401,9 @@ class Agente:
                         self.modelo.gestionar_encuentro_facciones(self, v)
 
         self.actualizar_estado()
+        
+        # Limpiar mensaje del arquitecto después de procesarlo en este paso
+        self.mensaje_arquitecto = None
 
 class ModeloRelacional:
     def __init__(self, num_agentes=10, log_callback=None, user_id=None, start_empty=False):
@@ -2363,7 +2469,8 @@ class ModeloRelacional:
         self.misiones_completadas_este_turno = []
         self.historia = LibretaHistoria()
         self.agente_poseido_id = None
-        self.ritmo_lectura = 2.0  # segundos de pausa entre cada agente (ritmo de lectura)
+        self.mensaje_global_arquitecto = None # Mensaje del Arquitecto para TODOS los agentes
+        self.ritmo_lectura = 0.3  # segundos de pausa entre cada agente (ritmo de lectura)
         self.colores_paleta = [
             "#7c4dff", "#00e676", "#ff1744", "#00e5ff", "#ffea00", 
             "#d500f9", "#ff9100", "#1de9b6", "#2979ff", "#f50057",
@@ -2478,7 +2585,19 @@ class ModeloRelacional:
             
             # ¡Crear agentes iniciales si no se pidió empezar vacío!
             if not self.start_empty:
-                self.agentes = [Agente(f"A{i}_{random.randint(100,999)}", self) for i in range(self.num_agentes)]
+                import random as _r
+                prefixes = ["Ka", "Ly", "Za", "Tor", "Val", "Mira", "Rho", "Syl", "Jin", "Kor", "Gae", "Nyx", "Or", "Phy", "Zen", "Ryn", "Garr", "Fae", "El", "Bram", "Xan", "Vex"]
+                suffixes = ["el", "ra", "ion", "ok", "is", "a", "us", "en", "ix", "on", "ic", "os", "ar", "ia", "ith", "or", "an"]
+                nombres_generados = set()
+                
+                self.agentes = []
+                for idx in range(self.num_agentes):
+                    name = ""
+                    while not name or name in nombres_generados:
+                        name = _r.choice(prefixes) + _r.choice(suffixes)
+                        if _r.random() > 0.7: name += _r.choice(suffixes)
+                    nombres_generados.add(name)
+                    self.agentes.append(Agente(name, self))
 
                 # Crear algunas facciones iniciales ALEATORIAS para impulsar la cohesión
                 num_facciones = 2
@@ -2826,43 +2945,54 @@ class ModeloRelacional:
     def procesar_asambleas(self):
         """Procesa las asambleas activas, gestionando fases de debate y votación."""
         asambleas_a_finalizar = []
+        agentes_vivos = [a for a in self.agentes if a.esta_vivo]
+        num_agentes_vivos = len(agentes_vivos)
         
         for asamblea in self.asambleas_globales:
             if asamblea["estado"] == "DEBATE":
+                # La asamblea solo progresa si todos han opinado
+                participantes_opinaron = asamblea.get("participantes_opinaron", [])
+                todos_opinaron = all(any(a.unique_id == pid for pid in participantes_opinaron) for a in agentes_vivos)
+                
+                # O si ha pasado mucho tiempo (failsafe)
                 asamblea["pasos_restantes"] -= 1
-                if asamblea["pasos_restantes"] <= 0:
+                
+                if todos_opinaron or asamblea["pasos_restantes"] <= -20: # Failsafe de 20 turnos extra
                     asamblea["estado"] = "VOTACION"
-                    asamblea["pasos_restantes"] = 15  # Votación extendida para asegurar participación
+                    asamblea["pasos_restantes"] = 15  # Reset para la fase de votación
                     
                     # --- NUEVO: SÍNTESIS REACTIVA DEL DEBATE ---
                     mod_obj = self.get_agent_by_id(asamblea["moderador_id"])
                     if mod_obj:
                         # 1. Recolectar lo que se dijo durante estos pasos de debate
-                        # Buscamos en los logs mensajes de diálogo que mencionen el tema o asamblea
                         palabras_clave = asamblea["tema"].lower().split()
                         dialogos_debate = []
-                        for l in self.historial_logs[-60:]: # Miramos un poco hacia atrás
+                        for l in self.historial_logs[-100:]: # Miramos más atrás para capturar todas las opiniones
                             msg = l["mensaje"].lower()
-                            if l["categoria"] == "dialogo" and any(k in msg for k in palabras_clave):
+                            if "[opinion asamblea]" in msg or any(k in msg for k in palabras_clave):
                                 dialogos_debate.append(l["mensaje"])
                         
                         # 2. Sintetizar la ley basada en la discusión real
-                        self.log(f"⚖️ [MODERADOR] El debate ha concluido. Sintetizando consenso social...", categoria="consenso")
+                        self.log(f"⚖️ [MODERADOR] El debate ha concluido con la participación de todos. Sintetizando consenso social...", categoria="consenso")
                         ley_sintetizada = cerebro_llm.sintetizar_ley_desde_debate(mod_obj, dialogos_debate)
                         
-                        # Guardar para registro
                         asamblea["ley_sintetizada"] = ley_sintetizada
                         
                         # 3. Presentar propuesta formal
-                        self.log(f"⚖️ [MODERADOR] Propuesta formal: '{ley_sintetizada.get('titulo')}'", categoria="consenso")
+                        self.log(f"⚖️ [MODERADOR] Propuesta formal tras consenso: '{ley_sintetizada.get('titulo')}'", categoria="consenso")
                         mod_obj.proponer_ley(ley_sintetizada.get("titulo"), ley_sintetizada.get("contenido"), alcance=ley_sintetizada.get("alcance", "global"))
                     
-                    self.log(f"🔔 [ASAMBLEA] Se abre el periodo de VOTACIÓN para la asamblea '{asamblea['tema']}'.", categoria="consenso")
-                    self.notificar_cambio_estado() # Cambio de fase DEBATE -> VOTACION
+                    self.log(f"🔔 [ASAMBLEA] Todos han expresado su opinión. Se abre la VOTACIÓN FINAL para la asamblea '{asamblea['tema']}'.", categoria="consenso")
+                    self.notificar_cambio_estado()
                     
             elif asamblea["estado"] == "VOTACION":
+                # La votación solo finaliza si todos han votado
+                num_votantes = len(asamblea.get("votantes", []))
+                todos_votaron = num_votantes >= num_agentes_vivos
+                
                 asamblea["pasos_restantes"] -= 1
-                if asamblea["pasos_restantes"] <= 0:
+                
+                if todos_votaron or asamblea["pasos_restantes"] <= -20:
                     asambleas_a_finalizar.append(asamblea)
         
         for asamblea in asambleas_a_finalizar:
@@ -3176,7 +3306,7 @@ class ModeloRelacional:
         # --- PROCESAMIENTO SECUENCIAL CON RITMO DE LECTURA ---
         # Cada agente piensa y actúa uno a la vez, con una pausa entre ellos
         # para que el espectador pueda "leer" lo que cada uno dice/hace.
-        ritmo = getattr(self, 'ritmo_lectura', 2.0)  # segundos entre agentes
+        ritmo = getattr(self, 'ritmo_lectura', 0.75)  # segundos entre agentes
         
         for agente in agentes_vivos:
             if getattr(self, '_force_stop', False):
@@ -3230,6 +3360,9 @@ class ModeloRelacional:
                     f"🎉 ¡MISIÓN COMPLETADA! {mision_completada['titulo']}",
                     categoria="mision_completada"
                 )
+
+        # Limpiar mensaje global después de que todos los agentes lo hayan procesado en este paso
+        self.mensaje_global_arquitecto = None
 
 
     def verificar_misiones(self):
@@ -4005,8 +4138,8 @@ class ModeloRelacional:
                 agents_data = self.db.get_agents(target_user_id)
                 self.agentes = []
                 for row in agents_data:
-                    # id, user_id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico, civ_id, alianzas, tratados, memoria_mensajes, x, y, skills, skill_factor, timestamp
-                    a_id, _, rec, din, g_id, rol, prof, ran, rep, pers, nec, exp, con, inv, hitos, etico, civ_id, alianzas, tratados, mem_msgs, loaded_x, loaded_y, skills_db, s_factor, _ = row
+                    # id, user_id, recursos, dinero, grupo_id, rol, profesion, rango, reputacion, personalidad, necesidades, experiencia, conocimientos, inventario, hitos, historial_etico, civ_id, alianzas, tratados, memoria_mensajes, x, y, skills, skill_factor, beliefs, desires, intentions, timestamp
+                    a_id, _, rec, din, g_id, rol, prof, ran, rep, pers, nec, exp, con, inv, hitos, etico, civ_id, alianzas, tratados, mem_msgs, loaded_x, loaded_y, skills_db, s_factor, bdi_beliefs, bdi_desires, bdi_intentions = row
                     a = Agente(a_id, self)
                     a.x = loaded_x
                     a.y = loaded_y
@@ -4033,6 +4166,9 @@ class ModeloRelacional:
                     a.tratados = tratados or []
                     a.skills = skills_db or {}
                     a.skill_factor = s_factor if s_factor is not None else 0.3
+                    a.beliefs_list = bdi_beliefs or []
+                    a.desires = bdi_desires or []
+                    a.intentions = bdi_intentions or []
                     if mem_msgs:
                         a.memoria.historial_mensajes = mem_msgs
                     
@@ -4081,20 +4217,19 @@ class ModeloRelacional:
                             else:
                                 self.leyes_globales.append(prop)
 
-                # 5. Cargar Logs de la sesión
-                logs_db = self.db.get_logs(target_user_id, limit=1000)
+                # 5. Cargar Logs de la sesión (Ahora con límite aumentado y orden correcto DESC->ASC)
+                logs_db = self.db.get_logs(target_user_id, limit=2000)
                 if logs_db:
                     self.historial_logs = []
                     for pr in logs_db:
                         # paso, mensaje, categoria, pensamiento, privado_para, subtitulos, tts_text, agente_id
                         p, msg, cat, thoughts, priv, subs, tts, _ = pr
                         self.historial_logs.append({
-                            "paso": p, "mensaje": msg, "categoria": cat, 
-                            "pensamiento": thoughts, "privado_para": priv, 
-                            "subtitulos": subs, "tts_text": tts
+                            "paso": p, "message": msg, "category": cat,
+                            "thought": thoughts, "private_for": priv,
+                            "subtitles": subs, "tts_text": tts
                         })
-                    logger.info(f"📜 [DB] {len(self.historial_logs)} logs cargados de la base de datos.")
-                
+                    logger.info(f"📜 [DB] {len(self.historial_logs)} logs cargados de la base de datos.")                
                 # Garantizar que las misiones base existan si no se cargaron de la DB
                 if not self.sistema_misiones.misiones_activas and not self.sistema_misiones.misiones_completadas:
                     logger.info("🆕 No se encontraron misiones en DB. Inicializando misiones base...")

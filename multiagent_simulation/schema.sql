@@ -11,18 +11,19 @@ CREATE TABLE IF NOT EXISTS usuarios (
 
 -- 2. Civilizations (Depends on Users)
 CREATE TABLE IF NOT EXISTS civilizaciones (
-    id VARCHAR(50) PRIMARY KEY,
+    id VARCHAR(50),
     nombre VARCHAR(100) NOT NULL,
     color VARCHAR(20) DEFAULT '#00f2ff',
     user_id VARCHAR(50) REFERENCES usuarios(id),
     recursos_globales FLOAT DEFAULT 0.0,
     territorio JSONB DEFAULT '[]',
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, user_id)
 );
 
 -- 3. Agents (Depends on Users)
 CREATE TABLE IF NOT EXISTS agentes (
-    id VARCHAR(50) PRIMARY KEY,
+    id VARCHAR(50),
     user_id VARCHAR(50) REFERENCES usuarios(id),
     recursos FLOAT DEFAULT 100.0,
     dinero FLOAT DEFAULT 100.0,
@@ -46,7 +47,11 @@ CREATE TABLE IF NOT EXISTS agentes (
     memoria_mensajes JSONB DEFAULT '[]',
     skills JSONB DEFAULT '{}',
     skill_factor FLOAT DEFAULT 0.3,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    beliefs JSONB DEFAULT '[]',
+    desires JSONB DEFAULT '[]',
+    intentions JSONB DEFAULT '[]',
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, user_id)
 );
 
 -- 4. World State (References Users implicitly or explicitly)
@@ -63,24 +68,24 @@ CREATE TABLE IF NOT EXISTS estado_mundo (
     objetivos_grupos JSONB DEFAULT '{}',
     mapa JSONB,
     infraestructura JSONB DEFAULT '[]',
+    historia JSONB DEFAULT '{}',
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-ALTER TABLE estado_mundo ADD COLUMN IF NOT EXISTS mapa JSONB;
-ALTER TABLE estado_mundo ADD COLUMN IF NOT EXISTS infraestructura JSONB DEFAULT '[]';
-ALTER TABLE estado_mundo ADD COLUMN IF NOT EXISTS historia JSONB DEFAULT '{}';
 
 -- 5. Memories (Depends on Users and Agents)
 CREATE TABLE IF NOT EXISTS memorias (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) REFERENCES usuarios(id),
-    agente_fuente VARCHAR(50) REFERENCES agentes(id),
-    agente_objetivo VARCHAR(50) REFERENCES agentes(id),
+    agente_fuente VARCHAR(50),
+    agente_objetivo VARCHAR(50),
     tipo_relacion VARCHAR(50), -- amigo, enemigo, conocido
     fuerza FLOAT DEFAULT 0.0,
     recursos_percibidos FLOAT,
     grupo_percibido VARCHAR(50),
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, agente_fuente, agente_objetivo)
+    UNIQUE(user_id, agente_fuente, agente_objetivo),
+    FOREIGN KEY (agente_fuente, user_id) REFERENCES agentes(id, user_id),
+    FOREIGN KEY (agente_objetivo, user_id) REFERENCES agentes(id, user_id)
 );
 
 -- 6. Global Events (Independent)
@@ -120,6 +125,8 @@ CREATE TABLE IF NOT EXISTS propuestas (
     votos JSONB DEFAULT '{}', -- {agente_id: voto}
     estado VARCHAR(20) DEFAULT 'pendiente',
     paso_creacion INTEGER,
+    titulo VARCHAR(200),
+    contenido TEXT,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -153,11 +160,12 @@ CREATE TABLE IF NOT EXISTS puntajes_usuarios (
 CREATE TABLE IF NOT EXISTS chat_mensajes (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) REFERENCES usuarios(id),
-    agent_id VARCHAR(50) REFERENCES agentes(id),
+    agent_id VARCHAR(50),
     role VARCHAR(10) NOT NULL CHECK (role IN ('user', 'agent')),
     content TEXT NOT NULL,
     timestamp_utc DOUBLE PRECISION NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (agent_id, user_id) REFERENCES agentes(id, user_id)
 );
 
 -- Índice para búsquedas rápidas por usuario+agente

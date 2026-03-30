@@ -93,6 +93,11 @@ def validar_accion(agente, accion_nombre, accion_data, modelo):
              return False, "No tienes medicinas en el inventario."
         return True, ""
 
+    elif accion_nombre == "COMER":
+        if agente.inventario.get("comida", 0) <= 0:
+            return False, "No tienes comida en el inventario."
+        return True, ""
+
     return True, "" # Acciones genéricas como HABLAR, MOVER, RECOLECTAR, DESCANSAR son siempre válidas
 
 def obtener_accion_fallback(agente, accion_fallida, modelo):
@@ -103,7 +108,11 @@ def obtener_accion_fallback(agente, accion_fallida, modelo):
     
     # 1. Prioridad: Supervivencia
     if necesidades["alimento"] < 4.0:
-        return {"nombre": "RECOLECTAR", "argumentos": {}}
+        # Si tiene comida, comer es mejor que recolectar
+        if agente.inventario.get("comida", 0) > 0:
+            return {"nombre": "COMER", "argumentos": {}}
+        else:
+            return {"nombre": "RECOLECTAR", "argumentos": {}}
     if necesidades["salud"] < 3.0:
         return {"nombre": "DESCANSAR", "argumentos": {}}
     if necesidades["descanso"] < 2.0:

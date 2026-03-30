@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import useGameStore from "@/store/useGameStore";
 import { Play, Pause, RefreshCw, LogOut, Map as MapIcon, Share2, Zap, Brain, Users, Box, ChevronDown, Clock, Activity, BarChart3, Terminal, X, Flag, CircleDashed, Star, Sun, CloudRain, Landmark, MessageCircle } from "lucide-react";
@@ -154,7 +154,7 @@ export default function GamePage() {
                 onControl={handleControl}
             />
 
-            <div className="flex-1 flex flex-col relative overflow-hidden">
+            <div className="flex-1 min-w-0 flex flex-col relative overflow-hidden">
                 {/* Integrated Header / Status Bar */}
                 <header className="absolute top-0 left-0 right-0 h-20 pointer-events-none z-50 flex items-center justify-between px-8">
                     <div className="flex items-center gap-12 pointer-events-auto">
@@ -240,50 +240,7 @@ export default function GamePage() {
                                             <span className="text-[9px] font-mono text-white/50">Auto-Scroll</span>
                                         </div>
                                     </div>
-                                    <div
-                                        ref={logsContainerRef}
-                                        className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar font-mono text-xs"
-                                    >
-                                        {logs.map((log: any, i: number) => {
-                                            const logText = typeof log === 'string' ? log : (log.message || '');
-                                            if (logText.includes('🧠') && !showThoughts) return null;
-                                            
-                                            // Lógica de colores premium para diferenciar tipos de mensajes
-                                            let borderColor = 'border-[#7c4dff]/40'; // Simulación / General (Morado)
-
-                                            // 1. Mensajes Globales (Eventos sistema, anuncios, crónicas)
-                                            const isGlobal = (
-                                                logText.includes('📢') || 
-                                                logText.includes('[DIVINO]') || 
-                                                logText.includes('[NARRATIVA]') ||
-                                                logText.includes('[SISTEMA]') ||
-                                                logText.includes('⚠️') || 
-                                                log.category === 'evento' ||
-                                                log.category === 'ambiente'
-                                            );
-
-                                            if (isGlobal) {
-                                                borderColor = 'border-yellow-400/80'; // Global / Alerta (Oro)
-                                            } else if (log.private_for || logText.includes('👥') || logText.includes('🔒')) {
-                                                // 2. Mensajes de Facción / Grupo
-                                                if ((log.private_for && log.private_for.startsWith('GRUPO:')) || logText.includes('👥')) {
-                                                    borderColor = 'border-emerald-400/80'; // Grupo (Esmeralda)
-                                                } 
-                                                // 3. Mensajes Individuales / Privados
-                                                else {
-                                                    borderColor = 'border-cyan-400/80'; // Individual (Cian)
-                                                }
-                                            }
-
-                                            const isLastLog = i === logs.length - 1;
-                                            return (
-                                                <div key={i} ref={isLastLog ? lastLogRef : null} className={`p-2 rounded bg-white/5 border-l-2 ${borderColor} animate-in fade-in slide-in-from-bottom-1`}>
-                                                    <span className="text-[8px] text-white/30 block mb-0.5 uppercase tracking-tighter">Turno {log.step || step}</span>
-                                                    <span className="text-white/80 leading-relaxed">{logText}</span>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
+                                    <LogList logs={logs} showThoughts={showThoughts} step={step} logsContainerRef={logsContainerRef} lastLogRef={lastLogRef} />
                                 </motion.div>
                             )}
                         </AnimatePresence>
@@ -331,7 +288,7 @@ export default function GamePage() {
     );
 }
 
-function HeaderStat({ icon: Icon, label, value, highlight }: any) {
+const HeaderStat = React.memo(({ icon: Icon, label, value, highlight }: any) => {
     return (
         <div className="flex items-center gap-2.5">
             <Icon className={`w-3.5 h-3.5 ${highlight ? 'text-[#ffea00] drop-shadow-[0_0_5px_rgba(255,234,0,0.5)]' : 'text-white/40'}`} />
@@ -341,9 +298,54 @@ function HeaderStat({ icon: Icon, label, value, highlight }: any) {
             </div>
         </div>
     );
-}
+});
 
-function RightPanelManager({ activePanel, onClose, selectedAgentId, userId }: any) {
+const LogList = React.memo(({ logs, showThoughts, step, logsContainerRef, lastLogRef }: any) => {
+    const visibleLogs = logs.slice(-200);
+
+    return (
+        <div
+            ref={logsContainerRef}
+            className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar font-mono text-xs"
+        >
+            {visibleLogs.map((log: any, i: number) => {
+                const logText = typeof log === 'string' ? log : (log.message || '');
+                if (logText.includes('🧠') && !showThoughts) return null;
+                
+                let borderColor = 'border-[#7c4dff]/40';
+                const isGlobal = (
+                    logText.includes('📢') || 
+                    logText.includes('[DIVINO]') || 
+                    logText.includes('[NARRATIVA]') ||
+                    logText.includes('[SISTEMA]') ||
+                    logText.includes('⚠️') || 
+                    log.category === 'evento' ||
+                    log.category === 'ambiente'
+                );
+
+                if (isGlobal) {
+                    borderColor = 'border-yellow-400/80';
+                } else if (log.private_for || logText.includes('👥') || logText.includes('🔒')) {
+                    if ((log.private_for && log.private_for.startsWith('GRUPO:')) || logText.includes('👥')) {
+                        borderColor = 'border-emerald-400/80';
+                    } else {
+                        borderColor = 'border-cyan-400/80';
+                    }
+                }
+
+                const isLastLog = i === visibleLogs.length - 1;
+                return (
+                    <div key={log.timestamp || i} ref={isLastLog ? lastLogRef : null} className={`p-2 rounded bg-white/5 border-l-2 ${borderColor} animate-in fade-in slide-in-from-bottom-1`}>
+                        <span className="text-[8px] text-white/30 block mb-0.5 uppercase tracking-tighter">Turno {log.step || step}</span>
+                        <span className="text-white/80 leading-relaxed font-sans">{logText}</span>
+                    </div>
+                );
+            })}
+        </div>
+    );
+});
+
+const RightPanelManager = React.memo(({ activePanel, onClose, selectedAgentId, userId }: any) => {
     if (!activePanel) return null;
 
     switch (activePanel) {
@@ -388,4 +390,4 @@ function RightPanelManager({ activePanel, onClose, selectedAgentId, userId }: an
         default:
             return null;
     }
-}
+});

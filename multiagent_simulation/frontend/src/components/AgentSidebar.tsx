@@ -212,7 +212,7 @@ function InfoBlock({ label, value, subValue }: { label: string, value: string, s
 export default function AgentSidebar() {
     const { agents, selectedAgentId, selectAgent, sendArchitectMessage, sendGodAction, agentePoseidoId, logs } = useGameStore();
     const [directMessage, setDirectMessage] = useState("");
-    const [status, setStatus] = useState<'idle' | 'sending' | 'success'>('idle');
+    const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
     const [activeTab, setActiveTab] = useState<TabType>('perfil');
     const agent: Agent | undefined = agents.find((a) => a.id === selectedAgentId);
 
@@ -326,12 +326,42 @@ function PerfilTab({ agent, directMessage, setDirectMessage, status, setStatus, 
     agent: Agent;
     directMessage: string;
     setDirectMessage: (v: string) => void;
-    status: 'idle' | 'sending' | 'success';
-    setStatus: (s: 'idle' | 'sending' | 'success') => void;
-    sendArchitectMessage: (msg: string, agentId?: string) => Promise<void>;
+    status: 'idle' | 'sending' | 'success' | 'error';
+    setStatus: (s: 'idle' | 'sending' | 'success' | 'error') => void;
+    sendArchitectMessage: (msg: string, agentId?: string) => Promise<string>;
     sendGodAction: (type: string, params: any) => Promise<boolean>;
     agentePoseidoId: string | null;
 }) {
+    const [chatMessages, setChatMessages] = useState<Array<{role: 'user' | 'agent', content: string}>>([]);
+
+    const handleSend = async () => {
+        if (!directMessage.trim()) return;
+
+        const userMsg = directMessage.trim();
+        setChatMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+        setDirectMessage("");
+        setStatus('sending');
+
+        try {
+            const response = await sendArchitectMessage(userMsg, agent.id);
+            setChatMessages(prev => [...prev, { role: 'agent', content: response }]);
+            setStatus('success');
+            setTimeout(() => setStatus('idle'), 2000);
+        } catch (error: any) {
+            console.error('Error sending message:', error);
+            setStatus('error');
+            setChatMessages(prev => [...prev, { role: 'agent', content: `*Error: ${error.message}*` }]);
+            setTimeout(() => setStatus('idle'), 3000);
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' && directMessage.trim() && status !== 'sending') {
+            e.preventDefault();
+            handleSend();
+        }
+    };
+
     return (
         <div className="p-6 space-y-8">
             <section className="space-y-4">
@@ -387,41 +417,53 @@ function PerfilTab({ agent, directMessage, setDirectMessage, status, setStatus, 
             )}
 
             <section className="space-y-4">
-                <SectionTitle title="Intervención Divina" />
+                <SectionTitle title="Conversación Directa" />
                 <div className="glass-card p-4 rounded-xl border border-[#7c4dff]/30 bg-[#7c4dff]/5">
+                    {/* Chat Messages */}
+                    <div className="mb-4 h-64 overflow-y-auto custom-scrollbar space-y-3 pr-1">
+                        {chatMessages.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-full text-center text-gray-500">
+                                <MessageSquare className="w-8 h-8 mb-2 opacity-30" />
+                                <p className="text-xs">Inicia una conversación<br />con {agent.id}</p>
+                            </div>
+                        ) : (
+                            chatMessages.map((msg, i) => (
+                                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs ${
+                                        msg.role === 'user'
+                                            ? 'bg-[#7c4dff]/20 border border-[#7c4dff]/30 text-[#7c4dff]'
+                                            : 'bg-white/5 border border-white/10 text-gray-200'
+                                    }`}>
+                                        <p className="leading-relaxed">{msg.content}</p>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+
+                    {/* Input */}
                     <div className="flex gap-2">
                         <input
                             type="text"
                             value={directMessage}
                             onChange={(e) => setDirectMessage(e.target.value)}
-                            placeholder={status === 'success' ? "¡Mensaje enviado!" : "Dictar orden divina..."}
+                            onKeyDown={handleKeyDown}
+                            placeholder={status === 'sending' ? "Enviando..." : `Escribe a ${agent.id}...`}
                             disabled={status === 'sending'}
-                            className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-[#7c4dff]/50 transition-colors"
-                            onKeyDown={async (e) => {
-                                if (e.key === 'Enter' && directMessage.trim()) {
-                                    setStatus('sending');
-                                    await sendArchitectMessage(directMessage, agent?.id);
-                                    setDirectMessage("");
-                                    setStatus('success');
-                                    setTimeout(() => setStatus('idle'), 2000);
-                                }
-                            }}
+                            className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-gray-600 focus:outline-none focus:border-[#7c4dff]/50 transition-colors disabled:opacity-50"
                         />
                         <button
-                            onClick={async () => {
-                                if (directMessage.trim()) {
-                                    setStatus('sending');
-                                    await sendArchitectMessage(directMessage, agent?.id);
-                                    setDirectMessage("");
-                                    setStatus('success');
-                                    setTimeout(() => setStatus('idle'), 2000);
-                                }
-                            }}
+                            onClick={handleSend}
                             disabled={!directMessage.trim() || status === 'sending'}
-                            className={`p-2 rounded-lg transition-all shadow-lg ${status === 'success' ? 'bg-[#00e676] text-white shadow-[#00e676]/20' :
-                                status === 'sending' ? 'bg-[#7c4dff]/50 text-white cursor-wait' :
-                                    'bg-[#7c4dff] text-white hover:bg-[#6c3eee] shadow-[#7c4dff]/20'
-                                }`}
+                            className={`px-3 py-2 rounded-lg transition-all ${
+                                status === 'sending'
+                                    ? 'bg-[#7c4dff]/50 cursor-wait'
+                                    : status === 'error'
+                                    ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                    : status === 'success'
+                                    ? 'bg-[#00e676] text-white'
+                                    : 'bg-[#7c4dff] text-white hover:bg-[#6c3eee]'
+                            }`}
                         >
                             {status === 'sending' ? (
                                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -431,23 +473,8 @@ function PerfilTab({ agent, directMessage, setDirectMessage, status, setStatus, 
                         </button>
                     </div>
                     <p className="text-[10px] text-gray-500 mt-2 italic px-1">
-                        &ldquo;Tu voz resonará directamente en su psique.&rdquo;
+                        &ldquo;Conversa directamente con el agente usando LLM.&rdquo;
                     </p>
-                    <div className="mt-4 pt-4 border-t border-white/5">
-                        <button
-                            onClick={async () => {
-                                const isCurrentlyPossessed = agentePoseidoId === agent.id;
-                                await sendGodAction("POSSESS_AGENT", { agent_id: isCurrentlyPossessed ? null : agent.id });
-                            }}
-                            className={`w-full py-3 rounded-xl font-bold uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all ${agentePoseidoId === agent.id
-                                    ? 'bg-red-500/20 text-red-500 border border-red-500/30 hover:bg-red-500 hover:text-white'
-                                    : 'bg-yellow-500/20 text-yellow-500 border border-yellow-500/30 hover:bg-yellow-500 hover:text-black'
-                                }`}
-                        >
-                            <Ghost className={`w-4 h-4 ${agentePoseidoId === agent.id ? 'animate-bounce' : ''}`} />
-                            {agentePoseidoId === agent.id ? "Liberar Ser" : "Descender y Poseer"}
-                        </button>
-                    </div>
                 </div>
             </section>
 

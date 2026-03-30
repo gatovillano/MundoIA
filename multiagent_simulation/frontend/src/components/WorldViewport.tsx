@@ -13,389 +13,254 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
     const initializedRef = useRef(false);
     const prevAgentsRef = useRef<any[]>([]);
 
-    // Configuración D3
+    // 1. Efecto para Terreno (Solo cuando cambia el mapa)
     useEffect(() => {
-        if (!svgRef.current || !containerRef.current || mapa.length === 0) return;
+        if (!svgRef.current || !mapa || mapa.length === 0) return;
 
-        // Detectar agentes que ya existían vs nuevos
-        const currentAgentIds = new Set(agents.map((a: any) => a.id));
-        const prevAgentIds = new Set(prevAgentsRef.current.map((a: any) => a.id));
-        
-        // Guardar posiciones anteriores para movimiento suave
-        const prevPositions = new Map<string, { x: number, y: number }>();
-        prevAgentsRef.current.forEach((a: any) => {
-            prevPositions.set(a.id, { x: a.x, y: a.y });
-        });
-        prevAgentsRef.current = agents;
-
-        const width = containerRef.current.clientWidth;
-        const height = containerRef.current.clientHeight;
         const svg = d3.select(svgRef.current);
-
-        // Grupo principal con Zoom
         let g = svg.select<SVGGElement>("g.main-group");
-        if (g.empty()) {
-            g = svg.append("g").attr("class", "main-group");
-        }
+        if (g.empty()) g = svg.append("g").attr("class", "main-group");
 
-        // Crear o obtener grupos para cada capa (solo si es la primera vez)
         let terrainGroup = g.select<SVGGElement>(".terrain-layer");
-        if (terrainGroup.empty()) {
-            terrainGroup = g.append("g").attr("class", "terrain-layer");
-        }
+        if (terrainGroup.empty()) terrainGroup = g.append("g").attr("class", "terrain-layer");
 
-        let linkGroup = g.select<SVGGElement>(".links-layer");
-        if (linkGroup.empty()) {
-            linkGroup = g.append("g").attr("class", "links-layer");
-        }
-
-        let agentGroup = g.select<SVGGElement>(".agents-layer");
-        if (agentGroup.empty()) {
-            agentGroup = g.append("g").attr("class", "agents-layer");
-        }
-
-        let bubbleGroup = g.select<SVGGElement>(".bubbles-layer");
-        // Las burbujas NO persisten - se recrean cada render
-        if (!bubbleGroup.empty()) {
-            bubbleGroup.remove();
-        }
-        bubbleGroup = g.append("g").attr("class", "bubbles-layer");
-
-        // Capa de clima (persistente)
-        let weatherGroup = g.select<SVGGElement>(".weather-layer");
-        if (weatherGroup.empty()) {
-            weatherGroup = g.append("g").attr("class", "weather-layer");
-        }
-        weatherGroup.selectAll("*").remove(); // Limpiar solo el contenido
-
-        // Zoom (solo inicializar una vez)
-        const zoom = d3.zoom<SVGSVGElement, unknown>()
-            .scaleExtent([0.5, 5])
-            .on("zoom", (event) => {
-                g.attr("transform", event.transform);
-            });
-        
-        if (!initializedRef.current) {
-            svg.call(zoom);
-            initializedRef.current = true;
-        }
-
-        // Configuración de la cuadrícula dinámica
-        const cols = mapa.length;
-        const rows = mapa[0].length;
         const cellSize = 40;
-        const gridWidth = cols * cellSize;
-        const gridHeight = rows * cellSize;
-
-        // Centrar el mapa inicialmente
-        const initialScale = Math.min(width / gridWidth, height / gridHeight) * 0.85;
-        const initialX = (width - gridWidth * initialScale) / 2;
-        const initialY = (height - gridHeight * initialScale) / 2;
-
-        svg.call(zoom.transform, d3.zoomIdentity.translate(initialX, initialY).scale(initialScale));
-
-        // --- CAPA 0: TERRENO y TERRITORIOS ---
-        const { civilizaciones, gruposDinamicos } = useGameStore.getState();
-
         const terrainColors: Record<string, { start: string, end: string }> = {
-            grass: { start: "#0f2e1d", end: "#143d26" }, // Verde oscuro
-            forest: { start: "#051f12", end: "#0a291a" }, // Más oscuro
-            mountain: { start: "#1a1b20", end: "#2d2e36" }, // Gris azulado oscuro
-            water: { start: "#08121f", end: "#0c1b2e" }, // Azul muy oscuro
-            desert: { start: "#2b210e", end: "#3d2f14" }, // Marrón oscuro
+            grass: { start: "#0f2e1d", end: "#143d26" },
+            forest: { start: "#051f12", end: "#0a291a" },
+            mountain: { start: "#1a1b20", end: "#2d2e36" },
+            water: { start: "#08121f", end: "#0c1b2e" },
+            desert: { start: "#2b210e", end: "#3d2f14" },
         };
 
         const buildingIcons: Record<string, string> = {
-            "Hospital": "🏥",
-            "Granja": "🌾",
-            "Centro de Recarga": "⚡",
-            "Centro de Descanso": "🧘",
-            "Centro Comunitario": "🤝",
-            "Comisaría": "👮",
-            "Universidad": "🏛️",
-            "Comedor": "🍽️",
-            "Centro de Ocio": "🎭",
-            "Torre de Vigilancia": "🏹"
+            "Hospital": "🏥", "Granja": "🌾", "Centro de Recarga": "⚡", 
+            "Centro de Descanso": "🧘", "Centro Comunitario": "🤝", 
+            "Comisaría": "👮", "Universidad": "🏛️", "Comedor": "🍽️", 
+            "Centro de Ocio": "🎭", "Torre de Vigilancia": "🏹"
         };
 
-        // Limpiar contenido de la capa de clima
-        if (!weatherGroup.empty()) {
-            weatherGroup.selectAll("*").remove();
-        }
-
-        // Crear o obtener defs (solo una vez)
+        // Preparar defs
         let defs = svg.select<SVGDefsElement>("defs");
-        if (defs.empty()) {
-            defs = svg.append("defs");
-        }
-
-        // Definir gradientes en el SVG (solo si no existen)
+        if (defs.empty()) defs = svg.append("defs");
+        
         Object.entries(terrainColors).forEach(([id, colors]) => {
             if (defs.select(`#grad-${id}`).empty()) {
-                const grad = defs.append("linearGradient")
-                    .attr("id", `grad-${id}`)
-                    .attr("x1", "0%").attr("y1", "0%")
-                    .attr("x2", "100%").attr("y2", "100%");
+                const grad = defs.append("linearGradient").attr("id", `grad-${id}`)
+                    .attr("x1", "0%").attr("y1", "0%").attr("x2", "100%").attr("y2", "100%");
                 grad.append("stop").attr("offset", "0%").attr("stop-color", colors.start);
                 grad.append("stop").attr("offset", "100%").attr("stop-color", colors.end);
             }
         });
 
-        // Filtro de resplandor (solo si no existe)
-        if (defs.select("#glow").empty()) {
-            const filter = defs.append("filter")
-                .attr("id", "glow");
-            filter.append("feGaussianBlur")
-                .attr("stdDeviation", "2.5")
-                .attr("result", "coloredBlur");
-            const feMerge = filter.append("feMerge");
-            feMerge.append("feMergeNode").attr("in", "coloredBlur");
-            feMerge.append("feMergeNode").attr("in", "SourceGraphic");
-        }
+        // Renderizado del terreno del mapa - solo cuando el mapa cambia
+        const flatMap = mapa.flatMap((row, x) => row.map((tile, y) => ({ ...tile, x, y })));
+        const { civilizaciones, gruposDinamicos } = useGameStore.getState();
 
-        mapa.forEach((row, x) => {
-            row.forEach((tile, y) => {
-                const cellGroup = terrainGroup.append("g")
-                    .attr("transform", `translate(${x * cellSize}, ${y * cellSize})`);
+        terrainGroup.selectAll(".cell-group")
+            .data(flatMap, (d: any) => `${d.x}-${d.y}`)
+            .join(
+                enter => {
+                    const g = enter.append("g").attr("class", "cell-group")
+                        .attr("transform", d => `translate(${d.x * cellSize}, ${d.y * cellSize})`);
+                    g.append("rect").attr("class", "terrain-base")
+                        .attr("width", cellSize).attr("height", cellSize)
+                        .attr("stroke", "rgba(255,255,255,0.03)").attr("stroke-width", 0.5);
+                    return g;
+                }
+            )
+            .each(function(d: any) {
+                const cell = d3.select(this);
+                
+                // Actualizar terreno base (gradiente)
+                cell.select(".terrain-base").attr("fill", `url(#grad-${d.terrain})`);
 
-                // Base del terreno con gradiente
-                cellGroup.append("rect")
-                    .attr("width", cellSize)
-                    .attr("height", cellSize)
-                    .attr("fill", `url(#grad-${tile.terrain})`)
-                    .attr("stroke", "rgba(255,255,255,0.03)")
-                    .attr("stroke-width", 0.5);
-
-                // Overlay de Territorio (Si tiene dueño)
-                if (tile.owner) {
-                    const ownerInfo = civilizaciones[tile.owner] || gruposDinamicos[tile.owner];
-                    const ownerColor = ownerInfo?.color || "#ffffff";
-
-                    // Indicador sutil de borde
-                    cellGroup.append("rect")
-                        .attr("width", cellSize)
-                        .attr("height", cellSize)
-                        .attr("fill", "none")
-                        .attr("stroke", ownerColor)
-                        .attr("stroke-width", 1.5)
-                        .attr("opacity", 0.3);
-
-                    // Indicador de esquina para facción
-                    cellGroup.append("path")
-                        .attr("d", `M 0 0 L 12 0 L 0 12 Z`)
-                        .attr("fill", ownerColor)
-                        .attr("opacity", 0.8);
+                // Limpiar dinámicos anteriores
+                cell.selectAll(".cell-overlay, .building-unit, .resource-icon, .terrain-icon").remove();
+                
+                // Icono de Terreno (Sutil)
+                const terrainIcons: any = {
+                    'forest': '🌲',
+                    'mountain': '⛰️',
+                    'water': '🌊',
+                    'desert': '🏜️'
+                };
+                if (terrainIcons[d.terrain]) {
+                    cell.append("text").attr("class", "terrain-icon")
+                        .attr("x", cellSize / 2).attr("y", cellSize / 2 + 5).attr("text-anchor", "middle")
+                        .attr("font-size", "10px").attr("opacity", 0.15).attr("pointer-events", "none")
+                        .attr("fill", "#fff").text(terrainIcons[d.terrain]);
                 }
 
-                // Construcciones (Iconografía)
-                if (tile.buildings && tile.buildings.length > 0) {
-                    tile.buildings.forEach((b: any) => {
-                        // Fondo para el icono para mejor legibilidad
+                // Overlay de Territorio
+                if (d.owner) {
+                    const ownerInfo = civilizaciones[d.owner] || gruposDinamicos[d.owner];
+                    const ownerColor = ownerInfo?.color || "#ffffff";
+                    cell.append("rect").attr("class", "cell-overlay")
+                        .attr("width", cellSize).attr("height", cellSize)
+                        .attr("fill", "none").attr("stroke", ownerColor).attr("stroke-width", 1.5).attr("opacity", 0.3);
+                    cell.append("path").attr("class", "cell-overlay")
+                        .attr("d", `M 0 0 L 12 0 L 0 12 Z`).attr("fill", ownerColor).attr("opacity", 0.8);
+                }
+
+                // Edificios
+                if (d.buildings && d.buildings.length > 0) {
+                    d.buildings.forEach((b: any) => {
                         const ownerColor = civilizaciones[b.grupo_id]?.color || gruposDinamicos[b.grupo_id]?.color || "#7c4dff";
-
-                        cellGroup.append("circle")
-                            .attr("cx", cellSize / 2)
-                            .attr("cy", cellSize / 2)
-                            .attr("r", 12)
-                            .attr("fill", "rgba(0,0,0,0.8)")
-                            .attr("stroke", ownerColor)
-                            .attr("stroke-width", 1.5)
-                            .style("filter", "drop-shadow(0 0 5px " + ownerColor + ")");
-
-                        cellGroup.append("text")
-                            .attr("x", cellSize / 2)
-                            .attr("y", cellSize / 2 + 5)
-                            .attr("text-anchor", "middle")
-                            .attr("font-size", "14px")
-                            .attr("fill", "#ffffff")
-                            .text(buildingIcons[b.tipo] || "🏠");
+                        const bg = cell.append("g").attr("class", "building-unit");
+                        bg.append("circle").attr("cx", cellSize / 2).attr("cy", cellSize / 2).attr("r", 12)
+                            .attr("fill", "rgba(0,0,0,0.8)").attr("stroke", ownerColor).attr("stroke-width", 1.5);
+                        bg.append("text").attr("x", cellSize / 2).attr("y", cellSize / 2 + 5).attr("text-anchor", "middle")
+                            .attr("font-size", "14px").attr("fill", "#ffffff").text(buildingIcons[b.tipo] || "🏠");
                     });
-                } else if (tile.resource) {
-                    // Recursos temáticos (Civilization style)
-                    const resourceIcon = tile.resource.type === 'food' ? '🌾' : '💎';
-                    const resourceColor = tile.resource.type === 'food' ? '#fcd34d' : '#00e5ff';
-
-                    cellGroup.append("text")
-                        .attr("x", cellSize / 2)
-                        .attr("y", cellSize / 2 + 5)
-                        .attr("text-anchor", "middle")
-                        .attr("font-size", "12px")
-                        .attr("fill", resourceColor)
-                        .attr("opacity", 0.7)
-                        .text(resourceIcon);
+                } else if (d.resource) {
+                    const resourceIcon = d.resource.type === 'food' ? '🌾' : '💎';
+                    const resourceColor = d.resource.type === 'food' ? '#fcd34d' : '#00e5ff';
+                    cell.append("text").attr("class", "resource-icon")
+                        .attr("x", cellSize / 2).attr("y", cellSize / 2 + 5).attr("text-anchor", "middle")
+                        .attr("font-size", "12px").attr("fill", resourceColor).attr("opacity", 0.7).text(resourceIcon);
                 }
             });
-        });
 
-        // --- CAPA 1: GRAFO SOCIAL (Enlaces) ---
+    }, [mapa]);
 
-        if (showLinks && relationships && relationships.length > 0) {
+    // 2. Efecto para Zoom, Agentes, Vínculos y Burbujas (Cambios frecuentes)
+    useEffect(() => {
+        if (!svgRef.current || !containerRef.current || !mapa || mapa.length === 0) return;
+
+        const width = containerRef.current.clientWidth;
+        const height = containerRef.current.clientHeight;
+        const svg = d3.select(svgRef.current);
+        const cellSize = 40;
+
+        // Grupo principal con Zoom
+        let g = svg.select<SVGGElement>("g.main-group");
+        if (g.empty()) g = svg.append("g").attr("class", "main-group");
+
+        // Capas secundarias
+        let linkGroup = g.select<SVGGElement>(".links-layer");
+        if (linkGroup.empty()) linkGroup = g.append("g").attr("class", "links-layer");
+
+        let agentGroup = g.select<SVGGElement>(".agents-layer");
+        if (agentGroup.empty()) agentGroup = g.append("g").attr("class", "agents-layer");
+
+        let bubbleGroup = g.select<SVGGElement>(".bubbles-layer");
+        if (bubbleGroup.empty()) bubbleGroup = g.append("g").attr("class", "bubbles-layer");
+
+        let weatherGroup = g.select<SVGGElement>(".weather-layer");
+        if (weatherGroup.empty()) weatherGroup = g.append("g").attr("class", "weather-layer");
+
+        const zoom = d3.zoom<SVGSVGElement, unknown>()
+            .scaleExtent([0.5, 5])
+            .on("zoom", (event) => g.attr("transform", event.transform));
+        
+        if (!initializedRef.current) {
+            svg.call(zoom);
+            const cols = mapa.length;
+            const rows = mapa[0].length;
+            const gridWidth = cols * cellSize;
+            const gridHeight = rows * cellSize;
+            const initialScale = Math.min(width / gridWidth, height / gridHeight) * 0.85;
+            const initialX = (width - gridWidth * initialScale) / 2;
+            const initialY = (height - gridHeight * initialScale) / 2;
+            svg.call(zoom.transform, d3.zoomIdentity.translate(initialX, initialY).scale(initialScale));
+            initializedRef.current = true;
+        }
+
+        // --- VÍNCULOS (Data binding) ---
+        if (showLinks && relationships) {
             const agentCoords = new Map();
             agents.forEach(a => agentCoords.set(a.id, { x: a.x * cellSize + cellSize / 2, y: a.y * cellSize + cellSize / 2 }));
+            
+            const relationshipData = relationships.map(rel => ({
+                ...rel,
+                coords: { source: agentCoords.get(rel.source), target: agentCoords.get(rel.target) }
+            })).filter(d => d.coords.source && d.coords.target);
 
-            relationships.forEach(rel => {
-                const source = agentCoords.get(rel.source);
-                const target = agentCoords.get(rel.target);
-
-                if (source && target) {
-                    let strokeColor = "#ffffff";
-                    let strokeWidth = 0.5;
-                    let opacity = 0.15;
-
-                    if (rel.type === 'amigo') { strokeColor = "#00e676"; opacity = 0.5; strokeWidth = 1.2; }
-                    if (rel.type === 'enemigo') { strokeColor = "#ff1744"; opacity = 0.7; strokeWidth = 2; }
-                    if (rel.type === 'alianza') { strokeColor = "#ffd600"; opacity = 0.8; strokeWidth = 2.5; }
-
-                    const line = linkGroup.append("line")
-                        .attr("x1", source.x)
-                        .attr("y1", source.y)
-                        .attr("x2", target.x)
-                        .attr("y2", target.y)
-                        .attr("stroke", strokeColor)
-                        .attr("stroke-width", strokeWidth)
-                        .attr("opacity", opacity);
-
-                    if (rel.type === 'alianza') {
-                        line.attr("stroke-dasharray", "4,2");
-                    }
-                }
-            });
+            linkGroup.selectAll("line")
+                .data(relationshipData, (d: any) => `${d.source}-${d.target}-${d.type}`)
+                .join("line")
+                .attr("x1", d => d.coords.source.x).attr("y1", d => d.coords.source.y)
+                .attr("x2", d => d.coords.target.x).attr("y2", d => d.coords.target.y)
+                .attr("stroke", d => d.type === 'amigo' ? "#00e676" : d.type === 'enemigo' ? "#ff1744" : d.type === 'alianza' ? "#ffd600" : "#ffffff")
+                .attr("stroke-width", d => d.type === 'amigo' ? 1.2 : d.type === 'enemigo' ? 2 : d.type === 'alianza' ? 2.5 : 0.5)
+                .attr("opacity", d => d.type === 'amigo' ? 0.5 : d.type === 'enemigo' ? 0.7 : d.type === 'alianza' ? 0.8 : 0.15)
+                .attr("stroke-dasharray", d => d.type === 'alianza' ? "4,2" : "none");
+        } else {
+            linkGroup.selectAll("line").remove();
         }
 
+        // --- AGENTES ---
+        const prevPositions = new Map<string, { x: number, y: number }>();
+        prevAgentsRef.current.forEach((a: any) => prevPositions.set(a.id, { x: a.x, y: a.y }));
+        prevAgentsRef.current = agents;
 
-        // --- CAPA 2: AGENTES ---
-        const updateAgents = () => {
-            const agentSelection = agentGroup.selectAll<SVGGElement, any>(".agent")
-                .data(agents, (d) => d.id);
+        const agentSelection = agentGroup.selectAll<SVGGElement, any>(".agent")
+            .data(agents, (d) => d.id);
 
-            const enter = agentSelection.enter()
-                .append("g")
-                .attr("class", "agent")
-                .attr("cursor", "pointer")
-                .on("click", (event, d) => {
-                    event.stopPropagation();
-                    selectAgent(d.id);
-                });
+        const enter = agentSelection.enter().append("g").attr("class", "agent").attr("cursor", "pointer")
+            .on("click", (event, d) => { event.stopPropagation(); selectAgent(d.id); });
 
-            // Aura de selección con animación
-            const aura = enter.append("circle")
-                .attr("class", "selection-ring")
-                .attr("r", 18)
-                .attr("fill", "none")
-                .attr("stroke", "#7c4dff")
-                .attr("stroke-width", 1.5)
-                .attr("opacity", 0);
+        enter.append("circle").attr("class", "selection-ring").attr("r", 18).attr("fill", "none").attr("stroke", "#7c4dff").attr("stroke-width", 1.5).attr("opacity", 0);
+        enter.append("rect").attr("x", -7).attr("y", -7).attr("width", 14).attr("height", 14).attr("rx", 2).attr("fill", (d) => d.color || "#e0e0e0").attr("stroke", "#000").attr("stroke-width", 1.5);
+        enter.append("rect").attr("x", -5).attr("y", -4).attr("width", 10).attr("height", 3).attr("fill", "#000").attr("opacity", 0.8);
+        enter.append("rect").attr("x", -4).attr("y", -3).attr("width", 2).attr("height", 1).attr("fill", "#00e5ff");
+        enter.append("rect").attr("x", 2).attr("y", -3).attr("width", 2).attr("height", 1).attr("fill", "#00e5ff");
+        enter.append("text").attr("dy", -10).attr("text-anchor", "middle").attr("font-size", "8px").attr("fill", "#ffffff").attr("font-family", "monospace").attr("font-weight", "bold").attr("opacity", 0.8).text((d) => {
+            const name = d.id || "???";
+            // Si el nombre sigue el formato viejo A12_345, cortamos la A. Si no, mostramos los primeros caracteres cortos
+            if (name.match(/^A\d+_\d+$/)) return name.replace('A', '');
+            return name.substring(0, 5); // Mostrar máximo 5 letras para que entre en la UI sin desbordar
+        });
 
-            // Cuerpo del Robot (Estilo Tech)
-            enter.append("rect")
-                .attr("x", -7)
-                .attr("y", -7)
-                .attr("width", 14)
-                .attr("height", 14)
-                .attr("rx", 2)
-                .attr("fill", (d) => d.color || "#e0e0e0")
-                .attr("stroke", "#000")
-                .attr("stroke-width", 1.5)
-                .attr("filter", "url(#glow)");
+        const merged = enter.merge(agentSelection);
+        merged.each(function(d) {
+            const currentPos = { x: d.x * cellSize + cellSize / 2, y: d.y * cellSize + cellSize / 2 };
+            const prevPos = prevPositions.get(d.id);
+            if (prevPos) {
+                const prevX = prevPos.x * cellSize + cellSize / 2;
+                const prevY = prevPos.y * cellSize + cellSize / 2;
+                d3.select(this).attr("transform", `translate(${prevX}, ${prevY})`).transition().duration(400).attr("transform", `translate(${currentPos.x}, ${currentPos.y})`);
+            } else {
+                d3.select(this).attr("transform", `translate(${currentPos.x}, ${currentPos.y})`);
+            }
+        });
 
-            // Visor / Ojos brillantes
-            enter.append("rect")
-                .attr("x", -5)
-                .attr("y", -4)
-                .attr("width", 10)
-                .attr("height", 3)
-                .attr("fill", "#000")
-                .attr("opacity", 0.8);
+        merged.select(".selection-ring").transition().duration(200).attr("opacity", (d) => d.id === selectedAgentId ? 1 : 0).attr("stroke-dasharray", (d) => d.id === selectedAgentId ? "4,2" : "none");
+        agentSelection.exit().remove();
 
-            enter.append("rect")
-                .attr("x", -4)
-                .attr("y", -3)
-                .attr("width", 2)
-                .attr("height", 1)
-                .attr("fill", "#00e5ff"); // Ojo izquierdo brillante
-
-            enter.append("rect")
-                .attr("x", 2)
-                .attr("y", -3)
-                .attr("width", 2)
-                .attr("height", 1)
-                .attr("fill", "#00e5ff"); // Ojo derecho brillante
-
-            // ID
-            enter.append("text")
-                .attr("dy", -10)
-                .attr("text-anchor", "middle")
-                .attr("font-size", "8px")
-                .attr("fill", "#ffffff")
-                .attr("font-family", "monospace")
-                .attr("font-weight", "bold")
-                .attr("opacity", 0.8)
-                .text((d) => d.id.replace('A', ''));
-
-            // Actualización de posición
-            const merged = enter.merge(agentSelection);
-
-            // Aplicar posición con transición solo para agentes existentes
-            // Para agentes nuevos (first render), posicionar directamente
-            merged.each(function(d) {
-                const prevPos = prevPositions.get(d.id);
-                const currentPos = { x: d.x * cellSize + cellSize / 2, y: d.y * cellSize + cellSize / 2 };
-                
-                if (prevPos) {
-                    // Agente existente - animación desde posición anterior
-                    const prevX = prevPos.x * cellSize + cellSize / 2;
-                    const prevY = prevPos.y * cellSize + cellSize / 2;
-                    d3.select(this)
-                        .attr("transform", `translate(${prevX}, ${prevY})`)
-                        .transition()
-                        .duration(400)
-                        .attr("transform", `translate(${currentPos.x}, ${currentPos.y})`);
-                } else {
-                    // Agente nuevo - posicionar directamente
-                    d3.select(this)
-                        .attr("transform", `translate(${currentPos.x}, ${currentPos.y})`);
-                }
-            });
-
-            // Actualizar estado de selección
-            merged.select(".selection-ring")
-                .transition().duration(200)
-                .attr("opacity", (d) => d.id === selectedAgentId ? 1 : 0)
-                .attr("stroke-dasharray", (d) => d.id === selectedAgentId ? "4,2" : "none");
-
-            agentSelection.exit().remove();
-        };
-
-        updateAgents();
-
-        // --- CAPA 3: BURBUJAS DE DIÁLOGO (GAME STYLE) ---
-        // Ocultar burbujas cuando hay un panel activo
+        // --- BURBUJAS ---
         if (speechBubbles && !hideBubbles) {
-            Object.entries(speechBubbles).forEach(([agentId, bubble]) => {
-                const agent = agents.find(a => a.id === agentId);
-                if (agent) {
+            const bubbleData = Object.entries(speechBubbles).map(([id, b]) => ({ id, ...b })).filter(b => agents.some(a => a.id === b.id));
+            
+            bubbleGroup.selectAll(".bubble-g")
+                .data(bubbleData, (d: any) => d.id + d.timestamp)
+                .join(
+                    enter => {
+                        const bg = enter.append("g").attr("class", "bubble-g").attr("opacity", 0);
+                        bg.append("rect").attr("class", "bubble-bg").attr("rx", 6).attr("fill", "rgba(10, 11, 16, 0.95)").attr("stroke", "#7c4dff").attr("stroke-width", 1.5);
+                        bg.append("path").attr("d", "M -5 0 L 5 0 L 0 5 Z").attr("fill", "#7c4dff");
+                        bg.append("text").attr("class", "bubble-text").attr("text-anchor", "middle").attr("font-size", "10px").attr("fill", "#fff").attr("font-family", "monospace");
+                        return bg;
+                    },
+                    update => update,
+                    exit => exit.transition().duration(200).attr("opacity", 0).remove()
+                ).each(function(d: any) {
+                    const agent = agents.find(a => a.id === d.id);
+                    if (!agent) return;
                     const x = agent.x * cellSize + cellSize / 2;
                     const y = agent.y * cellSize + cellSize / 2 - 25;
-
-                    const bubbleG = bubbleGroup.append("g")
-                        .attr("transform", `translate(${x}, ${y})`);
-
-                    // Configuración de envuelto (wrap)
+                    const g = d3.select(this);
+                    
+                    const text = d.text;
                     const maxWidth = 140;
-                    const words = bubble.text.split(/\s+/);
+                    const charsPerLine = Math.floor(maxWidth / 7);
+                    const words = text.split(/\s+/);
                     const lines: string[] = [];
                     let currentLine = "";
-
-                    // Una forma simple de calcular el wrap sin medir cada vez (estimación por fuente mono)
-                    const charsPerLine = Math.floor(maxWidth / 7); // Aprox 7px por char en 10px mono
-
-                    words.forEach(word => {
-                        if ((currentLine + word).length > charsPerLine) {
-                            lines.push(currentLine.trim());
-                            currentLine = word + " ";
-                        } else {
-                            currentLine += word + " ";
-                        }
+                    words.forEach((word: string) => {
+                        if ((currentLine + word).length > charsPerLine) { lines.push(currentLine.trim()); currentLine = word + " "; }
+                        else { currentLine += word + " "; }
                     });
                     lines.push(currentLine.trim());
 
@@ -404,60 +269,24 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
                     const bubbleWidth = Math.min(maxWidth, (Math.max(...lines.map(l => l.length)) * 7) + 20);
                     const bubbleHeight = (lines.length * lineHeight) + bubblePadding;
 
-                    // Fondo estilo RPG (Cuadro de texto)
-                    bubbleG.append("rect")
-                        .attr("x", -bubbleWidth / 2)
-                        .attr("y", -bubbleHeight)
-                        .attr("width", bubbleWidth)
-                        .attr("height", bubbleHeight)
-                        .attr("rx", 6)
-                        .attr("fill", "rgba(10, 11, 16, 0.95)")
-                        .attr("stroke", "#7c4dff")
-                        .attr("stroke-width", 1.5)
-                        .attr("filter", "url(#glow)");
+                    g.select("rect").attr("x", -bubbleWidth / 2).attr("y", -bubbleHeight).attr("width", bubbleWidth).attr("height", bubbleHeight);
+                    const t = g.select("text").attr("y", -bubbleHeight + 14);
+                    t.selectAll("tspan").data(lines).join("tspan").attr("x", 0).attr("dy", (l, i) => i === 0 ? 0 : lineHeight).text(d => d);
 
-                    // Pequeña flecha hacia abajo
-                    bubbleG.append("path")
-                        .attr("d", `M -5 0 L 5 0 L 0 5 Z`)
-                        .attr("fill", "#7c4dff")
-                        .attr("transform", `translate(0, 0)`);
-
-                    // Texto multilínea
-                    const textElement = bubbleG.append("text")
-                        .attr("text-anchor", "middle")
-                        .attr("font-size", "10px")
-                        .attr("fill", "#fff")
-                        .attr("font-family", "monospace")
-                        .attr("y", -bubbleHeight + 14);
-
-                    lines.forEach((line, i) => {
-                        textElement.append("tspan")
-                            .attr("x", 0)
-                            .attr("dy", i === 0 ? 0 : lineHeight)
-                            .text(line);
-                    });
-
-                    // Animación de entrada suave
-                    bubbleG.attr("opacity", 0)
-                        .transition().duration(300)
-                        .attr("opacity", 1)
-                        .attr("transform", `translate(${x}, ${y - 8})`);
-                }
-            });
+                    g.transition().duration(300).attr("opacity", 1).attr("transform", `translate(${x}, ${y - 8})`);
+                });
+        } else {
+            bubbleGroup.selectAll(".bubble-g").remove();
         }
 
+        // --- CLIMA ---
+        weatherGroup.selectAll("rect")
+            .data((weather === 'rainy' || weather === 'storm') ? [1] : [])
+            .join("rect")
+            .attr("width", mapa.length * cellSize).attr("height", mapa[0].length * cellSize)
+            .attr("fill", "#2979ff").attr("opacity", 0.05).style("pointer-events", "none");
 
-        // --- CAPA 4: CLIMA (Overlay Sutil) ---
-        if (weather === 'rainy' || weather === 'storm') {
-            weatherGroup.append("rect")
-                .attr("width", gridWidth)
-                .attr("height", gridHeight)
-                .attr("fill", "#2979ff")
-                .attr("opacity", 0.05)
-                .style("pointer-events", "none");
-        }
-
-    }, [mapa, agents, selectedAgentId, weather, selectAgent, relationships, speechBubbles, showLinks, hideBubbles]);
+    }, [agents, selectedAgentId, weather, selectAgent, relationships, speechBubbles, showLinks, hideBubbles]);
 
     return (
         <div ref={containerRef} className="w-full h-full relative bg-[#030305] overflow-hidden">

@@ -30,7 +30,7 @@ interface GameState {
     agentePoseidoId: string | null;
     toggleThoughts: () => void;
     selectAgent: (agentId: string | null) => void;
-    sendArchitectMessage: (message: string, agentId?: string) => Promise<void>;
+    sendArchitectMessage: (message: string, agentId?: string) => Promise<string>;
     sendGodAction: (type: string, params: any) => Promise<boolean>;
     socket: WebSocket | null;
     bubbleCleanupInterval: ReturnType<typeof setInterval> | null;
@@ -177,10 +177,9 @@ const useGameStore = create(
                         return;
                     }
                     if (data.type === 'initial_state' || data.type === 'stats') {
-                        set({
+                        const updates: any = {
                             step: data.step,
                             economy: data.economy,
-                            mapa: data.mapa,
                             weather: data.weather,
                             lore: data.lore || "",
                             civilizaciones: data.civilizaciones || {},
@@ -194,16 +193,23 @@ const useGameStore = create(
                             ranking: data.ranking || [],
                             instituciones: data.instituciones || {},
                             agentePoseidoId: data.agente_poseido_id || null,
-                            // Sincronizar logs históricos al conectar o reconectar
-                            logs: (data.logs && data.logs.length > 0) ? data.logs.map((l: any) => ({
+                        };
+
+                        if (data.mapa) updates.mapa = data.mapa;
+                        
+                        // Solo actualizar logs si vienen en el mensaje (usualmente solo en initial_state)
+                        if (data.logs && data.logs.length > 0) {
+                            updates.logs = data.logs.map((l: any) => ({
                                 step: l.step || l.paso || 0,
                                 message: l.message || l.mensaje || "",
                                 category: l.category || l.categoria || "info",
                                 private_for: l.private_for || l.privado_para,
                                 thought: l.thought || l.pensamiento,
                                 timestamp: l.timestamp || Date.now()
-                            })) : get().logs
-                        });
+                            }));
+                        }
+
+                        set(updates);
                     }
 
                     if (data.type === 'agent_update') {
@@ -224,8 +230,8 @@ const useGameStore = create(
                         set((state) => {
                             const newBubbles = { ...state.speechBubbles };
                             if (data.category === 'dialogo' && data.message.includes(':')) {
-                                const match = data.message.match(/\[(A-?\d+)\]/);
-                                const agentId = match ? match[1] : null;
+                                const match = data.message.match(/\[([^\]]+)\]\s*:/);
+                                const agentId = match ? match[1].trim() : null;
                                 const content = data.message.split(':').slice(1).join(':').trim();
                                 if (agentId) {
                                     newBubbles[agentId] = { text: content, timestamp: Date.now() };
@@ -297,7 +303,7 @@ const useGameStore = create(
                 const { userId } = get();
                 if (!userId) {
                     console.error("❌ sendArchitectMessage: No userId found in store");
-                    return;
+                    throw new Error("No userId found");
                 }
 
                 try {
@@ -322,10 +328,12 @@ const useGameStore = create(
                             }
                         })
                     });
+                    
+                    const data = await response.json();
                     if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.detail || 'Failed to send message');
+                        throw new Error(data.detail || data.message || 'Failed to send message');
                     }
+                    return data.response; // Devolver la respuesta del agente
                 } catch (error) {
                     console.error('Error sending architect message:', error);
                     throw error;

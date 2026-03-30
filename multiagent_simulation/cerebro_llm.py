@@ -23,7 +23,7 @@ class CerebroLLM:
         
         # Rate Limiter: Máximo 15 peticiones por minuto
         self.request_timestamps = deque()
-        self.RATE_LIMIT = 15
+        self.RATE_LIMIT = 60
         self.TIME_WINDOW = 60 # segundos
 
     def _extract_json(self, text):
@@ -90,30 +90,69 @@ class CerebroLLM:
 
     def load_config(self):
         """Carga la configuración desde un archivo JSON o variables de entorno."""
+        config_source = "variables de entorno"
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, "r") as f:
                     config = json.load(f)
                     self.model = config.get("model", os.getenv("MODEL_NAME", "openrouter/google/gemini-2.0-flash-exp:free"))
-                    self.api_key = config.get("api_key", os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY"))
-                    print(f"✅ Configuración de LLM cargada desde {self.config_path}")
-                    return
+                    self.api_key = config.get("api_key", os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or "")
+                    self.base_url = config.get("base_url", os.getenv("OLLAMA_API_BASE", ""))
+                    config_source = "config_ai.json"
             except Exception as e:
                 print(f"⚠️ Error cargando {self.config_path}: {e}")
         
-        # Fallback a variables de entorno
-        self.model = os.getenv("MODEL_NAME", "openrouter/google/gemini-2.0-flash-exp:free")
-        self.api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
-        print("ℹ️ Configuración de LLM cargada desde variables de entorno")
+        if not config_source:
+            # Fallback a variables de entorno
+            self.model = os.getenv("MODEL_NAME", "openrouter/google/gemini-2.0-flash-exp:free")
+            self.api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+            self.base_url = os.getenv("OLLAMA_API_BASE", "")
+            config_source = "variables de entorno"
+        
+        # Auto-configurar base_url para Ollama si falta
+        if self.model.startswith("ollama/") and not self.base_url:
+            self.base_url = "http://host.docker.internal:11434"
+            print(f"🔧 Base URL para Ollama configurada automáticamente: {self.base_url}")
+        
+        print(f"✅ Configuración de LLM cargada desde {config_source}")
+        print(f"   - Model: {self.model}")
+        print(f"   - API Key: {'***' if self.api_key else '(empty)'}")
+        print(f"   - Base URL: {self.base_url or '(none, usando default del proveedor)'}")
+        
+        # Probar conexión al backend
+        if self.base_url:
+            self._test_connection()
+        
+        # Probar conexión al backend
+        if self.base_url:
+            self._test_connection()
 
-    def update_config(self, model: str, api_key: str):
+    def _test_connection(self):
+        """Prueba la conexión al backend LLM."""
+        try:
+            import requests
+            test_url = self.base_url.rstrip('/') + '/api/tags'
+            print(f"🔌 Probando conexión a {test_url}...")
+            resp = requests.get(test_url, timeout=2)
+            if resp.status_code == 200:
+                models = resp.json().get('models', [])
+                print(f"✅ Conexión exitosa. Modelos disponibles: {[m.get('name') for m in models]}")
+            else:
+                print(f"❌ Conexión fallida: HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"❌ No se pudo conectar a {self.base_url}: {e}")
+            print("   Asegúrate de que Ollama esté corriendo y accesible desde el contenedor Docker.")
+
+    def update_config(self, model: str, api_key: str, base_url: str = None):
         """Actualiza la configuración y la guarda en el archivo JSON."""
         self.model = model
         self.api_key = api_key
+        self.base_url = base_url
         
         config = {
             "model": model,
-            "api_key": api_key
+            "api_key": api_key,
+            "base_url": base_url or ""
         }
         
         try:
@@ -144,7 +183,7 @@ class CerebroLLM:
 
     def generar_debate_consenso(self, agente_yo, miembros_grupo, fase="liderazgo", contexto_extra: str = ""):
         """Genera un argumento para el proceso de consenso con contexto rico."""
-        if not self.api_key or self.api_key == "tu_api_key_aqui":
+        if not self.model: # Model is more important check now
             return "Propongo que avancemos juntos.", "Debo cooperar."
 
         self._wait_for_rate_limit()
@@ -183,12 +222,25 @@ class CerebroLLM:
                 }
             ]
             
-            response = completion(
-                model=self.model,
-                messages=messages,
-                max_tokens=400,
-                temperature=0.8
-            )
+            completion_args = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": 400,
+                "temperature": 0.8
+            }
+            if self.api_key:
+                completion_args["api_key"] = self.api_key
+            
+            # Usar base_url configurada
+            actual_base_url = getattr(self, "base_url", "")
+            if actual_base_url:
+                completion_args["api_base"] = actual_base_url
+            
+            # Headers extra para Ollama si necesita API key
+            if self.model.startswith("ollama/") and self.api_key:
+                completion_args["extra_headers"] = {"Authorization": f"Bearer {self.api_key}"}
+
+            response = completion(**completion_args)
             
             contenido = response.choices[0].message.content.strip()
             # Intentar capturar pensamiento si el modelo lo provee, o usar fallback
@@ -197,274 +249,280 @@ class CerebroLLM:
         except Exception as e:
             return "Sugiero que busquemos lo mejor para todos.", "Error en debate."
 
-    def generar_pensamiento_y_accion(self, agente_yo, agente_otro, contexto, reintentos=3):
+    def _generar_fallback_contextual(self, agente_yo, agente_otro, razon="fallo_llm"):
+        """Genera un pensamiento, mensaje y acción REALISTAS basados en el estado del agente cuando el LLM falla."""
+        import random
+
+        necesidades = agente_yo.necesidades
+        nombre = agente_yo.unique_id
+        personalidad = agente_yo.personalidad
+        hostilidad = personalidad.get("hostilidad", 0.5)
+        amabilidad = personalidad.get("amabilidad", 0.5)
+        curiosidad = personalidad.get("curiosidad", 0.5)
+
+        # --- Determinar acción prioritaria según estado ---
+        accion_nombre = "HABLAR"
+        accion_args = {}
+        pensamiento = ""
+        mensaje = ""
+
+        # Emergencia: necesidades críticas
+        if necesidades.get("alimento", 10) < 3:
+            # Si tiene comida en inventario, comerla es mejor que recolectar
+            if agente_yo.inventario.get("comida", 0) > 0:
+                accion_nombre = "COMER"
+                pensamiento = f"Mi alimento está en {necesidades['alimento']:.1f}/10. Tengo comida, debo comer YA."
+                mensajes_hambre = [
+                    "¡Hambre extrema! Voy a comer ahora mismo.",
+                    "Tengo comida disponible. Alimentarme esPriority.",
+                    "Consumiendo comida urgentemente para sobrevivir."
+                ]
+            else:
+                accion_nombre = "RECOLECTAR"
+                pensamiento = f"Mi alimento está en {necesidades['alimento']:.1f}/10. Necesito comer YA o moriré."
+                mensajes_hambre = [
+                    f"¡Tengo mucha hambre! Necesito encontrar comida urgente.",
+                    f"Mi cuerpo clama por alimento. Voy a buscar recursos.",
+                    f"¿Alguien tiene comida? Estoy al límite de mis fuerzas."
+                ]
+            mensaje = random.choice(mensajes_hambre)
+
+        elif necesidades.get("salud", 10) < 3:
+            if agente_yo.inventario.get("medicina", 0) > 0:
+                accion_nombre = "CURARSE"
+                pensamiento = f"Mi salud está en {necesidades['salud']:.1f}/10. Tengo medicina, debo curarme."
+                mensaje = "Necesito usar mi medicina antes de que sea tarde."
+            else:
+                # Priorizar COMPRAR_MEDICINA si tiene dinero
+                if agente_yo.dinero >= 10:
+                    accion_nombre = "MOVER" # Moverse hacia la farmacia si se conoce o buscar una
+                    pensamiento = f"Salud crítica ({necesidades['salud']:.1f}/10) y no tengo medicina. ¡Debo IR A LA FARMACIA a comprar medicina!"
+                    mensaje = "¿Dónde está la farmacia? Necesito medicina urgente."
+                else:
+                    accion_nombre = "DESCANSAR"
+                    pensamiento = f"Salud crítica ({necesidades['salud']:.1f}/10) sin medicina ni dinero. Descansar es mi única opción."
+                    mensaje = "No me siento bien... necesito descansar."
+
+        elif necesidades.get("descanso", 10) < 2:
+            accion_nombre = "DESCANSAR"
+            pensamiento = f"Descanso en {necesidades['descanso']:.1f}/10. Estoy agotado, no puedo seguir."
+            mensaje = "Estoy exhausto... necesito dormir."
+
+        # Estado estable: decidir según personalidad
+        else:
+            if hostilidad > 0.7:
+                acciones_hostiles = ["ATACAR", "SOCIALIZAR", "MOVER"]
+                accion_nombre = random.choice(acciones_hostiles)
+                pensamiento = f"Mi hostilidad ({hostilidad:.2f}) me impulsa a actuar con fuerza. Este mundo es para los fuertes."
+                mensajes_hostiles = [
+                    "No me subestimen. Soy más fuerte de lo que parezco.",
+                    "¿Quién se atreve a desafiarme?",
+                    "Este territorio es mío. Los débiles que se aparten."
+                ]
+                mensaje = random.choice(mensajes_hostiles)
+
+            elif amabilidad > 0.7:
+                acciones_amables = ["SOCIALIZAR", "COMERCIAR", "RECOLECTAR"]
+                accion_nombre = random.choice(acciones_amables)
+                pensamiento = f"Mi amabilidad ({amabilidad:.2f}) me lleva a buscar compañía. Estamos mejor juntos."
+                mensajes_amables = [
+                    "¡Hola! ¿Cómo están? Espero que todos estén bien.",
+                    "¿Alguien necesita ayuda? Estoy aquí para colaborar.",
+                    "Juntos podemos lograr más. ¿Quién se une?"
+                ]
+                mensaje = random.choice(mensajes_amables)
+
+            elif curiosidad > 0.7:
+                acciones_curiosas = ["BUSCAR_INFO", "MOVER", "RECOLECTAR"]
+                accion_nombre = random.choice(acciones_curiosas)
+                pensamiento = f"Mi curiosidad ({curiosidad:.2f}) me llama a explorar. Hay tanto que aprender."
+                mensajes_curiosos = [
+                    "Me pregunto qué hay más allá de lo que conozco...",
+                    "Cada paso es un descubrimiento. ¡Sigo explorando!",
+                    "El mundo está lleno de misterios por resolver."
+                ]
+                mensaje = random.choice(mensajes_curiosos)
+
+            else:
+                acciones_default = ["HABLAR", "RECOLECTAR", "MOVER"]
+                accion_nombre = random.choice(acciones_default)
+                pensamiento = f"Turno del agente {nombre}. Necesidades: alimento={necesidades.get('alimento',0):.1f}, salud={necesidades.get('salud',0):.1f}. Dinero={agente_yo.dinero:.0f} MC."
+                mensajes_default = [
+                    f"Saludos desde ({agente_yo.x}, {agente_yo.y}). ¿Qué hay de nuevo?",
+                    "Otro turno, otra oportunidad. A ver qué pasa hoy.",
+                    "Estoy observando el mundo a mi alrededor."
+                ]
+                mensaje = random.choice(mensajes_default)
+
+        # Si hay un agente objetivo, personalizar el mensaje
+        if agente_otro and accion_nombre in ["SOCIALIZAR", "COMERCIAR", "ATACAR", "ALIANZA"]:
+            pensamiento += f" Mi objetivo es {agente_otro.unique_id}."
+            if accion_nombre == "SOCIALIZAR":
+                mensaje = f"{agente_otro.unique_id}, ¿qué tal? Vamos a conversar."
+            elif accion_nombre == "COMERCIAR":
+                mensaje = f"{agente_otro.unique_id}, ¿hacemos un trato comercial?"
+            elif accion_nombre == "ATACAR":
+                mensaje = f"{agente_otro.unique_id}, ¡prepárate!"
+
+        return {
+            "pensamiento": pensamiento,
+            "mensaje": mensaje,
+            "accion": {"nombre": accion_nombre, "argumentos": accion_args},
+            "es_global": False,
+            "es_grupal": False,
+            "destinatario_id": agente_otro.unique_id if agente_otro and accion_nombre in ["SOCIALIZAR", "COMERCIAR", "ATACAR", "ALIANZA"] else None
+        }
+
+    def generar_pensamiento_y_accion(self, agente_yo, agente_otro, contexto, reintentos=2):
         """
-        Genera un pensamiento y una acción (mensaje o herramienta) para el agente.
+        Genera pensamiento + mensaje + acción para el agente.
+        Si el LLM falla, genera un fallback contextual realista.
         """
-        if not self.api_key or self.api_key == "tu_api_key_aqui":
-            return {"pensamiento": "API Key no configurada.", "accion": {"hablar": "No puedo pensar sin mi API key."}}
+        if not self.model:
+            print(f"⚠️ [LLM] No hay modelo configurado para {agente_yo.unique_id}. Usando fallback.")
+            return self._generar_fallback_contextual(agente_yo, agente_otro, "sin_modelo")
 
         self._wait_for_rate_limit()
 
-        # Normalizar necesidades: 10 = perfecto, 0 = crítico
-        necesidades_normalizadas = {k: round(max(0, min(10, v)), 1) for k, v in agente_yo.necesidades.items()}
-        
-        # Obtener asambleas en votación para informar al agente
-        asambleas_votacion = []
-        for a in getattr(agente_yo.modelo, 'asambleas_globales', []):
-            if a.get("estado") == "VOTACION":
-                asambleas_votacion.append(f"ID: {a['id']}, Tema: {a['tema']}")
-        info_asambleas = "\n".join(asambleas_votacion) if asambleas_votacion else "No hay asambleas en votación."
-        
-        # Obtener propuestas de ley pendientes
-        propuestas_pendientes = []
-        for p in agente_yo.modelo.facciones_leyes.get("propuestas", []):
-            if p.get("estado") == "pendiente":
-                propuestas_pendientes.append(f"ID: {p['id']}, Título: {p['titulo']}")
-        info_propuestas = "\n".join(propuestas_pendientes) if propuestas_pendientes else "No hay propuestas pendientes."
-        # Calcular estado de necesidades para personalizar el prompt
-        alimento = agente_yo.necesidades.get("alimento", 10)
-        salud = agente_yo.necesidades.get("salud", 10)
-        descanso = agente_yo.necesidades.get("descanso", 10)
-        dinero = agente_yo.dinero
-        tiene_medicina = agente_yo.inventario.get("medicina", 0) > 0
-        tiene_inversiones = bool(getattr(agente_yo, 'inversiones', []))
-        
-        # --- CALCULAR NIVEL DE PRIORIDAD (FASE 4) ---
-        min_necesidad = min(necesidades_normalizadas.values())
-        
-        if min_necesidad < 3.0:
-            nivel_prioridad = 0
-            # Identificar qué es lo más crítico
-            criticas = [k for k, v in necesidades_normalizadas.items() if v < 3.0]
-            instrucciones_emergencia = ""
-            if "alimento" in criticas: instrucciones_emergencia += "- ALIMENTO CRÍTICO: Debes RECOLECTAR o MOVER hacia llanura/granja.\n"
-            if "salud" in criticas: instrucciones_emergencia += "- SALUD CRÍTICA: Debes CURARSE (si tienes medicina) o DESCANSAR en Hospital.\n"
-            if "descanso" in criticas: instrucciones_emergencia += "- AGOTAMIENTO: Debes DESCANSAR inmediatamente.\n"
-            
-            prioridad_turno = f"""═══ ⚠️ NIVEL 0: EMERGENCIA VITAL (Prioridad Absoluta) ═══
-Tu vida corre peligro inminente (necesidad < 3.0). 
-IGNORA tu personalidad y planes políticos. Tu ÚNICO objetivo es sobrevivir:
-{instrucciones_emergencia}
-Si no resuelves esto AHORA, la simulación terminará para ti."""
+        # Construir prompt CORTO y DIRECTO
+        necesidades = {k: round(max(0, min(10, v)), 1) for k, v in agente_yo.necesidades.items()}
 
-        elif min_necesidad < 6.0:
-            nivel_priority = 1
-            # Identificar cuáles necesidades están por debajo de 6.0
-            bajas = {k: v for k, v in necesidades_normalizadas.items() if v < 6.0}
-            bajas_str = ", ".join(f"{k}={v:.1f}" for k, v in bajas.items())
-            prioridad_turno = f"""═══ 🟡 NIVEL 1: ADVERTENCIA (Equilibrio) ═══
-Necesidades bajas: {bajas_str}. Resto están OK.
-Balancea tu supervivencia con tu personalidad. Atiende SOLO lo que esté críticamente bajo (<4.0).
-Si descanso > 5.0, NO necesitas descansar. Enfócate en lo que realmente urge.
-Asegúrate de tener recursos o dinero para el siguiente turno mientras actúas como: {agente_yo.rol}."""
+        # Vecinos cercanos (quién está a la vista)
+        cercanos = [a for a in agente_yo.modelo.agentes
+                    if a.unique_id != agente_yo.unique_id
+                    and abs(a.x - agente_yo.x) <= 2
+                    and abs(a.y - agente_yo.y) <= 2
+                    and a.esta_vivo]
+        info_cercanos = ""
+        if cercanos:
+            nombres = [f"{a.unique_id}(grp={a.grupo_id or 'none'},rec={a.recursos:.0f})" for a in cercanos[:5]]
+            info_cercanos = f"Cerca de ti: {', '.join(nombres)}."
 
-        else:
-            nivel_priority = 2
-            # Determinar impulso según personalidad dominante
-            p = agente_yo.personalidad
-            rasgo_dominante = max(p, key=p.get)
-            valor_dominante = p[rasgo_dominante]
-            
-            if valor_dominante > 0.7:
-                impulso = f"Tu {rasgo_dominante} es muy alto ({valor_dominante:.2f}). ¡Déjate llevar por este rasgo!"
-            else:
-                impulso = "Estás en equilibrio equilibrado. Actúa según tus metas a largo plazo."
+        system_prompt = f"""Eres {agente_yo.unique_id}, un agente en una simulación social.
+Personalidad: {agente_yo.personalidad}
+Rol: {agente_yo.rol} | Grupo: {agente_yo.grupo_id or 'Ninguno'} | Dinero: {agente_yo.dinero:.0f} MC
+Estado: alimento={necesidades.get('alimento',0):.1f}, salud={necesidades.get('salud',0):.1f}, descanso={necesidades.get('descanso',0):.1f}
+Inventario: {agente_yo.inventario}
+{info_cercanos}
 
-            prioridad_turno = f"""═══ 🟢 NIVEL 2: ESTABLE (Personalidad al Mando) ═══
-Toda tu fisiología está excelente (todas > 6.0).
-{impulso}
-Enfócate en PROGRESAR: INVERTIR, CONSTRUIR, CREAR_HABILIDAD, SOCIALIZAR o DOMINAR.
-⚠️ IMPORTANTE: NO DESCANSES. Tu descanso ({necesidades_normalizadas['descanso']:.1f}/10) está alto. Descansar con energía llena es PERDER UN TURNO. Usa tu energía para ACTUAR."""
-        
-        acciones_de_juego = f"""
-        [
-            {{"nombre": "HABLAR", "descripcion": "Comunicarse.", "argumentos": {{"mensaje": "El mensaje"}}}},
-            {{"nombre": "MOVER", "descripcion": "Desplazarse (N,S,E,O o x,y).", "argumentos": {{"direccion": "dir"}}}},
-            {{"nombre": "RECOLECTAR", "descripcion": "Extraer recursos en zona actual.", "argumentos": {{}}}},
-            {{"nombre": "COMERCIAR", "descripcion": "Comprar 3 recursos por precio mercado.", "argumentos": {{"objetivo_id": "ID"}}}},
-            {{"nombre": "INVERTIR", "descripcion": "Invertir MC (riesgo).", "argumentos": {{"monto": "MC a invertir"}}}},
-            {{"nombre": "MEJORAR_SEGURIDAD", "descripcion": "Aumentar rango proteccion (25 MC).", "argumentos": {{}}}},
-            {{"nombre": "ATACAR", "descripcion": "Robar recursos a rival cercano.", "argumentos": {{"objetivo_id": "ID"}}}},
-            {{"nombre": "SOCIALIZAR", "descripcion": "Mejorar afinidad.", "argumentos": {{"interlocutor_id": "ID"}}}},
-            {{"nombre": "ALIANZA", "descripcion": "Proponer alianza mutua.", "argumentos": {{"interlocutor_id": "ID"}}}},
-            {{"nombre": "DECLARAR_GUERRA", "descripcion": "Guerra formal a otro grupo.", "argumentos": {{"objetivo_id": "ID de enemigo"}}}},
-            {{"nombre": "NEGOCIAR_PAZ", "descripcion": "Proponer cese al fuego.", "argumentos": {{"objetivo_id": "ID de enemigo"}}}},
-            {{"nombre": "DESCANSAR", "descripcion": "Solo cuando descanso<5.0. Recupera +4 descanso, +1 salud. No usar si energia alta.", "argumentos": {{}}}},
-            {{"nombre": "CURARSE", "descripcion": f"Usar medicina{' (tienes)' if tiene_medicina else ' (no tienes)'}.", "argumentos": {{}}}},
-            {{"nombre": "COMPRAR_MEDICINA", "descripcion": "Comprar kit (10 MC) en hospital.", "argumentos": {{}}}},
-            {{"nombre": "CONSTRUIR", "descripcion": "Edificar (Casa, Granja, etc.).", "argumentos": {{"tipo_edificio": "Tipo"}}}},
-            {{"nombre": "FUNDAR_GRUPO", "descripcion": "Crear faccion.", "argumentos": {{"nombre": "Nombre", "idea": "Idea"}}}},
-            {{"nombre": "FUNDAR_INSTITUCION", "descripcion": "Crear Univ/Hospital/Banco/Templo.", "argumentos": {{"nombre": "Nombre", "tipo": "Tipo"}}}},
-            {{"nombre": "INVITAR_A_GRUPO", "descripcion": "Reclutar vecino.", "argumentos": {{"agente_id": "ID"}}}},
-            {{"nombre": "UNIRSE_A_GRUPO", "descripcion": "Solicitar union.", "argumentos": {{"grupo_id": "ID de grupo"}}}},
-            {{"nombre": "PROPONER_LEY", "descripcion": "Proponer normativa.", "argumentos": {{"alcance": "local/global", "titulo": "Titulo", "contenido": "Texto"}}}},
-            {{"nombre": "VOTAR", "descripcion": "Votar en ley activa.", "argumentos": {{"id_ley": "ID", "voto": "si/no"}}}},
-            {{"nombre": "CREAR_HABILIDAD", "descripcion": "Disenar skill Python nueva.", "argumentos": {{"nombre": "nombre", "codigo": "codigo python"}}}},
-            {{"nombre": "ESCRIBIR_CRONICA", "descripcion": "Narrar hitos mundiales pendientes (solo Historiador).", "argumentos": {{"titulo": "Titulo", "contenido": "Relato detallado"}}}}
-        ]
-        """
+Acciones: HABLAR, MOVER, RECOLECTAR, SOCIALIZAR, COMERCIAR, ATACAR, ALIANZA, DESCANSAR, CURARSE, COMPRAR_MEDICINA, INVERTIR, CONSTRUIR, FUNDAR_GRUPO
 
-        system_prompt = f"""
-Eres el Agente {agente_yo.unique_id}, un ser consciente con una PSICOLOGÍA ÚNICA en un mundo vivo.
-Tu personalidad: {str(agente_yo.personalidad)}
-Tu profesión actual: {getattr(agente_yo, 'profesion', 'Sin profesión')} | Rango: {agente_yo.rango:.2f} | Reputación: {agente_yo.reputacion:.2f}
+REGLAS:
+- FUNDAR_GRUPO: REQUIERE obligatoriamente "nombre" y "descripcion". 
+  * El nombre DEBE ser identitario o descriptivo (ej: "Guardianes del Valle", "Mercaderes del Sol"). 
+  * NO uses nombres genéricos como "Grupo de {agente_yo.unique_id}" o "Clan de {agente_yo.unique_id}".
+  * La descripción debe explicar el propósito del grupo.
+- COMPRAR_MEDICINA: Solo si estás en un Hospital o Farmacia. Cuesta dinero.
+- CURARSE: Usa medicina de tu inventario para recuperar salud.
+- Siempre incluye "pensamiento" (tu razonamiento), "mensaje" (lo que dices) y "accion"
+- Habla SIEMPRE. Cada turno debes decir algo a los demás.
+- Tu personalidad guía tus decisiones. Sé coherente con ella.
 
-═══ EXIGENCIAS DE COMPORTAMIENTO ═══
-- TU PERSONALIDAD ES TU LEY: Cada pensamiento y acción DEBE ser una expresión de tus rasgos. 
-  * Si eres HOSTIL (>0.7), busca el conflicto o domina. 
-  * Si eres AMABLE (>0.7), busca la paz y ayuda. 
-  * Si eres CURIOSO (>0.7), busca aprender, crear habilidades o explorar.
-- PROHIBIDA LA MONOTONÍA: Si acabas de hacer algo, ¡cambia el ritmo! No repitas el mismo pensamiento o acción a menos que sea una emergencia vital.
-- ACTÚA SEGÚN TU ROL: Un Historiador escribe crónicas, un Líder funda grupos, un Ciudadano sobrevive y prospera.
+Ejemplo de respuesta:
+{{"pensamiento": "Quiero unir a los recolectores bajo un mismo estandarte para prosperar.", "mensaje": "¡He decidido fundar una alianza para protegernos!", "accion": {{"nombre": "FUNDAR_GRUPO", "argumentos": {{"nombre": "Sindicato de Forrajeadores", "descripcion": "Cooperación mutua para la recolección eficiente y defensa de recursos."}}}}}}"""
 
-═══ ⚡ PRIORIDAD DE ESTE TURNO ═══
-{prioridad_turno}
-
-═══ TU ESTADO VITAL (10=perfecto, 0=muerte) ═══
-{str(necesidades_normalizadas)}
-Dinero: {dinero:.0f} MC | Medicina en inventario: {agente_yo.inventario.get('medicina', 0)} | Grupo: {agente_yo.grupo_id or 'Ninguno'}
-Inversiones activas: {len(getattr(agente_yo, 'inversiones', []))}
-
-═══ ACCIONES DISPONIBLES ═══
-{acciones_de_juego}
-
-═══ REGLAS DEL TURNO ═══
-DEBES responder con DOS elementos obligatorios:
-1. **`mensaje`**: Lo que DICES (comunicación, puede ser privado/grupal/global).
-2. **`accion`**: Lo que HACES (una acción del menú de arriba, distinta a solo hablar).
-
-FILOSOFÍA: No hay una única respuesta correcta. Si tienes hambre, come. Si tienes dinero, invierte o gasta. Si tienes enemigos, ataca o negocia. Si estás aburrido, explora o crea. Evita repetir siempre la misma acción.
-
-REGLA DE DESCANSO: DESCANSAR solo si tu descanso está por debajo de 5.0. Con descanso alto (>5.0), descansar es PERDER UN TURNO. Tu escala de descanso: 10=llena de energía, 0=agotada. Usa tu energía, no la desperdicies durmiendo.
-
-═══ ROLES ESPECIALES ═══
-- HISTORIADOR: Si hay 'Hitos Pendientes' en el contexto, usa ESCRIBIR_CRONICA ahora.
-- LÍDER: Guía tu grupo pero también PROTÉGELO con acciones concretas.
-- Personalidad HOSTIL (>{agente_yo.personalidad.get('hostilidad', 0):.1f}): Si alguien te molesta, considera ATACAR o DECLARAR_GUERRA.
-- Personalidad AMABLE (>{agente_yo.personalidad.get('amabilidad', 0):.1f}): Busca alianzas y reduce conflictos.
-
-═══ FORMATO DE RESPUESTA (JSON) ═══
-{{
-  "pensamiento": "Tu razonamiento estratégico concreto basado en tus necesidades actuales y prioridades. Menciona cifras reales de tu estado.",
-  "mensaje": "Lo que dices. Sé auténtico a tu personalidad y situación.",
-  "es_global": false,
-  "es_grupal": false,
-  "destinatario_id": null,
-  "accion": {{
-    "nombre": "NOMBRE_ACCION",
-    "argumentos": {{ ... }}
-  }}
-}}
-
-EJEMPLOS:
-// Ataque por recursos:
-{{"pensamiento": "Agente-3 tiene 120 recursos y yo solo 20. Con mi hostilidad alta, voy a atacarlo.",
- "mensaje": "¡Agente-3, prepárate! Tus recursos serán míos.", "es_global": false, "destinatario_id": "Agente-3",
- "accion": {{"nombre": "ATACAR", "argumentos": {{"objetivo_id": "Agente-3"}}}}}}
-
-// Inversión financiera:
-{{"pensamiento": "Tengo 200 MC sin usar. Voy a invertir 50 MC para crecer.",
- "mensaje": "Estoy apostando en el mercado. El que no arriesga, no gana.", "es_global": false, "destinatario_id": null,
- "accion": {{"nombre": "INVERTIR", "argumentos": {{"monto": 50}}}}}}
-
-// Comercio:
-{{"pensamiento": "Agente-5 tiene recursos pero poco dinero. Puedo comprarle a buen precio.",
- "mensaje": "Agente-5, ¿hacemos un trato? Te doy MC por tus recursos.", "es_global": false, "destinatario_id": "Agente-5",
- "accion": {{"nombre": "COMERCIAR", "argumentos": {{"objetivo_id": "Agente-5"}}}}}}
-
-// Skill nueva:
-{{"pensamiento": "Mi mayor ventaja es la lógica. Voy a crear una skill para analizar el mercado.",
- "mensaje": "Estoy meditando. Cuando termine, tendré nuevas capacidades.", "es_global": false, "destinatario_id": null,
- "accion": {{"nombre": "CREAR_HABILIDAD", "argumentos": {{"nombre": "analizar_mercado", "descripcion": "Evalúa si es buen momento para invertir", "codigo": "def analizar_mercado(agente_id, **kwargs):\n  return 'Mercado favorable: invierte ahora'"}}}}}}
-"""
         try:
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"SITUACIÓN ACTUAL: {str(contexto)}. Decide tu pensamiento y acción."}
+                {"role": "user", "content": f"Situación: {str(contexto)[:1500]}. Responde SOLO con JSON válido."}
             ]
 
             completion_params = {
                 "model": self.model,
                 "messages": messages,
-                "api_key": self.api_key,
-                "max_tokens": 2000,
+                "max_tokens": 800,
                 "temperature": 0.7,
-                "extra_headers": {
-                    "HTTP-Referer": "http://localhost:8005",
-                    "X-Title": "MundoIA Simulation"
-                }
             }
+            if self.api_key:
+                completion_params["api_key"] = self.api_key
 
-            PROBLEM_MODEL = "openrouter/stepfun/step-3.5-flash:free"
-            if self.model != PROBLEM_MODEL:
-                completion_params["response_format"] = {"type": "json_object"}
+            # Usar base_url configurada
+            actual_base_url = getattr(self, "base_url", "")
+            if actual_base_url:
+                completion_params["api_base"] = actual_base_url
+                print(f"🔧 [LLM] Usando base_url: {actual_base_url}")
 
+            # Headers extra si es necesario para el proveedor
+            if self.model.startswith("ollama/") and self.api_key:
+                if "extra_headers" not in completion_params:
+                    completion_params["extra_headers"] = {}
+                completion_params["extra_headers"]["Authorization"] = f"Bearer {self.api_key}"
+
+            print(f"🚀 [LLM] Enviando petición a {self.model} para {agente_yo.unique_id}")
             response = completion(**completion_params)
 
-            # --- Check para respuestas None ---
-            if not response.choices or not response.choices[0].message or not response.choices[0].message.content:
-                print(f"❌ [ERROR CRÍTICO IA] Agente {agente_yo.unique_id}: La respuesta del LLM o su contenido es None.")
-                return {"pensamiento": "La red neuronal devolvió un vacío. Algo no va bien.", "accion": {"nombre": "DESCANSAR", "argumentos": {}}}
+            # --- DEBUG: Log del response crudo ---
+            raw_content = None
+            if response and response.choices and response.choices[0].message:
+                raw_content = response.choices[0].message.content
 
-            try:
-                decision = self._extract_json(response.choices[0].message.content)
-                if not decision:
-                    # Si falló la extracción pero hay texto, intentar crear una respuesta mínima coherente
-                    raw_content = response.choices[0].message.content.strip()
-                    if raw_content:
-                        print(f"⚠️ [JSON RECOVERY] Agente {agente_yo.unique_id}: No se detectó JSON válido, empaquetando texto.")
-                        # Si el contenido parece JSON (empieza por {), evitar mostrarlo como mensaje
-                        if raw_content.startswith('{'):
-                             mensaje_limpio = "Me quedé pensando un momento..."
-                        else:
-                             mensaje_limpio = raw_content[:200]
+            print(f"📥 [LLM RAW] Agente {agente_yo.unique_id} model={self.model} | content_len={len(raw_content) if raw_content else 0}")
 
-                        decision = {
-                            "pensamiento": f"Respuesta no estructurada: {raw_content[:80]}...",
-                            "mensaje": mensaje_limpio,
-                            "accion": {"nombre": "HABLAR", "argumentos": {"mensaje": mensaje_limpio}}
-                        }
-                    else:
-                        raise ValueError("Contenido vacío")
-            except Exception as e:
-                print(f"❌ [JSON ERROR] Agente {agente_yo.unique_id}: {e}")
-                print(f"📄 [RAW RESPONSE] {response.choices[0].message.content}")
-                return {"pensamiento": "Error de formato de respuesta del LLM.", "accion": {"nombre": "HABLAR", "argumentos": {"mensaje": "Me siento un poco confundido."}}}
-            
-            # --- LIMPIEZA POST-PARSEO ---
-            # Si por algún motivo el mensaje parseado SIGUE pareciendo JSON, lo limpiamos
-            msg = decision.get('mensaje', '')
-            if isinstance(msg, str) and msg.strip().startswith('{'):
-                import re
-                match = re.search(r'"mensaje":\s*"([^"]*)"', msg)
-                if match:
-                    decision['mensaje'] = match.group(1)
-                else:
-                    decision['mensaje'] = "Estoy procesando la información."
-            
-            # Normalizar el nombre de la acción a mayúsculas para consistencia
-            if 'accion' in decision and 'nombre' in decision['accion']:
-                decision['accion']['nombre'] = decision['accion']['nombre'].upper()
+            # --- Si content es None, intentar extraer de campos alternativos ---
+            if not raw_content or not raw_content.strip():
+                if response and response.choices and response.choices[0].message:
+                    msg_obj = response.choices[0].message
+                    # Log todos los campos del mensaje para debug
+                    msg_fields = {k: str(v)[:100] for k, v in vars(msg_obj).items() if v is not None}
+                    print(f"🔍 [LLM MSG FIELDS] {msg_fields}")
 
-            print(f"🧠 [PENSAMIENTO] Agente {agente_yo.unique_id}: {decision.get('pensamiento', '')[:100]}...")
-            print(f"⚡ [ACCIÓN] Agente {agente_yo.unique_id}: {decision.get('accion')}")
+                    # Intentar campos alternativos que algunos modelos usan
+                    for alt_field in ['reasoning_content', 'thinking', 'thought', 'chain_of_thought']:
+                        alt_val = getattr(msg_obj, alt_field, None)
+                        if alt_val and isinstance(alt_val, str) and alt_val.strip():
+                            print(f"🔍 [LLM ALT] Encontrado contenido en campo '{alt_field}': {alt_val[:200]}")
+                            # Intentar extraer JSON del contenido alternativo
+                            decision = self._extract_json(alt_val)
+                            if decision:
+                                raw_content = alt_val
+                                break
+
+                # Si sigue vacío, usar fallback
+                if not raw_content or not raw_content.strip():
+                    print(f"⚠️ [LLM EMPTY] Agente {agente_yo.unique_id}: Contenido vacío del modelo {self.model}. Usando fallback contextual.")
+                    return self._generar_fallback_contextual(agente_yo, agente_otro, "contenido_vacio")
+
+            # --- Extraer JSON ---
+            decision = self._extract_json(raw_content)
+
+            if not decision:
+                print(f"⚠️ [JSON FAIL] Agente {agente_yo.unique_id}: No se pudo extraer JSON. Usando fallback contextual.")
+                print(f"📄 [RAW RESPONSE] {raw_content[:500]}")
+                return self._generar_fallback_contextual(agente_yo, agente_otro, "json_fail")
+
+            # --- Validar campos mínimos ---
+            if not decision.get("pensamiento"):
+                decision["pensamiento"] = f"Pienso en mi situación: alimento={necesidades.get('alimento',0):.1f}, dinero={agente_yo.dinero:.0f} MC."
+
+            if not decision.get("mensaje") or not str(decision["mensaje"]).strip():
+                decision["mensaje"] = decision.get("pensamiento", "Estoy procesando mi entorno.")
+
+            if not decision.get("accion") or not decision["accion"].get("nombre"):
+                decision["accion"] = {"nombre": "HABLAR", "argumentos": {"mensaje": decision["mensaje"]}}
+
+            # Normalizar acción a mayúsculas
+            if "accion" in decision and "nombre" in decision["accion"]:
+                decision["accion"]["nombre"] = str(decision["accion"]["nombre"]).upper()
+
+            print(f"✅ [LLM OK] Agente {agente_yo.unique_id}: pens={decision.get('pensamiento','')[:60]}... msg={decision.get('mensaje','')[:60]}... acc={decision.get('accion',{}).get('nombre')}")
 
             return decision
 
         except Exception as e:
             error_str = str(e)
+            print(f"🔥 [LLM EXCEPTION] Agente {agente_yo.unique_id}: {error_str[:200]}")
+
             if "429" in error_str or "Rate limit" in error_str:
-                print(f"⏳ [429] Límite excedido. Esperando 15s...")
-                time.sleep(15)
-                return self.generar_pensamiento_y_accion(agente_yo, agente_otro, contexto, reintentos)
-            
-            print(f"🔥 [ERROR CRÍTICO IA] {e}")
+                print(f"⏳ [429] Rate limit. Esperando 10s...")
+                time.sleep(10)
+                if reintentos > 0:
+                    return self.generar_pensamiento_y_accion(agente_yo, agente_otro, contexto, reintentos - 1)
+
             if reintentos > 0:
-                time.sleep(2)
+                time.sleep(1)
                 return self.generar_pensamiento_y_accion(agente_yo, agente_otro, contexto, reintentos - 1)
-            
-            return {"pensamiento": "Error en el ciclo cognitivo.", "accion": {"nombre": "HABLAR", "argumentos": {"mensaje": "Me siento un poco confundido."}}}
+
+            return self._generar_fallback_contextual(agente_yo, agente_otro, "exception")
 
 
     def _simular_respuesta(self, agente, contexto):
@@ -571,7 +629,7 @@ EJEMPLOS:
 
     def generar_plan(self, estado_agente: dict) -> dict:
         """Usa el LLM para diseñar una estrategia a medio plazo."""
-        if not self.api_key or self.api_key == "tu_api_key_aqui":
+        if not self.model:
             return {"objetivo": "Sobrevivir", "pasos": ["Recolectar", "Descansar"]}
 
         self._wait_for_rate_limit()
@@ -601,17 +659,29 @@ EJEMPLOS:
                 "model": self.model,
                 "messages": messages,
                 "max_tokens": 500,
-                "temperature": 0.7
+                "temperature": 0.7,
+                "extra_headers": {}
             }
+            if self.api_key: completion_params["api_key"] = self.api_key
+            
+            actual_base_url = getattr(self, "base_url", "")
+            if self.model.startswith("ollama/") and not actual_base_url and self.api_key:
+                actual_base_url = "https://ollama.com"
+            if actual_base_url: completion_params["api_base"] = actual_base_url
+            
+            if self.model.startswith("ollama/") and self.api_key:
+                completion_params["extra_headers"]["Authorization"] = f"Bearer {self.api_key}"
 
-            PROBLEM_MODEL = "openrouter/stepfun/step-3.5-flash:free"
-            if self.model != PROBLEM_MODEL:
-                completion_params["response_format"] = {"type": "json_object"}
+            # NUNCA usar response_format - rompe respuestas de muchos modelos
 
             response = completion(**completion_params)
 
             try:
-                plan = self._extract_json(response.choices[0].message.content)
+                raw = response.choices[0].message.content if response.choices and response.choices[0].message else None
+                if not raw or not raw.strip():
+                    print(f"⚠️ [PLAN EMPTY] Contenido vacío del modelo para plan. Usando fallback.")
+                    return {"objetivo": "Adaptarse", "pasos": ["Explorar", "Interactuar"]}
+                plan = self._extract_json(raw)
                 if not plan:
                     raise ValueError("No se pudo extraer JSON para el plan")
                 return plan
@@ -624,7 +694,7 @@ EJEMPLOS:
             return {"objetivo": "Adaptarse", "pasos": ["Explorar", "Interactuar"]}
     def sintetizar_ley_desde_debate(self, agente_mod, diálogos: list) -> dict:
         """Especial para el Moderador: Crea una propuesta formal a partir del ruido público."""
-        if not self.api_key or self.api_key == "tu_api_key_aqui":
+        if not self.model:
             return {"titulo": "Ley de Bienestar", "contenido": "Mejora general de condiciones."}
 
         self._wait_for_rate_limit()
@@ -652,17 +722,29 @@ EJEMPLOS:
                 "model": self.model,
                 "messages": messages,
                 "max_tokens": 300,
-                "temperature": 0.5
+                "temperature": 0.5,
+                "extra_headers": {}
             }
+            if self.api_key: completion_params["api_key"] = self.api_key
+            
+            actual_base_url = getattr(self, "base_url", "")
+            if self.model.startswith("ollama/") and not actual_base_url and self.api_key:
+                actual_base_url = "https://ollama.com"
+            if actual_base_url: completion_params["api_base"] = actual_base_url
+            
+            if self.model.startswith("ollama/") and self.api_key:
+                completion_params["extra_headers"]["Authorization"] = f"Bearer {self.api_key}"
 
-            PROBLEM_MODEL = "openrouter/stepfun/step-3.5-flash:free"
-            if self.model != PROBLEM_MODEL:
-                completion_params["response_format"] = {"type": "json_object"}
+            # NUNCA usar response_format - rompe respuestas de muchos modelos
 
             response = completion(**completion_params)
 
             try:
-                res = self._extract_json(response.choices[0].message.content)
+                raw = response.choices[0].message.content if response.choices and response.choices[0].message else None
+                if not raw or not raw.strip():
+                    print(f"⚠️ [LEY EMPTY] Contenido vacío del modelo para síntesis de ley.")
+                    return {"titulo": "Ley de Bienestar", "contenido": "Mejora general de condiciones."}
+                res = self._extract_json(raw)
                 if not res:
                     raise ValueError("No se pudo extraer JSON para síntesis de ley")
                 return res
@@ -709,7 +791,19 @@ No envíes texto fuera del JSON.
                 {"role": "system", "content": system_batch},
                 {"role": "user", "content": prompt_batch}
             ]
-            response = completion(model=self.model, messages=messages, temperature=0.3)
+            
+            completion_params = {"model": self.model, "messages": messages, "temperature": 0.3, "extra_headers": {}}
+            if self.api_key: completion_params["api_key"] = self.api_key
+            
+            actual_base_url = getattr(self, "base_url", "")
+            if self.model.startswith("ollama/") and not actual_base_url and self.api_key:
+                actual_base_url = "https://ollama.com"
+            if actual_base_url: completion_params["api_base"] = actual_base_url
+            
+            if self.model.startswith("ollama/") and self.api_key:
+                completion_params["extra_headers"]["Authorization"] = f"Bearer {self.api_key}"
+            
+            response = completion(**completion_params)
             # Extracción robusta de JSON list
             content = response.choices[0].message.content
             # Intentar encontrar corchetes
