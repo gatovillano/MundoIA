@@ -1,5 +1,5 @@
 {
-    "model": "ollama/cogito-2.1:671b",
-    "api_key": "b2147ce5a75842b48ca6cee762c9965d.c8WoUA34TkbAxMc0F-OUs3rK",
+    "model": "ollama/deepseek-v3.1:671b",
+    "api_key": "dc3992abd4d44fb0a53fa56cce8fc38c.LlaviIfF_Kjh6b4YA5KpASll",
     "base_url": "https://ollama.com"
 }

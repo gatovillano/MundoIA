@@ -16,8 +16,12 @@ import {
     Brain,
     Landmark,
     Activity,
-    MessageCircle
+    MessageCircle,
+    Music,
+    VolumeX
 } from "lucide-react";
+
+import { useState, useRef } from "react";
 
 interface MainSidebarProps {
     viewMode: "map" | "3d" | "graph";
@@ -38,6 +42,45 @@ export default function MainSidebar({
     toggleThoughts,
     onControl
 }: MainSidebarProps) {
+    const [isPlayingMusic, setIsPlayingMusic] = useState(false);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    // --- PLAYLIST DE MÚSICA ---
+    // Edita esta lista con los nombres de los archivos que pongas en frontend/public/music/
+    const PLAYLIST = [
+        "/music/bgm1.mp3",
+        "/music/bgm2.mp3",
+        "/music/bgm3.mp3"
+    ];
+
+    const playRandomTrack = () => {
+        if (!audioRef.current) return;
+        const randomTrack = PLAYLIST[Math.floor(Math.random() * PLAYLIST.length)];
+        audioRef.current.src = randomTrack;
+        audioRef.current.play().catch(e => console.error("Error reproduciendo música:", e));
+    };
+
+    const toggleMusic = () => {
+        if (!audioRef.current) return;
+        if (isPlayingMusic) {
+            audioRef.current.pause();
+        } else {
+            // Si es la primera vez que inicia o no tiene 'src' definida
+            if (!audioRef.current.getAttribute("src")) {
+                playRandomTrack();
+            } else {
+                audioRef.current.play().catch(e => console.error("Error reproduciendo música:", e));
+            }
+        }
+        setIsPlayingMusic(!isPlayingMusic);
+    };
+
+    const handleSongEnd = () => {
+        if (isPlayingMusic) {
+            playRandomTrack();
+        }
+    };
+
     
     const navItems = [
         { id: "map", icon: MapIcon, label: "Mapa 2D", type: "view" },
@@ -57,7 +100,7 @@ export default function MainSidebar({
     ];
 
     return (
-        <aside className="w-10 sm:w-12 md:w-16 lg:w-20 bg-black/40 backdrop-blur-xl border-r border-white/5 flex flex-col items-center py-1.5 sm:py-2 md:py-3 gap-0.5 sm:gap-1 md:gap-1.5 z-[60] overflow-y-auto max-h-screen scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+        <aside className="w-10 sm:w-12 md:w-16 lg:w-20 bg-black/40 backdrop-blur-xl border-r border-white/5 flex flex-col items-center py-1 sm:py-1.5 md:py-2 gap-0.5 sm:gap-1 md:gap-1.5 z-[60]">
             <div className="flex flex-col items-center gap-0.5 mb-1 shrink-0">
                 <div className="w-5 h-5 sm:w-6 sm:h-6 md:w-8 md:h-8 rounded-lg bg-gradient-to-br from-[#7c4dff] to-[#00e676] flex items-center justify-center shadow-[0_0_15px_rgba(124,77,255,0.3)]">
                     <span className="text-black font-black text-[7px] sm:text-[8px] md:text-[10px]">MIA</span>
@@ -109,30 +152,45 @@ export default function MainSidebar({
                     <ControlButton onClick={() => onControl("pause")} icon={Pause} color="text-yellow-500" />
                     <ControlButton onClick={() => onControl("reset")} icon={RefreshCw} color="text-red-500" />
                 </div>
+                
+                {/* Music Control */}
+                <button
+                    onClick={toggleMusic}
+                    className={`p-1 mt-1 sm:p-1.5 rounded-lg border transition-all duration-300 shadow-lg flex flex-col items-center ${isPlayingMusic ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-400' : 'bg-white/5 border-white/10 text-white/30 hover:text-white/60'}`}
+                    title={isPlayingMusic ? 'Pausar Música' : 'Reproducir Música'}
+                >
+                    {isPlayingMusic ? <Music className="w-3 h-3 sm:w-3.5 sm:h-3.5 animate-pulse" /> : <VolumeX className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
+                </button>
             </div>
+
+            {/* Hidden Audio Element */}
+            <audio ref={audioRef} onEnded={handleSongEnd} />
         </aside>
     );
 }
 
 function NavButton({ active, onClick, icon: Icon, label, color }: any) {
     return (
-        <button
-            onClick={onClick}
-            className={`p-1 sm:p-1.5 md:p-2 rounded-lg sm:rounded-xl transition-all relative group ${active ? 'bg-white/10 text-white shadow-[0_0_15px_rgba(255,255,255,0.05)]' : 'hover:bg-white/5 text-gray-500'}`}
-            title={label}
-        >
-            <Icon className={`w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4 ${active ? (color || 'text-[#00e676]') : ''}`} />
-            {active && (
-                <motion.div 
-                    layoutId="sidebar-active"
-                    className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-3 sm:h-4 md:h-5 bg-[#00e676] rounded-r-full shadow-[0_0_8px_#00e676]"
-                />
-            )}
-            
-            <div className="absolute left-full ml-1.5 top-1/2 -translate-y-1/2 px-1 py-0.5 bg-black border border-white/10 rounded text-[6px] sm:text-[7px] md:text-[8px] font-bold uppercase tracking-wide sm:tracking-wider text-white opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-normal max-w-[100px] sm:max-w-[120px] z-50">
+        <div className="relative">
+            <button
+                onClick={onClick}
+                className={`p-1 sm:p-1.5 md:p-2 rounded-lg sm:rounded-xl transition-all group ${active ? 'bg-white/10 text-white shadow-[0_0_15px_rgba(255,255,255,0.05)]' : 'hover:bg-white/5 text-gray-500'}`}
+                title={label}
+            >
+                <Icon className={`w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4 ${active ? (color || 'text-[#00e676]') : ''}`} />
+                {active && (
+                    <motion.div
+                        layoutId="sidebar-active"
+                        className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-3 sm:h-4 md:h-5 bg-[#00e676] rounded-r-full shadow-[0_0_8px_#00e676]"
+                    />
+                )}
+            </button>
+
+            {/* Tooltip posicionado fuera del sidebar */}
+            <div className="absolute left-full ml-1.5 top-1/2 -translate-y-1/2 px-1 py-0.5 bg-black border border-white/10 rounded text-[6px] sm:text-[7px] md:text-[8px] font-bold uppercase tracking-wide sm:tracking-wider text-white opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-[200]">
                 {label}
             </div>
-        </button>
+        </div>
     );
 }
 

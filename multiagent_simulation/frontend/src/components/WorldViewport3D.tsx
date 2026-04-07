@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useRef, useMemo, useState, Suspense } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import React, { useRef, useMemo, useState, Suspense, useEffect } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, Stars, Environment, Float, Html, QuadraticBezierLine } from "@react-three/drei";
 import useGameStore from "@/store/useGameStore";
 import * as THREE from "three";
@@ -24,33 +24,28 @@ function getSphericalPosition(x: number, y: number, size: number, radiusOffset: 
     );
 }
 
-// MONTAÑA DETALLADA (con rocas y glaciar)
-function Mountain({ position, rotation, scale = 1 }: any) {
+// MONTAÑA DETALLADA (más baja, sin base extra)
+function Mountain({ position, rotation, scale = 0.8 }: any) {
     return (
         <group position={position} quaternion={rotation} scale={[scale, scale, scale]}>
-            {/* Base rocosa */}
-            <mesh position={[0, 0.15, 0]} castShadow>
-                <coneGeometry args={[0.6, 0.5, 6]} />
-                <meshStandardMaterial color="#3f3f46" flatShading roughness={1} />
-            </mesh>
-            {/* Cuerpo principal */}
-            <mesh position={[0, 0.45, 0]} castShadow>
-                <coneGeometry args={[0.45, 0.7, 5]} />
-                <meshStandardMaterial color="#52525b" flatShading roughness={0.9} />
+            {/* Cuerpo principal (ahora empieza desde la base) */}
+            <mesh position={[0, 0.2, 0]} castShadow>
+                <coneGeometry args={[0.6, 0.45, 5]} />
+                <meshStandardMaterial color="#475569" flatShading roughness={0.9} />
             </mesh>
             {/* Cumbre nevada */}
-            <mesh position={[0, 0.75, 0]}>
-                <coneGeometry args={[0.25, 0.4, 5]} />
-                <meshStandardMaterial color="#fafafa" flatShading emissive="#ffffff" emissiveIntensity={0.3} />
+            <mesh position={[0, 0.35, 0]}>
+                <coneGeometry args={[0.3, 0.2, 5]} />
+                <meshStandardMaterial color="#f8fafc" flatShading emissive="#ffffff" emissiveIntensity={0.2} />
             </mesh>
-            {/* Rocas adicionales */}
-            <mesh position={[0.3, 0.05, 0]} castShadow>
+            {/* Rocas adicionales para irregularidad */}
+            <mesh position={[0.3, 0.05, 0.05]} castShadow>
                 <dodecahedronGeometry args={[0.15]} />
-                <meshStandardMaterial color="#27272a" roughness={1} />
+                <meshStandardMaterial color="#1e293b" roughness={1} />
             </mesh>
             <mesh position={[-0.25, 0.05, 0.2]} castShadow>
                 <dodecahedronGeometry args={[0.12]} />
-                <meshStandardMaterial color="#27272a" roughness={1} />
+                <meshStandardMaterial color="#1e293b" roughness={1} />
             </mesh>
         </group>
     );
@@ -608,6 +603,47 @@ const WebGLFallback = () => (
     </div>
 );
 
+const PostProcessing = () => {
+    const gl = useThree((state) => state.gl);
+    const [ready, setReady] = useState(false);
+
+    useEffect(() => {
+        let frame: number;
+        let mounted = true;
+
+        const checkGl = () => {
+            if (!mounted) return;
+            try {
+                if (gl && gl.getContext()) {
+                    const attributes = gl.getContext().getContextAttributes();
+                    if (attributes && attributes.alpha !== undefined) {
+                        setReady(true);
+                        return;
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
+            frame = requestAnimationFrame(checkGl);
+        };
+
+        frame = requestAnimationFrame(checkGl);
+        return () => {
+            mounted = false;
+            cancelAnimationFrame(frame);
+        };
+    }, [gl]);
+
+    if (!ready) return null;
+
+    return (
+        <EffectComposer multisampling={0} enableNormalPass={false}>
+            <Bloom intensity={1.2} luminanceThreshold={0.5} radius={0.8} />
+            <Vignette darkness={0.6} />
+        </EffectComposer>
+    );
+};
+
 export default function WorldViewport3D() {
     const [showLinks, setShowLinks] = useState(true);
 
@@ -619,7 +655,7 @@ export default function WorldViewport3D() {
                         Loading 3D View...
                     </div>
                 }>
-                    <Canvas camera={{ position: [30, 20, 30], fov: 38 }} shadows>
+                    <Canvas camera={{ position: [30, 20, 30], fov: 38 }} shadows gl={{ alpha: true, stencil: false }}>
                         <Stars radius={160} count={3000} factor={5} fade />
                         <ambientLight intensity={0.7} />
                         <directionalLight position={[60, 50, 40]} intensity={2.5} castShadow shadow-mapSize={[1024, 1024]} />
@@ -627,10 +663,7 @@ export default function WorldViewport3D() {
                         <Planet showLinks={showLinks} />
                         <OrbitControls enableDamping minDistance={15} maxDistance={60} />
                         <Environment preset="city" />
-                        <EffectComposer>
-                            <Bloom intensity={1.2} luminanceThreshold={0.5} radius={0.8} />
-                            <Vignette darkness={0.6} />
-                        </EffectComposer>
+                        <PostProcessing />
                     </Canvas>
 
                     <style jsx>{`

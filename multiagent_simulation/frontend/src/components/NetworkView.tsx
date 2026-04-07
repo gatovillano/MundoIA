@@ -149,13 +149,13 @@ export default function NetworkView() {
                         const bg = enter.append("g").attr("class", "bubble-g");
                         bg.append("rect").attr("rx", 6).attr("fill", "rgba(10, 11, 16, 0.95)").attr("stroke", "#7c4dff").attr("stroke-width", 1.5).attr("filter", "url(#neon-glow)");
                         bg.append("path").attr("d", `M -5 0 L 5 0 L 0 5 Z`).attr("fill", "#7c4dff");
-                        bg.append("text").attr("text-anchor", "middle").attr("font-size", "10px").attr("fill", "#fff").attr("font-family", "monospace");
+                        bg.append("text").attr("text-anchor", "middle").attr("font-size", "8px").attr("fill", "#fff").attr("font-family", "monospace");
                         return bg;
                     }
                 ).each(function(d: any) {
                     const text = d.text;
                     const maxWidth = 120;
-                    const charsPerLine = Math.floor(maxWidth / 7);
+                    const charsPerLine = Math.floor(maxWidth / 5.5);
                     const words = text.split(/\s+/);
                     const lines: string[] = [];
                     let currentLine = "";
@@ -165,9 +165,9 @@ export default function NetworkView() {
                     });
                     lines.push(currentLine.trim());
 
-                    const lineHeight = 12;
+                    const lineHeight = 10;
                     const bubblePadding = 10;
-                    const bubbleWidth = (Math.max(...lines.map(l => l.length)) * 7) + 20;
+                    const bubbleWidth = (Math.max(...lines.map(l => l.length)) * 5.5) + 20;
                     const bubbleHeight = (lines.length * lineHeight) + bubblePadding;
 
                     const g = d3.select(this);

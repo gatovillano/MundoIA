@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Book, X, History, User, Calendar } from 'lucide-react';
 import useGameStore from '@/store/useGameStore';
@@ -14,7 +14,7 @@ export default function SocietyChronicle({ isOpen, onClose }: SocietyChroniclePr
     const { historia } = useGameStore();
     
     // Debug: mostrar datos crudos cada vez que cambia
-    React.useEffect(() => {
+    useEffect(() => {
         if (isOpen) {
             console.log("=== CRONICAS DEBUG ===");
             console.log("historia:", historia);

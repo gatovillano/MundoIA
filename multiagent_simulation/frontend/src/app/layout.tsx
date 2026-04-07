@@ -3,6 +3,7 @@ import { Outfit, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import BackgroundEffects from "@/components/BackgroundEffects";
 import SoundManager from "@/components/SoundManager";
+import MobileSettings from "@/components/MobileSettings";
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -33,6 +34,7 @@ export default function RootLayout({
       >
         <BackgroundEffects />
         <SoundManager />
+        <MobileSettings />
         {children}
       </body>
     </html>

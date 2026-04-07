@@ -1,12 +1,12 @@
 {
   "expo": {
-    "name": "android_expo",
-    "slug": "android_expo",
+    "name": "MundoIA",
+    "slug": "mundoia-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "androidexpo",
-    "userInterfaceStyle": "automatic",
+    "scheme": "mundoia",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true

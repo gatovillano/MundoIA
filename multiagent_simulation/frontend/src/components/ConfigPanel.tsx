@@ -38,7 +38,7 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
         setIsLoadingModels(true);
         setStatus({ type: 'loading', msg: 'Cargando...' });
         try {
-            const host = window.location.hostname === 'localhost' ? 'localhost:8005' : 'api-mundoia.cuerpolibre.cl';
+            const host = window.location.hostname === 'localhost' ? 'api-mundoia.cuerpolibre.cl' : 'api-mundoia.cuerpolibre.cl';
             const protocol = window.location.protocol;
             const url = new URL(`${protocol}//${host}/config/models/${prov}`);
             if (currentApiKey) url.searchParams.append('api_key', currentApiKey);
@@ -64,7 +64,7 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
 
     const fetchCurrentConfig = async () => {
         try {
-            const host = window.location.hostname === 'localhost' ? 'localhost:8005' : 'api-mundoia.cuerpolibre.cl';
+            const host = window.location.hostname === 'localhost' ? 'api-mundoia.cuerpolibre.cl' : 'api-mundoia.cuerpolibre.cl';
             const protocol = window.location.protocol;
             const res = await fetch(`${protocol}//${host}/config/ai`);
             if (res.ok) {
@@ -106,7 +106,7 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
     const handleSave = async () => {
         setStatus({ type: 'loading', msg: 'Sincronizando...' });
         try {
-            const host = window.location.hostname === 'localhost' ? 'localhost:8005' : 'api-mundoia.cuerpolibre.cl';
+            const host = window.location.hostname === 'localhost' ? 'api-mundoia.cuerpolibre.cl' : 'api-mundoia.cuerpolibre.cl';
             const protocol = window.location.protocol;
 
             let finalModel = selectedModel || searchTerm; // Try searchTerm as custom input if selected is missing

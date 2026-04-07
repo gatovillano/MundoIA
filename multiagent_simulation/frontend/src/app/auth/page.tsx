@@ -38,7 +38,7 @@ export default function AuthPage() {
     } 
     // Si estamos en desarrollo local (PC o Capacitor/Expo)
     else if (window.location.hostname === 'localhost' || window.location.hostname.match(/^\d+\.\d+\.\d+\.\d+$/) || window.location.hostname.includes('capacitor')) {
-      host = localStorage.getItem('MUNDOIA_API_HOST') || 'localhost:8005';
+      host = localStorage.getItem('MUNDOIA_API_HOST') || 'api-mundoia.cuerpolibre.cl';
     }
 
     const url = isLogin ? '/auth/login' : '/auth/register';

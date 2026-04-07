@@ -47,33 +47,39 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
         if (window.location.hostname === "mundoia.cuerpolibre.cl") {
             host = "api-mundoia.cuerpolibre.cl";
         } else if (window.location.hostname === "localhost" || window.location.hostname.includes("capacitor")) {
-            host = localStorage.getItem("MUNDOIA_API_HOST") || "localhost:8005";
+            host = localStorage.getItem("MUNDOIA_API_HOST") || "api-mundoia.cuerpolibre.cl";
         }
         return `${protocol}//${host}`;
     }, []);
 
-    // Cargar lista de agentes
-    useEffect(() => {
-        const fetchAgents = async () => {
-            try {
-                const res = await fetch(`${getApiHost()}/chat/${userId}/agents`);
-                if (res.ok) {
-                    const data = await res.json();
-                    const aliveAgents = data.agents.filter((a: AgentChatInfo) => a.esta_vivo);
-                    setChatAgents(aliveAgents);
-                    // Seleccionar automáticamente el primer agente si no hay ninguno seleccionado
-                    if (aliveAgents.length > 0 && !selectedAgentId) {
-                        setSelectedAgentId(aliveAgents[0].id);
-                    }
-                }
-            } catch (e) {
-                console.error("Error fetching chat agents:", e);
-            } finally {
-                setIsLoadingAgents(false);
-            }
-        };
-        fetchAgents();
-    }, [userId, getApiHost]);
+     // Cargar lista de agentes
+     useEffect(() => {
+         const fetchAgents = async () => {
+             try {
+                 const url = `${getApiHost()}/chat/${userId}/agents`;
+                 console.log('🔍 [ChatPanel] Fetching agents from:', url);
+                 const res = await fetch(url);
+                 console.log('📥 [ChatPanel] Response status:', res.status, res.ok);
+                 if (res.ok) {
+                     const data = await res.json();
+                     console.log('✅ [ChatPanel] Agents data:', data);
+                     const aliveAgents = data.agents.filter((a: AgentChatInfo) => a.esta_vivo);
+                     console.log('🧬 [ChatPanel] Alive agents count:', aliveAgents.length);
+                     setChatAgents(aliveAgents);
+                 } else {
+                     const errText = await res.text();
+                     console.error('❌ [ChatPanel] Error response:', res.status, errText);
+                     setChatAgents([]);
+                 }
+             } catch (e) {
+                 console.error("🔥 [ChatPanel] Fetch exception:", e);
+                 setChatAgents([]);
+             } finally {
+                 setIsLoadingAgents(false);
+             }
+         };
+         fetchAgents();
+     }, [userId, getApiHost]);
 
     // Actualizar agentes periódicamente cuando agents cambia en el store
     useEffect(() => {
@@ -85,10 +91,6 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                         const data = await res.json();
                         const aliveAgents = data.agents.filter((a: AgentChatInfo) => a.esta_vivo);
                         setChatAgents(aliveAgents);
-                        // Si hay agentes pero no hay seleccionado, seleccionar el primero
-                        if (aliveAgents.length > 0 && !selectedAgentId) {
-                            setSelectedAgentId(aliveAgents[0].id);
-                        }
                     }
                 } catch (e) { /* silent */ }
             };

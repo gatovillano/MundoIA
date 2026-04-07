@@ -55,4 +55,61 @@ export interface Agent {
     };
     color?: string;
     is_possessed?: boolean;
-}
+    creencias?: {
+        [proposicion: string]: {
+            proposicion: string;
+            probabilidad: number;
+            fuerza: number;
+            fuente: string;
+            ultimo_update: number;
+        }
+    };
+    deseos?: {
+        deseos: {
+            [tipo: string]: {
+                tipo: string;
+                intensidad: number;
+                estabilidad: number;
+            }
+        };
+        pesos: { [tipo: string]: number };
+    };
+     intenciones?: {
+         plan_actual: {
+             acciones: {
+                 nombre: string;
+                 objetivo?: string;
+                 argumentos: any;
+                 costo_estimado: number;
+                 probabilidad_exito: number;
+                 meta: string;
+             }[];
+             meta: string;
+             prioridad: number;
+             tiempo_maximo: number;
+             tiempo_actual: number;
+         } | null;
+         historial_planes: any[];
+     };
+     alma?: {
+         arquetipo: string;
+         nombre_propio: string;
+         tono_comunicativo: string;
+         valores: {
+             [key: string]: {
+                 nombre: string;
+                 peso: number;
+                 definicion_propia: string;
+             };
+         };
+         tabues: string[];
+         narrativa_personal: string;
+         traumas: any[];
+         epifanias: any[];
+         triunfos: any[];
+         relacion_con_arquitecto: string;
+         filosofia_existencial: string;
+         nivel_conciencia: number;
+         capacidad_reflexion: number;
+     };
+ }

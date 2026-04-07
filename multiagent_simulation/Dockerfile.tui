@@ -1,0 +1,28 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar requirements e instalar
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Instalar Textual para la TUI
+RUN pip install --no-cache-dir textual
+
+# Copiar el código del proyecto
+COPY . .
+
+# Crear directorio para memoria
+
+# Exponer puerto para la API
+EXPOSE 8005
+
+# Comando por defecto (la API)
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8005"]

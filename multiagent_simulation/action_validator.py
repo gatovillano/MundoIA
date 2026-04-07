@@ -78,14 +78,14 @@ def validar_accion(agente, accion_nombre, accion_data, modelo):
         return True, ""
 
     elif accion_nombre == "CONSTRUIR":
-        tipo_edificio = argumentos.get("tipo_edificio")
+        tipo_edificio = argumentos.get("tipo") or argumentos.get("tipo_edificio")
         if not tipo_edificio:
-            return False, "Falta tipo_edificio para construir."
-        
-        # Validación básica de recursos (se repite en el modelo pero aquí evitamos el intento)
+            return False, "Falta el tipo de edificio para construir (ej: Granja, Hospital)."
+
+        # El edificio más barato es el Centro de Descanso (20 MC, 15 rec)
         if agente.dinero < 20 or agente.recursos < 15:
-            return False, "Recursos insuficientes para construcción básica."
-            
+            return False, f"Recursos insuficientes para construcción básica (mínimo 20 MC y 15 rec). Tienes: {agente.dinero:.1f} MC, {agente.recursos:.1f} rec."
+
         return True, ""
 
     elif accion_nombre == "CURARSE":
@@ -96,6 +96,24 @@ def validar_accion(agente, accion_nombre, accion_data, modelo):
     elif accion_nombre == "COMER":
         if agente.inventario.get("comida", 0) <= 0:
             return False, "No tienes comida en el inventario."
+        return True, ""
+
+    elif accion_nombre == "ESTUDIAR":
+        # Validar ubicación: Universidad
+        tile = modelo.mapa[agente.x][agente.y]
+        tiene_uni = any(b.get("tipo") == "Universidad" for b in tile.buildings)
+        if not tiene_uni:
+            return False, "Debes estar en una Universidad (edificio) para usar la acción ESTUDIAR."
+        return True, ""
+
+    elif accion_nombre == "EXPLORAR":
+        if agente.necesidades["descanso"] < 2.0:
+            return False, "Estás demasiado agotado para explorar."
+        return True, ""
+
+    elif accion_nombre == "INVESTIGAR":
+        if agente.necesidades["alimento"] < 3.0:
+            return False, "Tienes demasiado hambre para concentrarte en investigar."
         return True, ""
 
     return True, "" # Acciones genéricas como HABLAR, MOVER, RECOLECTAR, DESCANSAR son siempre válidas

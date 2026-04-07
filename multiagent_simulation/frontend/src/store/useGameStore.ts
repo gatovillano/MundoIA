@@ -30,6 +30,8 @@ interface GameState {
     agentePoseidoId: string | null;
     toggleThoughts: () => void;
     selectAgent: (agentId: string | null) => void;
+    poseerAgente: (agentId: string) => Promise<boolean>;
+    liberarAgente: () => Promise<boolean>;
     sendArchitectMessage: (message: string, agentId?: string) => Promise<string>;
     sendGodAction: (type: string, params: any) => Promise<boolean>;
     socket: WebSocket | null;
@@ -41,12 +43,17 @@ interface GameState {
     logout: () => void;
     connect: () => void;
     disconnect: () => void;
+    apiHost: string;
+    setApiHost: (host: string) => void;
 }
 
 interface PersistedState {
     isAuthenticated: boolean;
     userId: string | null;
     username: string | null;
+    mapa: any[][];
+    lore: string;
+    apiHost: string;
 }
 
 const customStorage: PersistStorage<GameState> = {
@@ -59,12 +66,15 @@ const customStorage: PersistStorage<GameState> = {
     },
     setItem: (name, value) => {
         try {
-            // Solo persistir campos de autenticación para evitar saturar localStorage
+            // Persistir campos de autenticación, el mapa y el lore
             const stateToPersist = {
                 state: {
                     isAuthenticated: value.state.isAuthenticated,
                     userId: value.state.userId,
-                    username: value.state.username
+                    username: value.state.username,
+                    mapa: value.state.mapa,
+                    lore: value.state.lore,
+                    apiHost: value.state.apiHost
                 },
                 version: value.version
             };
@@ -109,6 +119,17 @@ const useGameStore = create(
             userId: null,
             isAuthenticated: false,
             username: null,
+            apiHost: 'api-mundoia.cuerpolibre.cl',
+
+            setApiHost: (host) => {
+                set({ apiHost: host });
+                // Reconnect if already connected
+                if (get().socket) {
+                    get().disconnect();
+                    setTimeout(() => get().connect(), 500);
+                }
+            },
+
 
             login: (userId, username) => set({ isAuthenticated: true, userId, username }),
             logout: () => {
@@ -119,6 +140,18 @@ const useGameStore = create(
             toggleThoughts: () => set((state) => ({ showThoughts: !state.showThoughts })),
 
             selectAgent: (agentId) => set({ selectedAgentId: agentId }),
+
+            poseerAgente: async (agentId) => {
+                const success = await get().sendGodAction("POSSESS_AGENT", { agent_id: agentId });
+                if (success) set({ agentePoseidoId: agentId });
+                return success;
+            },
+
+            liberarAgente: async () => {
+                const success = await get().sendGodAction("POSSESS_AGENT", { agent_id: null });
+                if (success) set({ agentePoseidoId: null });
+                return success;
+            },
 
             connect: () => {
                 const { userId, socket } = get();
@@ -133,10 +166,7 @@ const useGameStore = create(
                 } 
                 // Si estamos en desarrollo local (PC o Capacitor)
                 else if (window.location.hostname === 'localhost' || window.location.hostname.includes('capacitor')) {
-                    // Si el usuario ya definió una IP en el localStorage (para celular), la usamos.
-                    // Si no, por defecto usamos localhost:8005 para desarrollo en PC.
-                    const customHost = localStorage.getItem('MUNDOIA_API_HOST') || 'localhost:8005';
-                    host = customHost;
+                    host = get().apiHost || 'api-mundoia.cuerpolibre.cl';
                 }
 
                 const wsUrl = `${protocol}//${host}/ws/${userId}`;
@@ -173,6 +203,8 @@ const useGameStore = create(
                             historia: { historiador_id: null, entradas: [], num_entradas: 0 },
                             step: 0,
                             selectedAgentId: null,
+                            mapa: [],
+                            lore: "",
                         });
                         return;
                     }
@@ -181,7 +213,6 @@ const useGameStore = create(
                             step: data.step,
                             economy: data.economy,
                             weather: data.weather,
-                            lore: data.lore || "",
                             civilizaciones: data.civilizaciones || {},
                             gruposDinamicos: data.grupos_dinamicos || {},
                             propuestas: data.propuestas || [],
@@ -195,7 +226,13 @@ const useGameStore = create(
                             agentePoseidoId: data.agente_poseido_id || null,
                         };
 
-                        if (data.mapa) updates.mapa = data.mapa;
+                        if (data.mapa) {
+                             updates.mapa = data.mapa;
+                        }
+
+                        if (data.lore) {
+                             updates.lore = data.lore || "";
+                        }
                         
                         // Solo actualizar logs si vienen en el mensaje (usualmente solo en initial_state)
                         if (data.logs && data.logs.length > 0) {
@@ -212,8 +249,72 @@ const useGameStore = create(
                         set(updates);
                     }
 
+                    if (data.type === 'stats_delta') {
+                        set((state) => {
+                            const newStats: any = { step: data.step };
+                            
+                            const mergeRecursive = (target: any, delta: any) => {
+                                const result = { ...target };
+                                Object.keys(delta).forEach(key => {
+                                    if (delta[key] !== null && typeof delta[key] === 'object' && !Array.isArray(delta[key]) && target[key]) {
+                                        result[key] = mergeRecursive(target[key], delta[key]);
+                                    } else {
+                                        result[key] = delta[key];
+                                    }
+                                });
+                                return result;
+                            };
+
+                            const mergedDelta = mergeRecursive(state, data.delta);
+                            return { ...mergedDelta, step: data.step };
+                        });
+                    }
+
                     if (data.type === 'agent_update') {
                         set({ agents: data.agents });
+                    }
+
+                    if (data.type === 'agent_delta') {
+                        set((state) => {
+                            const newAgents = [...state.agents];
+                            
+                            // Procesar actualizaciones
+                            if (data.updates) {
+                                Object.keys(data.updates).forEach(agentId => {
+                                    const index = newAgents.findIndex(a => a.id === agentId);
+                                    const delta = data.updates[agentId];
+                                    
+                                    if (index !== -1) {
+                                        // Merge profundo para planes, necesidades, etc.
+                                        const mergeAgent = (target: any, source: any) => {
+                                            Object.keys(source).forEach(key => {
+                                                if (source[key] !== null && typeof source[key] === 'object' && !Array.isArray(source[key]) && target[key]) {
+                                                    mergeAgent(target[key], source[key]);
+                                                } else {
+                                                    target[key] = source[key];
+                                                }
+                                            });
+                                        };
+                                        
+                                        const updatedAgent = { ...newAgents[index] };
+                                        mergeAgent(updatedAgent, delta);
+                                        newAgents[index] = updatedAgent;
+                                    } else {
+                                        // Es un agente nuevo que no teníamos (posible spawn_agent)
+                                        newAgents.push(delta as Agent);
+                                    }
+                                });
+                            }
+                            
+                            // Procesar eliminaciones
+                            if (data.removals && data.removals.length > 0) {
+                                return {
+                                    agents: newAgents.filter(a => !data.removals.includes(a.id))
+                                };
+                            }
+                            
+                            return { agents: newAgents };
+                        });
                     }
 
                     if (data.type === 'relationships') {
@@ -237,10 +338,9 @@ const useGameStore = create(
                                     newBubbles[agentId] = { text: content, timestamp: Date.now() };
                                 }
                             }
-
                             const now = Date.now();
                             Object.keys(newBubbles).forEach(key => {
-                                if (now - newBubbles[key].timestamp > 5000) {
+                                if (now - newBubbles[key].timestamp > 20000) {
                                     delete newBubbles[key];
                                 }
                             });
@@ -271,14 +371,14 @@ const useGameStore = create(
                 set({ socket: newSocket });
 
                 // Limpiar speechBubbles expirados periódicamente (cada 2s),
-                // independiente de si llegan nuevos logs.
+                // las burbujas durarán 20 segundos antes de borrarse.
                 const bubbleCleanupInterval = setInterval(() => {
                     const state = get();
                     const now = Date.now();
                     const bubbles = { ...state.speechBubbles };
                     let changed = false;
                     Object.keys(bubbles).forEach(key => {
-                        if (now - bubbles[key].timestamp > 5000) {
+                        if (now - bubbles[key].timestamp > 20000) {
                             delete bubbles[key];
                             changed = true;
                         }
@@ -286,6 +386,7 @@ const useGameStore = create(
                     if (changed) set({ speechBubbles: bubbles });
                 }, 2000);
                 set({ bubbleCleanupInterval });
+
             },
 
             disconnect: () => {
@@ -313,7 +414,7 @@ const useGameStore = create(
                     if (window.location.hostname === 'mundoia.cuerpolibre.cl') {
                         host = 'api-mundoia.cuerpolibre.cl';
                     } else if (window.location.hostname === 'localhost' || window.location.hostname.includes('capacitor')) {
-                        host = localStorage.getItem('MUNDOIA_API_HOST') || 'localhost:8005';
+                        host = get().apiHost || 'api-mundoia.cuerpolibre.cl';
                     }
 
                     const url = `${protocol}//${host}/game/god-mode/${userId}`;
@@ -351,7 +452,7 @@ const useGameStore = create(
                     if (window.location.hostname === 'mundoia.cuerpolibre.cl') {
                         host = 'api-mundoia.cuerpolibre.cl';
                     } else if (window.location.hostname === 'localhost' || window.location.hostname.includes('capacitor')) {
-                        host = localStorage.getItem('MUNDOIA_API_HOST') || 'localhost:8005';
+                        host = get().apiHost || 'api-mundoia.cuerpolibre.cl';
                     }
 
                     const response = await fetch(`${protocol}//${host}/game/god-mode/${userId}`, {

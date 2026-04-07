@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS agentes (
     beliefs JSONB DEFAULT '[]',
     desires JSONB DEFAULT '[]',
     intentions JSONB DEFAULT '[]',
+    alma JSONB DEFAULT '{}',
+    identidad JSONB DEFAULT '{}',
+    heartbeat_config JSONB DEFAULT '{}',
+    memoria_persistente_data JSONB DEFAULT '{}',
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id, user_id)
 );
@@ -171,3 +175,21 @@ CREATE TABLE IF NOT EXISTS chat_mensajes (
 -- Índice para búsquedas rápidas por usuario+agente
 CREATE INDEX IF NOT EXISTS idx_chat_mensajes_user_agent ON chat_mensajes(user_id, agent_id);
 CREATE INDEX IF NOT EXISTS idx_chat_mensajes_timestamp ON chat_mensajes(timestamp_utc);
+
+-- 13. Instituciones (Depends on Users)
+CREATE TABLE IF NOT EXISTS instituciones (
+    id VARCHAR(100),
+    user_id VARCHAR(50) REFERENCES usuarios(id),
+    nombre VARCHAR(100) NOT NULL,
+    tipo VARCHAR(50), -- EDUCATIVA, FINANCIERA, SANITARIA, CIENTIFICA, RELIGIOSA
+    fundador_id VARCHAR(50),
+    lider_id VARCHAR(50),
+    miembros JSONB DEFAULT '[]',
+    x INTEGER,
+    y INTEGER,
+    recursos FLOAT DEFAULT 0.0,
+    nivel INTEGER DEFAULT 1,
+    descripcion TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, user_id)
+);

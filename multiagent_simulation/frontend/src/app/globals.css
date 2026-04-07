@@ -1,8 +1,7 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap');
 
 @plugin "tailwindcss-animate";
-
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap');
 
 @theme {
   /* Bases */
@@ -113,6 +112,89 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(124, 77, 255, 0.5);
+}
+
+/* Estética Pokémon GameBoy */
+@keyframes pixel-wobble {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes pixel-walk {
+  0% { transform: translateX(-1px); }
+  50% { transform: translateX(1px); }
+  100% { transform: translateX(-1px); }
+}
+
+.animate-pixel-idle {
+  animation: pixel-wobble 0.8s steps(2) infinite;
+}
+
+.animate-pixel-walk {
+  animation: pixel-walk 0.4s steps(2) infinite;
+}
+
+.pixel-border {
+  image-rendering: pixelated;
+  shape-rendering: crispEdges;
+}
+
+/* Reemplazar colores cyber por paleta GameBoy */
+:root {
+  --gb-grass: #88d070;
+  --gb-forest: #388050;
+  --gb-mountain: #706858;
+  --gb-water: #5890f0;
+  --gb-desert: #e0d0a0;
+  --gb-outline: #000000;
+}
+
+@keyframes water-drift {
+  0% { transform: translate(0, 0); }
+  100% { transform: translate(10px, 10px); }
+}
+
+@keyframes particle-drift {
+  0% { transform: translate(0, 0) scale(1); opacity: 0; }
+  50% { opacity: 0.3; }
+  100% { transform: translate(50px, -50px) scale(0.5); opacity: 0; }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.1); }
+}
+
+.animate-float {
+  animation: float 2.5s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.animate-water {
+  animation: water-drift 10s linear infinite;
+}
+
+.animate-particle {
+  animation: particle-drift 15s linear infinite;
+  transform-box: fill-box;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 12s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.animate-blink {
+  animation: blink 4s infinite;
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
 /* Tailwind Utilities */

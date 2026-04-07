@@ -53,7 +53,7 @@ export default function ArchitectPanel({ userId, onClose }: ArchitectPanelProps)
             if (window.location.hostname === 'mundoia.cuerpolibre.cl') {
                 host = 'api-mundoia.cuerpolibre.cl';
             } else if (window.location.hostname === 'localhost') {
-                host = 'localhost:8005';
+                host = 'api-mundoia.cuerpolibre.cl';
             }
 
             const response = await fetch(`${protocol}//${host}/game/god-mode/${userId}`, {

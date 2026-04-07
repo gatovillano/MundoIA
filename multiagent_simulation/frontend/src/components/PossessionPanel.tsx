@@ -5,7 +5,9 @@ import {
     MessageSquare, Send, Move, Vote, Gavel, 
     Hand, Users, Construction, X, ChevronUp, 
     ChevronDown, ChevronLeft, ChevronRight,
-    Users2, Globe, Ghost
+    Users2, Globe, Ghost, Heart, Zap, Moon,
+    Coffee, Compass, Crosshair, Book, Microscope,
+    Shield, TrendingUp, Handshake
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import useGameStore from "@/store/useGameStore";
@@ -19,7 +21,7 @@ export default function PossessionPanel() {
     const [scope, setScope] = useState<'global' | 'group' | 'direct'>('global');
     const [targetAgentId, setTargetAgentId] = useState("");
     const [lawDescription, setLawDescription] = useState("");
-    const [activeTab, setActiveTab] = useState<'chat' | 'actions' | 'move'>('chat');
+    const [activeTab, setActiveTab] = useState<'chat' | 'vital' | 'social' | 'construction' | 'reglas' | 'move'>('chat');
 
     if (!agentePoseidoId || !agent) return null;
 
@@ -66,10 +68,13 @@ export default function PossessionPanel() {
                             Interfaz de Posesión: Agente {agent.id.substring(0, 6)}
                         </span>
                     </div>
-                    <div className="flex gap-1">
-                        <TabBtn active={activeTab === 'chat'} icon={MessageSquare} label="Comunicación" onClick={() => setActiveTab('chat')} />
-                        <TabBtn active={activeTab === 'actions'} icon={Hand} label="Acciones" onClick={() => setActiveTab('actions')} />
-                        <TabBtn active={activeTab === 'move'} icon={Move} label="Movimiento" onClick={() => setActiveTab('move')} />
+                    <div className="flex gap-1 overflow-x-auto custom-scrollbar-hide max-w-[350px]">
+                        <TabBtn active={activeTab === 'chat'} icon={MessageSquare} label="Comms" onClick={() => setActiveTab('chat')} />
+                        <TabBtn active={activeTab === 'vital'} icon={Heart} label="Vital" onClick={() => setActiveTab('vital')} />
+                        <TabBtn active={activeTab === 'social'} icon={Users2} label="Social" onClick={() => setActiveTab('social')} />
+                        <TabBtn active={activeTab === 'construction'} icon={Construction} label="Obras/Eco" onClick={() => setActiveTab('construction')} />
+                        <TabBtn active={activeTab === 'reglas'} icon={Gavel} label="Reglas" onClick={() => setActiveTab('reglas')} />
+                        <TabBtn active={activeTab === 'move'} icon={Move} label="Move" onClick={() => setActiveTab('move')} />
                     </div>
                 </div>
 
@@ -118,73 +123,162 @@ export default function PossessionPanel() {
                             </motion.div>
                         )}
 
-                        {activeTab === 'actions' && (
+                        {activeTab === 'vital' && (
                             <motion.div 
-                                key="actions"
+                                key="vital"
+                                initial={{ opacity: 0, x: 10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -10 }}
+                                className="grid grid-cols-2 gap-4"
+                            >
+                                <ActionCard icon={Coffee} title="Comer" desc="Consumir alimentos" onClick={() => executeAction("comer")} />
+                                <ActionCard icon={Heart} title="Curarse" desc="Usar medicinas" onClick={() => executeAction("curarse")} />
+                                <ActionCard icon={Moon} title="Descansar" desc="Reponer energías" onClick={() => executeAction("descansar")} />
+                                <ActionCard icon={Compass} title="Explorar" desc="Buscar por la zona" onClick={() => executeAction("explorar")} />
+                                <ActionCard icon={Book} title="Estudiar" desc="Aprender en Universidad" onClick={() => executeAction("estudiar")} />
+                                <ActionCard icon={Microscope} title="Investigar" desc="Desarrollar teorías" onClick={() => executeAction("investigar")} />
+                                <ActionCard icon={Hand} title="Recolectar" desc="Extraer del suelo" onClick={() => executeAction("recolectar")} />
+                            </motion.div>
+                        )}
+
+                        {activeTab === 'social' && (
+                            <motion.div 
+                                key="social"
+                                initial={{ opacity: 0, x: 10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -10 }}
+                                className="grid grid-cols-2 gap-4"
+                            >
+                                <div className="col-span-2 flex flex-col gap-2 mb-2">
+                                    <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Objetivo de Interacción</span>
+                                    <input 
+                                        type="text" 
+                                        placeholder="ID de otro agente..."
+                                        value={targetAgentId}
+                                        onChange={(e) => setTargetAgentId(e.target.value)}
+                                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-yellow-500/50"
+                                    />
+                                </div>
+                                <ActionCard 
+                                    icon={MessageSquare} 
+                                    title="Opinar" 
+                                    desc="Hablar en Asamblea" 
+                                    onClick={() => {
+                                        const msg = prompt("Tu opinión para la asamblea:");
+                                        if (msg) executeAction("opinar", { mensaje: msg });
+                                    }}
+                                />
+                                <ActionCard 
+                                    icon={Handshake} 
+                                    title="Socializar" 
+                                    desc="Mejorar relación" 
+                                    onClick={() => {
+                                        const target = targetAgentId || prompt("ID del agente:");
+                                        if (target) executeAction("socializar", { otro_agente_id: target });
+                                    }}
+                                />
+                                <ActionCard 
+                                    icon={Crosshair} 
+                                    title="Atacar" 
+                                    desc="Iniciar combate" 
+                                    onClick={() => {
+                                        const target = targetAgentId || prompt("ID del agente a atacar:");
+                                        if (target) executeAction("atacar", { otro_agente_id: target });
+                                    }}
+                                />
+                                <ActionCard 
+                                    icon={Users} 
+                                    title="Alianza" 
+                                    desc="Firmar pacto" 
+                                    onClick={() => {
+                                        const target = targetAgentId || prompt("ID del socio:");
+                                        if (target) executeAction("formar_alianza", { otro_agente_id: target });
+                                    }}
+                                />
+                            </motion.div>
+                        )}
+
+                        {activeTab === 'construction' && (
+                            <motion.div 
+                                key="construction"
                                 initial={{ opacity: 0, x: 10 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: -10 }}
                                 className="grid grid-cols-2 gap-4"
                             >
                                 <ActionCard 
-                                    icon={Hand} 
-                                    title="Recolectar" 
-                                    desc="Extraer recursos del suelo" 
-                                    onClick={() => executeAction("recolectar")}
+                                    icon={Construction} 
+                                    title="Construir" 
+                                    desc="Estructura (60 MC)" 
+                                    onClick={() => {
+                                        const type = prompt("Tipo (Granja, Hospital, Universidad, Mina, Mercado, Templo, Estación Recarga):", "Granja");
+                                        if (type) executeAction("construir", { tipo: type });
+                                    }}
                                 />
                                 <ActionCard 
-                                    icon={Users} 
-                                    title="Fundar Grupo" 
-                                    desc="Crear una nueva facción" 
+                                    icon={TrendingUp} 
+                                    title="Invertir" 
+                                    desc="Mercado bursátil" 
                                     onClick={() => {
-                                        const name = prompt("Nombre de la nueva facción:");
-                                        if (name) executeAction("fundar_grupo", { nombre: name });
+                                        const monto = prompt("Monto a invertir:", "10");
+                                        if (monto) executeAction("invertir", { monto });
+                                    }}
+                                />
+                                <ActionCard 
+                                    icon={Shield} 
+                                    title="Seguridad" 
+                                    desc="Rango (25 MC)" 
+                                    onClick={() => executeAction("mejorar_seguridad")}
+                                />
+                            </motion.div>
+                        )}
+
+                        {activeTab === 'reglas' && (
+                            <motion.div 
+                                key="reglas"
+                                initial={{ opacity: 0, x: 10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -10 }}
+                                className="grid grid-cols-2 gap-4"
+                            >
+                                <ActionCard 
+                                    icon={Users2} 
+                                    title="Fundar Grupo" 
+                                    desc="Nueva facción" 
+                                    onClick={() => {
+                                        const name = prompt("Nombre:");
+                                        const desc = prompt("Objetivo/Descripción:");
+                                        if (name && desc) executeAction("fundar_grupo", { nombre: name, descripcion: desc });
+                                    }}
+                                />
+                                <ActionCard 
+                                    icon={Globe} 
+                                    title="Institución" 
+                                    desc="Fundar (100 MC)" 
+                                    onClick={() => {
+                                        const name = prompt("Nombre de la institución:");
+                                        const type = prompt("Tipo (Ciencia, Salud, Seguridad, Economía, Arte):", "Ciencia");
+                                        if (name && type) executeAction("fundar_institucion", { nombre: name, tipo: type });
                                     }}
                                 />
                                 <ActionCard 
                                     icon={Gavel} 
                                     title="Proponer Ley" 
-                                    desc="Decretar una nueva regla" 
+                                    desc="Nuevo decreto" 
                                     onClick={() => {
-                                        const desc = prompt("Descripción de la ley (texto):");
-                                        if (desc) executeAction("proponer_ley", { texto: desc, tipo: "ley" });
+                                        const tit = prompt("Título de la ley:");
+                                        const desc = prompt("Descripción:");
+                                        if (tit && desc) executeAction("proponer_ley", { titulo: tit, descripcion: desc, tipo: "LEY" });
                                     }}
                                 />
                                 <ActionCard 
                                     icon={Vote} 
                                     title="Votar" 
-                                    desc="Participar en decisiones" 
+                                    desc="Participar en ley" 
                                     onClick={() => {
-                                        const pId = prompt("ID de la propuesta:");
-                                        const v = prompt("Voto (si/no):");
+                                        const pId = prompt("ID de propuesta:");
+                                        const v = prompt("Voto (si/no):", "si");
                                         if (pId && v) executeAction("votar", { propuesta_id: pId, voto: v });
-                                    }}
-                                />
-                                <ActionCard 
-                                    icon={Construction} 
-                                    title="Construir" 
-                                    desc="Levantar una estructura" 
-                                    onClick={() => {
-                                        const type = prompt("Edificio (Casa, Mercado, Templo, Hospital, Granja, Universidad, Mina, Farmacia):", "Casa");
-                                        if (type) executeAction("construir", { tipo: type });
-                                    }}
-                                />
-                                <ActionCard 
-                                    icon={Users} 
-                                    title="Socializar" 
-                                    desc="Mejorar relación con otro" 
-                                    onClick={() => {
-                                        const target = targetAgentId || prompt("ID del agente objetivo:");
-                                        if (target) executeAction("socializar", { otro_agente_id: target });
-                                    }}
-                                />
-                                <ActionCard 
-                                    icon={X} 
-                                    title="Competir" 
-                                    desc="Desafiar a otro agente" 
-                                    onClick={() => {
-                                        const target = targetAgentId || prompt("ID del agente objetivo:");
-                                        if (target) executeAction("competir", { otro_agente_id: target });
                                     }}
                                 />
                             </motion.div>

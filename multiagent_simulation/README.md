@@ -41,11 +41,19 @@ Sistema de simulación multiagente con visualización en tiempo real de interacc
   - Pausar/Reanudar
   - Control de velocidad (0.5x, 1x, 2x, 4x)
 
+### 🖥️ Versión TUI (Terminal)
+- **Interfaz interactiva** con la librería Textual
+- **Mapa en tiempo real** con símbolos y colores (ASCII/Unicode)
+- **Lista de agentes detallada** con pensamientos actuales
+- **Controles remotos** (Start, Pause, Reset, Step)
+- **Logs sincronizados** con el servidor
+- **Posibilidad de "poseer" un agente** (marcado en rojo)
+
 ## 🚀 Instalación
 
 ### 1. Crear entorno virtual
 ```bash
-cd /home/gato/MundoIA/multiagent_simulation
+cd /home/gato/Proyectos/MundoIA/multiagent_simulation
 python3 -m venv venv
 source venv/bin/activate
 ```
@@ -91,6 +99,19 @@ Abre tu navegador en: `http://localhost:8005`
 - **Cambia la velocidad** con el botón de velocidad
 - **Minimiza los logs** con el botón "−"
 
+### Usar la versión TUI (CLI Moderna)
+Si prefieres usar la terminal en lugar del navegador:
+```bash
+source venv/bin/activate
+python3 cli_tui_remote.py
+```
+**Controles TUI:**
+- `S`: Iniciar simulación
+- `P`: Pausar simulación
+- `Espacio`: Avanzar un paso (Step)
+- `R`: Reiniciar mundo
+- `Q`: Salir
+
 ## 📊 Arquitectura
 
 ### Backend (Python)
@@ -102,6 +123,8 @@ cerebro_langgraph.py → Razonamiento con LangGraph
 cerebro_llm.py      → Generación de diálogos con LLM
 traductor.py        → Idioma emergente
 herramientas.py     → Herramientas para agentes
+cli_tui_remote.py   → Interfaz TUI moderna (Textual)
+cli_ws.py           → Cliente CLI básico (WebSockets)
 ```
 
 ### Frontend (HTML/JS)
