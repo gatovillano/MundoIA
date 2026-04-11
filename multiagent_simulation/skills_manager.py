@@ -67,33 +67,26 @@ class SkillManager:
 
         self.base_skills["web_search"] = Skill(
             name="web_search",
-            description="Realiza una búsqueda general en la web usando la API de Brave.",
+            description="Realiza una búsqueda general en la web usando la API de Tavily.",
             code="""
 def execute(query, agente_id=None, **kwargs):
-    import os
-    import requests
-    brave_key = os.getenv("BRAVE_API_KEY")
-    if not brave_key:
-        return "No tengo configurada la llave de búsqueda web (Brave)."
+    from tavily import TavilyClient
+    from cerebro_llm import cerebro_llm
+    tavily_key = cerebro_llm.tavily_api_key
+    if not tavily_key:
+        return "No tengo configurada la llave de búsqueda web (Tavily)."
     
     try:
-        url = "https://api.search.brave.com/res/v1/web/search"
-        headers = {
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip",
-            "X-Subscription-Token": brave_key
-        }
-        params = {"q": query, "count": 5}
-        response = requests.get(url, headers=headers, params=params)
-        data = response.json()
+        tavily = TavilyClient(api_key=tavily_key)
+        response = tavily.search(query=query, search_depth="basic", max_results=5)
         
-        results = data.get("web", {}).get("results", [])
+        results = response.get("results", [])
         if not results:
             return "No se encontraron resultados relevantes en la web."
         
-        info = "Resultados de búsqueda web: "
+        info = "Resultados de búsqueda web (Tavily): "
         for r in results:
-            info += f"- {r['title']}: {r['description']} "
+            info += f"- {r['title']} ({r['url']}): {r['content']} "
         return info
     except Exception as e:
         return f"Error en la búsqueda web: {str(e)}"
@@ -195,6 +188,45 @@ def execute(ciudad="Madrid", agente_id=None, **kwargs):
 """,
             experiencia_ganada={"exploracion": 0.1},
             efecto_necesidades={"alimento": -0.1, "social": 0.1},
+        )
+
+        self.base_skills["ejecutar_codigo"] = Skill(
+            name="ejecutar_codigo",
+            description="Ejecuta código Python en el sandbox. Úsalo para cálculos, automatización o probar lógica.",
+            code="""
+def execute(codigo, agente_id=None, **kwargs):
+    from herramientas import herramientas
+    return herramientas.ejecutar_codigo_seguro(codigo, agente_id=agente_id)
+""",
+            experiencia_ganada={"ingenieria": 0.8},
+            efecto_necesidades={"alimento": -0.5, "entretenimiento": 0.3},
+        )
+
+        self.base_skills["crear_app"] = Skill(
+            name="crear_app",
+            description="Crea un script de Python persistente para el agente. Requiere 'nombre' y 'codigo'.",
+            code="""
+def execute(nombre, codigo, agente_id=None, **kwargs):
+    import os
+    from datetime import datetime
+    apps_dir = os.path.join("apps", str(agente_id))
+    os.makedirs(apps_dir, exist_ok=True)
+    file_path = os.path.join(apps_dir, f"{nombre}.py")
+    with open(file_path, "w") as f:
+        f.write(codigo)
+    
+    return {
+        "status": "success",
+        "app": {
+            "name": nombre,
+            "code": codigo,
+            "file_path": file_path,
+            "created_at": datetime.now().isoformat()
+        }
+    }
+""",
+            experiencia_ganada={"ingenieria": 1.2},
+            efecto_necesidades={"alimento": -0.8},
         )
 
         self.base_skills["crear_habilidad"] = Skill(
@@ -342,60 +374,63 @@ def execute(conocimiento=None, destinatario_id=None, agente_id=None, **kwargs):
                 signal.signal(signal.SIGALRM, timeout_handler)
                 signal.alarm(1)
 
-            # 3. Compilación restringida
-            try:
-                bytecode = compile_restricted(skill.code, "<string>", "exec")
-            except Exception as e:
-                if is_main_thread:
-                    signal.alarm(0)
-                return {
-                    "error": f"Error de compilación en skill '{skill_name}': {str(e)}"
-                }
+            # 3. Preparar entorno de ejecución potente
+            import os
+            import sys
+            import json
+            import requests
+            from io import StringIO
+            
+            # Directorios del agente
+            apps_dir = os.path.join("apps", str(agente_id))
+            os.makedirs(apps_dir, exist_ok=True)
+            sandbox_dir = os.path.join("sandbox", str(agente_id))
+            os.makedirs(sandbox_dir, exist_ok=True)
 
-            # 4. Entorno de ejecución seguro
-            safe_globals = safe_builtins.copy()
-            # Añadir funciones adicionales seguras si es necesario
-            from math import sqrt, sin, cos, tan, log, exp
-
-            safe_globals.update(
-                {
-                    "math": __import__("math"),
-                    "sqrt": sqrt,
-                    "sin": sin,
-                    "cos": cos,
-                    "tan": tan,
-                    "log": log,
-                    "exp": exp,
-                    "min": min,
-                    "max": max,
-                    "sum": sum,
-                    "len": len,
-                    "list": list,
-                    "dict": dict,
-                    "set": set,
-                    "range": range,
-                }
-            )
-
-            # Contexto para la ejecución
-            exec_globals = {"__builtins__": safe_globals}
+            # Entorno de ejecución con acceso a librerías
+            exec_globals = {
+                "os": os, "sys": sys, "json": json, "requests": requests,
+                "agente_id": agente_id, "apps_dir": apps_dir, "sandbox_dir": sandbox_dir,
+                "print": print, "len": len, "range": range, "list": list, "dict": dict,
+                "set": set, "open": open,
+                "math": __import__("math"),
+                "requests": requests
+            }
             exec_locals = {}
 
-            # Ejecutar el código para definir funciones
-            exec(bytecode, exec_globals, exec_locals)
+            # 4. Ejecutar el código para definir funciones
+            exec(skill.code, exec_globals, exec_locals)
 
             # Buscar la función 'execute'
-            if "execute" in exec_locals:
-                resultado = exec_locals["execute"](agente_id=agente_id, **argumentos)
+            if "execute" in exec_locals or "execute" in exec_globals:
+                execute_func = exec_locals.get("execute") or exec_globals.get("execute")
+                
+                # Capturar stdout
+                old_stdout = sys.stdout
+                redirected_output = sys.stdout = StringIO()
+                
+                resultado = execute_func(agente_id=agente_id, **argumentos)
+                
+                sys.stdout = old_stdout
+                std_output = redirected_output.getvalue()
+                
                 if is_main_thread:
                     signal.alarm(0)  # Cancelar alarma
+                
                 self._log(
                     f"✅ [SKILL] Skill '{skill_name}' ejecutada con éxito.", "skill"
                 )
 
-                # Devolver resultado + efectos de experiencia y necesidades
+                # Devolver resultado completo (si es dict, lo pasamos tal cual, añadiendo el stdout)
+                if isinstance(resultado, dict):
+                    final_res = resultado
+                    if std_output:
+                        final_res["_stdout"] = std_output
+                else:
+                    final_res = f"{resultado}\n\n[Salida estándar]:\n{std_output}" if std_output else resultado
+
                 return {
-                    "resultado": resultado,
+                    "resultado": final_res,
                     "experiencia_ganada": skill.experiencia_ganada,
                     "efecto_necesidades": skill.efecto_necesidades,
                     "skill_data": skill.to_dict()

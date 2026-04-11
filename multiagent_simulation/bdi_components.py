@@ -11,6 +11,7 @@ class TipoDeseo(Enum):
     RECURSOS = "acumulacion_recursos"
     ARMONIA = "armonia_grupal"
     CONOCIMIENTO = "aprendizaje"
+    CURIOSIDAD = "curiosidad_digital"
     AUTONOMIA = "autonomia"
     REPRODUCCION = "reproduccion"
 
@@ -30,6 +31,8 @@ class TipoAccion(Enum):
     COMER = "COMER"
     CURAR = "CURAR"
     HABLAR = "HABLAR"
+    WEB_SEARCH = "WEB_SEARCH"
+    SCRAPEAR_URL = "SCRAPEAR_URL"
 
 @dataclass
 class Credencia:
@@ -391,5 +394,15 @@ class SistemaIntenciones:
                         meta="Buscar compañía",
                         prioridad=d.intensidad * w * (1.0 - social/10.0)
                     ))
+
+        # 8. CURIOSIDAD (navegación digital)
+        if TipoDeseo.CURIOSIDAD in deseos:
+            d = deseos[TipoDeseo.CURIOSIDAD]
+            w = pesos.get(TipoDeseo.CURIOSIDAD, 1.0)
+            planes.append(PlanBDI(
+                acciones=[AccionBDI(TipoAccion.WEB_SEARCH, parametros={"query": "temas de interés actual"})],
+                meta="Explorar internet para satisfacer curiosidad",
+                prioridad=d.intensidad * w * 0.7
+            ))
 
         return planes

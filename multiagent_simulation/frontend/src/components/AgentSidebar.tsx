@@ -1,12 +1,12 @@
 "use client";
 
 import useGameStore from "@/store/useGameStore";
-import { X, Shield, Heart, Zap, Users, Wallet, Brain, MessageSquare, Send, Moon, Music, ListTodo, Code, Terminal, Ghost, Clock, Swords, Handshake, Globe, Lock, Eye, Target, Compass, Trophy } from "lucide-react";
+import { X, Shield, Heart, Zap, Users, Wallet, Brain, MessageSquare, Send, Moon, Music, ListTodo, Code, Terminal, Ghost, Clock, Swords, Handshake, Globe, Lock, Eye, Target, Compass, Trophy, Play, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useMemo } from "react";
 import { Agent, Plan } from "@/types/agent";
 
-type TabType = 'perfil' | 'historial' | 'alma';
+type TabType = 'perfil' | 'historial' | 'alma' | 'creaciones';
 
 interface HistoryEntry {
     step: number;
@@ -246,10 +246,12 @@ function getDesireDescription(tipo: string, intensidad: number): string {
 }
 
 export default function AgentSidebar() {
-    const { agents, selectedAgentId, selectAgent, sendArchitectMessage, sendGodAction, agentePoseidoId, poseerAgente, liberarAgente, logs } = useGameStore();
+    const { agents, selectedAgentId, selectAgent, sendArchitectMessage, sendGodAction, agentePoseidoId, poseerAgente, liberarAgente, logs, userId } = useGameStore();
     const [directMessage, setDirectMessage] = useState("");
     const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
     const [activeTab, setActiveTab] = useState<TabType>('perfil');
+    const [executingApp, setExecutingApp] = useState<any | null>(null);
+    const [executingSkill, setExecutingSkill] = useState<any | null>(null);
     const agent: Agent | undefined = agents.find((a) => a.id === selectedAgentId);
 
     const agentHistory = useMemo(() => {
@@ -342,6 +344,17 @@ export default function AgentSidebar() {
                                  <Heart className="w-3 h-3" />
                                  Alma
                              </button>
+                             <button
+                                 onClick={() => setActiveTab('creaciones')}
+                                 className={`flex-1 py-2 px-3 rounded-md text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                                     activeTab === 'creaciones'
+                                         ? 'bg-[#7c4dff]/20 text-[#7c4dff] border border-[#7c4dff]/30'
+                                         : 'text-gray-500 hover:text-gray-300'
+                                 }`}
+                             >
+                                 <Terminal className="w-3 h-3" />
+                                 Apps
+                             </button>
                          </div>
                     </div>
 
@@ -351,6 +364,8 @@ export default function AgentSidebar() {
                              <HistorialTab agentId={selectedAgentId} history={agentHistory} />
                          ) : activeTab === 'alma' ? (
                              <AlmaTab agent={agent} />
+                         ) : activeTab === 'creaciones' ? (
+                             <CreacionesTab agent={agent} onRunApp={(app) => setExecutingApp(app)} onRunSkill={(skill) => setExecutingSkill(skill)} />
                          ) : (
                              <PerfilTab
                                  agent={agent}
@@ -366,6 +381,14 @@ export default function AgentSidebar() {
                              />
                          )}
                      </div>
+
+                     <AppExecutionModal 
+                        app={executingApp} 
+                        skill={executingSkill} 
+                        agentId={agent.id}
+                        userId={userId}
+                        onClose={() => { setExecutingApp(null); setExecutingSkill(null); }} 
+                     />
                 </motion.div>
             )}
         </AnimatePresence>
@@ -478,6 +501,67 @@ function PerfilTab({
                     <ProgressBar icon={Zap} label="Alimento" value={agent?.necesidades?.alimento} color="bg-[#ffa000]" />
                     <ProgressBar icon={Moon} label="Descanso" value={agent?.necesidades?.descanso} color="bg-[#7c4dff]" />
                     <ProgressBar icon={Music} label="Ocio" value={agent?.necesidades?.entretenimiento} color="bg-[#ec4899]" />
+                </div>
+            </section>
+
+            {/* CAPITAL SOCIAL */}
+            <section className="space-y-4">
+                <SectionTitle title="Capital Social" />
+                <div className="glass-card p-5 rounded-xl space-y-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-[#00e5ff]/20 text-[#00e5ff]">
+                                <Globe className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <span className="text-xs font-bold text-white uppercase">Influencia</span>
+                                <div className="text-[10px] text-gray-500">{agent?.social_metrics?.nivel_influencia || "Desconocido"}</div>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                            <span className="text-2xl font-bold text-[#00e5ff]">{agent?.social_metrics?.capital_social?.toFixed(0) || "10"}</span>
+                            <span className="text-xs text-gray-500">/100</span>
+                        </div>
+                    </div>
+                    <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden">
+                        <div 
+                            className="h-full bg-gradient-to-r from-[#00e5ff] to-[#7c4dff] transition-all duration-500"
+                            style={{ width: `${Math.min(100, agent?.social_metrics?.capital_social || 10)}%` }}
+                        />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-[10px]">
+                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
+                            <Users className="w-3 h-3 text-[#00e676]" />
+                            <span className="text-gray-400">Seguidores:</span>
+                            <span className="text-white font-bold">{agent?.social_metrics?.seguidores || 0}</span>
+                        </div>
+                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
+                            <Users className="w-3 h-3 text-gray-400" />
+                            <span className="text-gray-400">Siguiendo:</span>
+                            <span className="text-white font-bold">{agent?.social_metrics?.siguiendo || 0}</span>
+                        </div>
+                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
+                            <MessageSquare className="w-3 h-3 text-[#ffa000]" />
+                            <span className="text-gray-400">Posts:</span>
+                            <span className="text-white font-bold">{agent?.social_metrics?.posts_publicados || 0}</span>
+                        </div>
+                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
+                            <Heart className="w-3 h-3 text-[#ec4899]" />
+                            <span className="text-gray-400">Likes:</span>
+                            <span className="text-white font-bold">{agent?.social_metrics?.likes_recibidos || 0}</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            {/* NECESIDADES INTELECTUALES */}
+            <section className="space-y-4">
+                <SectionTitle title="Necesidades Intelectuales" />
+                <div className="glass-card p-5 rounded-xl space-y-3">
+                    <ProgressBar icon={Compass} label="Curiosidad" value={agent?.necesidades_intelectuales?.curiosidad ?? 6} color="bg-[#7c4dff]" />
+                    <ProgressBar icon={MessageSquare} label="Expresión" value={agent?.necesidades_intelectuales?.expresion ?? 6} color="bg-[#00e5ff]" />
+                    <ProgressBar icon={Trophy} label="Debate" value={agent?.necesidades_intelectuales?.debate ?? 5} color="bg-[#ffa000]" />
+                    <ProgressBar icon={Brain} label="Aprendizaje" value={agent?.necesidades_intelectuales?.aprendizaje ?? 6} color="bg-[#00e676]" />
                 </div>
             </section>
 
@@ -940,6 +1024,281 @@ function AlmaTab({ agent }: { agent: Agent }) {
                 </div>
             </section>
         </div>
+    );
+}
+
+// --- Creaciones Tab ---
+function CreacionesTab({ 
+    agent, 
+    onRunApp, 
+    onRunSkill 
+}: { 
+    agent: Agent; 
+    onRunApp: (app: any) => void; 
+    onRunSkill: (skill: any) => void;
+}) {
+    const apps = Object.values(agent.apps || {});
+    const skills = Object.values(agent.skills || {}).filter(s => s.author_id === agent.id || s.name === 'crear_app' || s.name === 'ejecutar_codigo');
+
+    return (
+        <div className="p-6 space-y-8">
+            {/* Apps */}
+            <section className="space-y-4">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-black text-white uppercase tracking-[0.2em] flex items-center gap-2">
+                        <Terminal className="w-4 h-4 text-indigo-400" />
+                        Aplicaciones ({apps.length})
+                    </h3>
+                </div>
+                
+                {apps.length === 0 ? (
+                    <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-8 flex flex-col items-center justify-center text-center">
+                        <Code className="w-8 h-8 text-gray-700 mb-3" />
+                        <p className="text-xs text-gray-500 italic">Este agente aún no ha creado aplicaciones persistentes.</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 gap-3">
+                        {apps.map((app, i) => (
+                            <div key={i} className="group relative bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 hover:border-indigo-500/30 rounded-2xl p-4 transition-all overflow-hidden">
+                                <div className="absolute top-0 right-0 p-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button 
+                                        onClick={() => onRunApp(app)}
+                                        className="p-2 bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95"
+                                    >
+                                        <Play className="w-4 h-4" />
+                                    </button>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <h4 className="text-sm font-bold text-white group-hover:text-indigo-400 transition-colors">{app.name}</h4>
+                                    <p className="text-[10px] text-gray-500 font-mono truncate max-w-[200px]">{app.file_path || `${app.name}.py`}</p>
+                                    <div className="flex items-center gap-2 mt-2">
+                                        <span className="text-[9px] px-2 py-0.5 bg-indigo-500/10 text-indigo-400 rounded-full border border-indigo-500/20">Python 3.11</span>
+                                        <span className="text-[9px] text-gray-600">{new Date(app.created_at).toLocaleDateString()}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </section>
+
+            {/* Habilidades Personalizadas */}
+            <section className="space-y-4">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-black text-white uppercase tracking-[0.2em] flex items-center gap-2">
+                        <Brain className="w-4 h-4 text-[#00e676]" />
+                        Skills Evolutivas ({skills.length})
+                    </h3>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3">
+                    {skills.map((skill, i) => (
+                        <div key={i} className="group relative bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 hover:border-[#00e676]/30 rounded-2xl p-4 transition-all overflow-hidden">
+                            <div className="absolute top-0 right-0 p-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                    onClick={() => onRunSkill(skill)}
+                                    className="p-2 bg-[#00e676] hover:bg-[#00e676]/80 text-black rounded-xl shadow-lg shadow-[#00e676]/20 transition-all active:scale-95"
+                                >
+                                    <Play className="w-4 h-4" />
+                                </button>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                                <h4 className="text-sm font-bold text-white group-hover:text-[#00e676] transition-colors">{skill.name}</h4>
+                                <p className="text-[10px] text-gray-500 leading-relaxed">{skill.description}</p>
+                                <div className="flex items-center gap-2 mt-2">
+                                    <span className="text-[9px] px-2 py-0.5 bg-[#00e676]/10 text-[#00e676] rounded-full border border-[#00e676]/20">Cognitiva</span>
+                                    {skill.author_id === agent.id && <span className="text-[9px] text-indigo-400 font-bold tracking-widest uppercase">Autoría Propia</span>}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </section>
+        </div>
+    );
+}
+
+// --- App Execution Modal (Sandbox Dialog) ---
+function AppExecutionModal({ app, skill, agentId, userId, onClose }: { app: any, skill: any, agentId: string, userId: string | null, onClose: () => void }) {
+    const { sendGodAction } = useGameStore();
+    const [status, setStatus] = useState<'idle' | 'executing' | 'success' | 'error'>('idle');
+    const [result, setResult] = useState<any>(null);
+    const [stdout, setStdout] = useState<string>("");
+
+    const isSkill = !!skill;
+    const target = isSkill ? skill : app;
+
+    const handleExecute = async () => {
+        setStatus('executing');
+        setResult(null);
+        setStdout("");
+        
+        try {
+            const actionType = isSkill ? "EXECUTE_SKILL" : "EXECUTE_APP";
+            const params = isSkill ? {
+                agent_id: agentId,
+                skill_name: skill.name,
+                argumentos: {} // Por ahora argumentos vacíos desde el botón rápido
+            } : {
+                agent_id: agentId,
+                app_name: app.name
+            };
+
+            const protocol = window.location.protocol;
+            let host = window.location.host;
+            if (window.location.hostname === 'mundoia.cuerpolibre.cl') { host = 'api-mundoia.cuerpolibre.cl'; }
+            
+            const targetUser = userId || 'arquitecto';
+            const res = await fetch(`${protocol}//${host}/game/god-mode/${targetUser}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action_type: actionType, params })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                const resData = data.resultado?.resultado || data.resultado;
+                
+                if (typeof resData === 'object' && resData !== null) {
+                    setResult(resData);
+                    if (resData._stdout) setStdout(resData._stdout);
+                } else {
+                    setResult(resData);
+                }
+                setStatus('success');
+            } else {
+                const err = await res.json();
+                setResult(err.detail || "Error desconocido");
+                setStatus('error');
+            }
+        } catch (e) {
+            setResult(String(e));
+            setStatus('error');
+        }
+    };
+
+    if (!app && !skill) return null;
+
+    return (
+        <AnimatePresence>
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                <motion.div 
+                    initial={{ opacity: 0 }} 
+                    animate={{ opacity: 1 }} 
+                    exit={{ opacity: 0 }}
+                    onClick={onClose}
+                    className="absolute inset-0 bg-black/80 backdrop-blur-md"
+                />
+                
+                <motion.div
+                    initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                    animate={{ scale: 1, opacity: 1, y: 0 }}
+                    exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                    className="relative w-full max-w-2xl bg-[#0a0b10] border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+                >
+                    {/* Header */}
+                    <div className="p-6 border-b border-white/5 flex items-center justify-between bg-gradient-to-r from-indigo-500/10 to-transparent">
+                        <div className="flex items-center gap-4">
+                            <div className={`p-3 rounded-2xl ${isSkill ? 'bg-[#00e676]/20' : 'bg-indigo-500/20'}`}>
+                                {isSkill ? <Brain className="w-6 h-6 text-[#00e676]" /> : <Terminal className="w-6 h-6 text-indigo-400" />}
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-black text-white uppercase tracking-tighter">
+                                    {isSkill ? 'Ejecutar Skill' : 'Ejecutar App'}
+                                </h3>
+                                <p className="text-xs text-gray-500 font-mono">{target.name}</p>
+                            </div>
+                        </div>
+                        <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+                            <X className="w-5 h-5 text-gray-500" />
+                        </button>
+                    </div>
+
+                    {/* Body */}
+                    <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                        {status === 'idle' && (
+                            <div className="space-y-6">
+                                <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-6">
+                                    <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Código Fuente</h4>
+                                    <pre className="text-[11px] font-mono text-indigo-300/80 leading-relaxed overflow-x-auto p-4 bg-black/40 rounded-xl border border-white/5">
+                                        {target.code}
+                                    </pre>
+                                </div>
+                                <button 
+                                    onClick={handleExecute}
+                                    className="w-full py-4 bg-indigo-500 hover:bg-indigo-400 text-white font-black uppercase tracking-[0.2em] rounded-2xl shadow-xl shadow-indigo-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-3"
+                                >
+                                    <Play className="w-5 h-5 fill-current" />
+                                    Iniciar Ejecución
+                                </button>
+                            </div>
+                        )}
+
+                        {status === 'executing' && (
+                            <div className="py-20 flex flex-col items-center justify-center space-y-4">
+                                <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+                                <p className="text-sm text-gray-400 animate-pulse font-mono">Invocando sandbox en el backend...</p>
+                            </div>
+                        )}
+
+                        {(status === 'success' || status === 'error') && (
+                            <div className="space-y-6">
+                                {/* GUI Area if result is GUI */}
+                                {result && result.type === 'gui' && result.html && (
+                                    <div className="bg-white rounded-2xl overflow-hidden border-4 border-white/10 shadow-2xl">
+                                        <div className="bg-gray-100 p-2 border-b flex items-center gap-2">
+                                            <div className="flex gap-1">
+                                                <div className="w-2 h-2 rounded-full bg-red-400" />
+                                                <div className="w-2 h-2 rounded-full bg-yellow-400" />
+                                                <div className="w-2 h-2 rounded-full bg-green-400" />
+                                            </div>
+                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{target.name} UI</span>
+                                        </div>
+                                        <iframe 
+                                            srcDoc={result.html} 
+                                            className="w-full h-[400px] border-none"
+                                            sandbox="allow-scripts allow-forms allow-popups"
+                                        />
+                                    </div>
+                                )}
+
+                                {/* Console / Standard Result */}
+                                <div className={`rounded-2xl border ${status === 'error' ? 'border-red-500/20 bg-red-500/5' : 'border-white/5 bg-black/40'} p-6`}>
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                                            <Terminal className="w-3 h-3" />
+                                            Resultado de Ejecución
+                                        </h4>
+                                        <span className={`text-[10px] font-bold uppercase ${status === 'error' ? 'text-red-400' : 'text-[#00e676]'}`}>
+                                            {status === 'error' ? 'Error' : 'Éxito'}
+                                        </span>
+                                    </div>
+                                    <div className="text-xs font-mono text-gray-300 whitespace-pre-wrap leading-relaxed">
+                                        {typeof result === 'object' ? JSON.stringify(result, null, 2) : result}
+                                    </div>
+                                </div>
+
+                                {stdout && (
+                                    <div className="bg-black border border-white/5 rounded-2xl p-6">
+                                        <h4 className="text-xs font-bold text-gray-600 uppercase tracking-widest mb-4">Standard Output (Logs)</h4>
+                                        <div className="text-[11px] font-mono text-gray-400 whitespace-pre-wrap">
+                                            {stdout}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <button 
+                                    onClick={() => setStatus('idle')}
+                                    className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-bold uppercase tracking-[0.2em] rounded-2xl transition-all"
+                                >
+                                    Reiniciar Sandbox
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </motion.div>
+            </div>
+        </AnimatePresence>
     );
 }
 

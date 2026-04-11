@@ -57,7 +57,7 @@ export default function StatsPanel({ isOpen, onClose }: StatsPanelProps) {
         const svg = d3.select(lineChartRef.current);
         svg.selectAll('*').remove();
 
-        const width = 300;
+        const width = Math.min(300, window.innerWidth - 80);
         const height = 180;
         const margin = { top: 20, right: 30, bottom: 30, left: 40 };
 
@@ -114,7 +114,7 @@ export default function StatsPanel({ isOpen, onClose }: StatsPanelProps) {
         const svg = d3.select(barChartRef.current);
         svg.selectAll('*').remove();
 
-        const width = 300;
+        const width = Math.min(300, window.innerWidth - 80);
         const height = 150;
         const margin = { top: 20, right: 20, bottom: 30, left: 40 };
 
@@ -165,7 +165,7 @@ export default function StatsPanel({ isOpen, onClose }: StatsPanelProps) {
         const svg = d3.select(pieChartRef.current);
         svg.selectAll('*').remove();
 
-        const width = 150;
+        const width = Math.min(150, window.innerWidth / 3);
         const height = 150;
         const radius = Math.min(width, height) / 2 - 10;
 
@@ -220,7 +220,7 @@ export default function StatsPanel({ isOpen, onClose }: StatsPanelProps) {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="bg-[#0a0b10] border border-white/10 rounded-2xl w-[800px] max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="bg-[#0a0b10] border border-white/10 rounded-2xl w-[95vw] sm:w-[800px] max-w-[95vw] max-h-[90vh] sm:max-h-[80vh] overflow-hidden flex flex-col">
                 <div className="flex items-center justify-between p-4 border-b border-white/10">
                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
                         <Activity className="w-5 h-5 text-purple-400" />
@@ -232,7 +232,7 @@ export default function StatsPanel({ isOpen, onClose }: StatsPanelProps) {
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    <div className="grid grid-cols-4 gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                         <div className="glass-card p-4 rounded-xl">
                             <div className="flex items-center gap-2 text-white/60 mb-2">
                                 <Users className="w-4 h-4" />
@@ -263,7 +263,7 @@ export default function StatsPanel({ isOpen, onClose }: StatsPanelProps) {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="glass-card p-4 rounded-xl">
                             <h3 className="text-sm font-bold text-white/80 mb-3 flex items-center gap-2">
                                 <TrendingUp className="w-4 h-4 text-purple-400" />
@@ -287,7 +287,7 @@ export default function StatsPanel({ isOpen, onClose }: StatsPanelProps) {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div className="glass-card p-4 rounded-xl">
                             <h3 className="text-sm font-bold text-white/80 mb-3">Pertenencia a Grupos</h3>
                             <svg ref={pieChartRef} width="150" height="150" className="mx-auto" />

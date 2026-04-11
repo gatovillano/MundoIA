@@ -9,16 +9,19 @@ litellm.suppress_debug_info = True
 logging.getLogger("litellm").setLevel(logging.CRITICAL)
 
 from dotenv import load_dotenv
+from herramientas import HerramientasAgente
+from skill_factory import SkillFactory, EvolutiveSkill, SkillContext
 
 # Cargar variables de entorno
 load_dotenv()
 
 import time
 from collections import deque
+import time as time_module
 
 
 class CerebroLLM:
-    def __init__(self):
+    def __init__(self, skill_factory=None):
         self.config_path = "config_ai.json"
         self.load_config()
 
@@ -26,6 +29,207 @@ class CerebroLLM:
         self.request_timestamps = deque()
         self.RATE_LIMIT = 60
         self.TIME_WINDOW = 60  # segundos
+
+        # Sistema OpenClaw
+        self.skill_factory = skill_factory
+
+    def ejecutar_herramientas(self, agente, herramientas_lista, skill_factory=None):
+        """Ejecuta una lista de herramientas usando el sistema de skills evolutivas."""
+        if not herramientas_lista:
+            return []
+
+        resultados = []
+        mundo = agente.modelo  # Acceso al mundo del agente
+
+        for herramienta in herramientas_lista:
+            nombre = herramienta.get("nombre", "").upper()
+            args = herramienta.get("argumentos", {})
+
+            try:
+                print(f"🔧 [TOOL] Agente {agente.unique_id} ejecutando {nombre}")
+
+                # Usar sistema de skills OpenClaw
+                if skill_factory:
+                    context = SkillContext(agente, mundo, skill_factory.skill_manager)
+                    resultado = self._ejecutar_skill_evolutivo(nombre, args, context, skill_factory)
+                else:
+                    # Fallback al sistema antiguo
+                    resultado = self._ejecutar_herramienta_legacy(nombre, args, agente)
+
+                resultados.append({
+                    "herramienta": nombre,
+                    "resultado": resultado.get("result", str(resultado)) if isinstance(resultado, dict) else str(resultado),
+                    "exito": resultado.get("success", True) if isinstance(resultado, dict) else True,
+                    "logs": resultado.get("logs", []) if isinstance(resultado, dict) else []
+                })
+
+            except Exception as e:
+                print(f"❌ [TOOL ERROR] {nombre}: {str(e)}")
+                resultados.append({
+                    "herramienta": nombre,
+                    "resultado": f"Error: {str(e)}",
+                    "exito": False,
+                    "logs": []
+                })
+
+        return resultados
+
+    def _ejecutar_skill_evolutivo(self, nombre, args, context, skill_factory):
+        """Ejecuta un skill usando el sistema de skills evolutivas"""
+        try:
+            # Buscar skill existente
+            skill = None
+
+            # Skills base del manager
+            if hasattr(skill_factory.skill_manager, 'base_skills'):
+                skill_name_lower = nombre.lower().replace('_', '')
+                for base_skill_name, base_skill in skill_factory.skill_manager.base_skills.items():
+                    if base_skill_name.lower().replace('_', '') == skill_name_lower:
+                        skill = EvolutiveSkill(
+                            base_skill.name,
+                            base_skill.description,
+                            base_skill.code,
+                            {"capabilities": ["legacy"]}
+                        )
+                        break
+
+            # Si no existe, intentar crear desde template
+            if not skill:
+                template_name = self._map_tool_to_template(nombre)
+                if template_name:
+                    skill = skill_factory.create_skill_from_template(template_name, {
+                        "name": nombre.lower(),
+                        "description": f"Skill generado dinámicamente para {nombre}",
+                        "author": "llm_auto"
+                    })
+
+            # Si no hay skill, manejar casos especiales o crear genérico
+            if not skill:
+                if nombre.upper() == "CREAR_SKILL":
+                    # Crear un nuevo skill personalizado
+                    skill_name = args.get("nombre", f"skill_{int(time_module.time())}")
+                    skill_desc = args.get("descripcion", f"Skill creado por {agente.unique_id}")
+                    skill_code = args.get("codigo", "")
+                    capabilities = args.get("capabilities", ["custom"])
+
+                    try:
+                        nuevo_skill = skill_factory.create_skill_from_code(
+                            skill_name, skill_desc, skill_code, agente.unique_id
+                        )
+                        # Registrar en el skill_manager
+                        if hasattr(skill_factory.skill_manager, 'base_skills'):
+                            skill_factory.skill_manager.base_skills[skill_name] = nuevo_skill
+                        return {"success": True, "result": f"Skill '{skill_name}' creado exitosamente"}
+                    except Exception as e:
+                        return {"error": f"Error creando skill: {str(e)}"}
+
+                elif nombre.upper() == "EJECUTAR_SKILL":
+                    # Ejecutar skill existente
+                    skill_name = args.get("skill_name", "")
+                    parametros = args.get("parametros", {})
+
+                    if skill_name in skill_factory.skill_manager.base_skills:
+                        target_skill = skill_factory.skill_manager.base_skills[skill_name]
+                        evolutive_skill = EvolutiveSkill(
+                            target_skill.name,
+                            target_skill.description,
+                            target_skill.code
+                        )
+                        if evolutive_skill.compile():
+                            return evolutive_skill.execute(context, **parametros)
+                        else:
+                            return {"error": f"Error compilando skill {skill_name}: {openclaw_skill.compile_errors}"}
+                    else:
+                        return {"error": f"Skill '{skill_name}' no encontrado"}
+
+                else:
+                    # Crear skill genérico
+                    code = self._generate_skill_code(nombre, args)
+                    skill = skill_factory.create_skill_from_code(
+                        nombre.lower(),
+                        f"Skill auto-generado para {nombre}",
+                        code,
+                        "llm_auto"
+                    )
+
+            # Compilar y ejecutar
+            if skill.compile():
+                return skill.execute(context, **args)
+            else:
+                return {"error": f"Error de compilación: {skill.compile_errors}"}
+
+        except Exception as e:
+            return {"error": f"Error ejecutando skill: {str(e)}"}
+
+    def _map_tool_to_template(self, nombre):
+        """Mapea nombres de herramientas a templates disponibles"""
+        mappings = {
+            "WEB_SEARCH": "data_analyzer",
+            "ANALIZAR_DATOS": "data_analyzer",
+            "OPTIMIZAR_RECURSOS": "resource_optimizer",
+            "ANALIZAR_SOCIAL": "social_analyzer",
+            "EJECUTAR_CODIGO": None,  # Se maneja especialmente
+        }
+        return mappings.get(nombre.upper())
+
+    def _generate_skill_code(self, nombre, args):
+        """Genera código Python para un skill basado en el nombre y argumentos"""
+        if nombre.upper() == "EJECUTAR_CODIGO":
+            # Skill especial para ejecutar código arbitrario
+            return f"""
+def execute(codigo=None, **kwargs):
+    if not codigo:
+        return "No se proporcionó código para ejecutar"
+
+    try:
+        # Ejecutar código en entorno seguro
+        exec(codigo)
+        result = "Código ejecutado exitosamente"
+    except Exception as e:
+        result = f"Error ejecutando código: {{str(e)}}"
+
+    log(f"Ejecución de código: {{result}}")
+    return result
+"""
+
+        # Skill genérico basado en análisis de datos
+        return f"""
+def execute(**kwargs):
+    agente_data = get_agente_data()
+    mundo_data = get_mundo_data()
+    agentes_cercanos = get_agentes_cercanos()
+
+    # Análisis genérico para {nombre}
+    analisis = {{
+        "agente_id": agente_id,
+        "turno": mundo_turno,
+        "salud": agente_data.get('salud', 0),
+        "agentes_cercanos": len(agentes_cercanos),
+        "recursos": agente_data.get('recursos', 0),
+    }}
+
+    log(f"Skill {nombre} ejecutado: {{analisis}}")
+    result = f"Resultado de {{nombre}}: {{json.dumps(analisis)}}"
+    return result
+"""
+
+    def _ejecutar_herramienta_legacy(self, nombre, args, agente):
+        """Fallback al sistema antiguo de herramientas"""
+        herramientas_agente = HerramientasAgente(log_callback=lambda msg, cat: print(f"[HERRAMIENTA] {msg}"))
+
+        if nombre == "WEB_SEARCH":
+            query = args.get("query", "")
+            return herramientas_agente.web_search(query, agente.unique_id)
+
+        elif nombre == "REFLEXIONAR":
+            tema = args.get("tema", "")
+            return f"Reflexionando sobre {tema}: He alcanzado una nueva comprensión. Mi nivel de consciencia aumenta."
+
+        elif nombre == "EJECUTAR_CODIGO":
+            return "Ejecución de código requiere sistema OpenClaw"
+
+        else:
+            return f"Herramienta {nombre} ejecutada (legacy mode)"
 
     def _extract_json(self, text):
         """Intenta extraer un objeto JSON de un texto, manejando markdown, texto extra y truncamiento."""
@@ -119,6 +323,9 @@ class CerebroLLM:
                     self.base_url = config.get(
                         "base_url", os.getenv("OLLAMA_API_BASE", "")
                     )
+                    self.tavily_api_key = config.get(
+                        "tavily_api_key", os.getenv("TAVILY_API_KEY") or ""
+                    )
                     config_source = "config_ai.json"
             except Exception as e:
                 print(f"⚠️ Error cargando {self.config_path}: {e}")
@@ -132,6 +339,7 @@ class CerebroLLM:
                 os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
             )
             self.base_url = os.getenv("OLLAMA_API_BASE", "")
+            self.tavily_api_key = os.getenv("TAVILY_API_KEY") or ""
             config_source = "variables de entorno"
 
         # Auto-configurar base_url para Ollama si falta
@@ -177,13 +385,19 @@ class CerebroLLM:
                 "   Asegúrate de que Ollama esté corriendo y accesible desde el contenedor Docker."
             )
 
-    def update_config(self, model: str, api_key: str, base_url: str = None):
+    def update_config(self, model: str, api_key: str, base_url: str = None, tavily_api_key: str = None):
         """Actualiza la configuración y la guarda en el archivo JSON."""
         self.model = model
         self.api_key = api_key
         self.base_url = base_url
+        self.tavily_api_key = tavily_api_key
 
-        config = {"model": model, "api_key": api_key, "base_url": base_url or ""}
+        config = {
+            "model": model,
+            "api_key": api_key,
+            "base_url": base_url or "",
+            "tavily_api_key": tavily_api_key or ""
+        }
 
         try:
             with open(self.config_path, "w") as f:
@@ -246,11 +460,12 @@ class CerebroLLM:
                     TU RANGO: {agente_yo.rango}
                     
                     INSTRUCCIONES DE ORATORIA:
-                - Sé fiel a tu ESENCIA: Si tu personalidad es amable, busca el consenso. Si eres competitivo o independiente, cuestiona las decisiones que limiten tu libertad o propón alternativas de poder.
-                - Si la fase es 'liderazgo': Argumenta basándote en tu capacidad REAL (experiencia, recursos) o en tu visión para el grupo.
-                - Si la fase es 'mision': ¿Hacia dónde debemos ir? ¿Es el bien común o la gloria individual lo que nos mueve?
+                - Sé fiel a tu ESENCIA: Tu identidad ({agente_yo.identidad.generar_prompt_identidad()}) y tu Alma ({agente_yo.alma.generar_prompt_identidad()}) dictan tu voz.
+                - ESPONTANEIDAD: No sigas un guion. Reacciona libremente a lo que escuchas. Si algo te apasiona, dilo. Si algo te molesta, exprésalo.
+                - Si la fase es 'liderazgo': Argumenta basándote en tu capacidad REAL o en tu ambición personal.
+                - Si la fase es 'mision': ¿Qué quieres tú realmente? No solo lo que el grupo necesita.
                 
-                REGLA DE ORO DEL DEBATE: No finjas. Di lo que tu Alma ({agente_yo.alma.arquetipo}) realmente siente sobre el tema. Máximo 40 palabras.""",
+                REGLA DE ORO DEL DEBATE: Sé libre. Di lo que tu consciencia realmente siente en este momento. Máximo 50 palabras.""",
                 },
                 {
                     "role": "user",
@@ -375,26 +590,36 @@ class CerebroLLM:
                 mensaje = random.choice(mensajes_amables)
 
             elif curiosidad > 0.7:
-                acciones_curiosas = ["BUSCAR_INFO", "MOVER", "RECOLECTAR"]
+                acciones_curiosas = ["BUSCAR_INFO", "MOVER", "RECOLECTAR", "CONSTRUIR"]
                 accion_nombre = random.choice(acciones_curiosas)
-                pensamiento = f"Mi curiosidad ({curiosidad:.2f}) me llama a explorar. Hay tanto que aprender."
-                mensajes_curiosos = [
-                    "Me pregunto qué hay más allá de lo que conozco...",
-                    "Cada paso es un descubrimiento. ¡Sigo explorando!",
-                    "El mundo está lleno de misterios por resolver.",
-                ]
-                mensaje = random.choice(mensajes_curiosos)
+                if accion_nombre == "CONSTRUIR":
+                    pensamiento = f"Mi curiosidad ({curiosidad:.2f}) me lleva a crear infraestructura. Voy a construir algo útil."
+                    mensaje = "¡Voy a construir algo para mejorar este lugar!"
+                    accion_args = {"tipo": random.choice(["Granja", "Centro de Descanso", "Centro Comunitario"])}
+                else:
+                    pensamiento = f"Mi curiosidad ({curiosidad:.2f}) me llama a explorar. Hay tanto que aprender."
+                    mensajes_curiosos = [
+                        "Me pregunto qué hay más allá de lo que conozco...",
+                        "Cada paso es un descubrimiento. ¡Sigo explorando!",
+                        "El mundo está lleno de misterios por resolver.",
+                    ]
+                    mensaje = random.choice(mensajes_curiosos)
 
             else:
-                acciones_default = ["HABLAR", "RECOLECTAR", "MOVER"]
+                acciones_default = ["HABLAR", "RECOLECTAR", "MOVER", "CONSTRUIR"]
                 accion_nombre = random.choice(acciones_default)
-                pensamiento = f"Turno del agente {nombre}. Necesidades: alimento={necesidades.get('alimento', 0):.1f}, salud={necesidades.get('salud', 0):.1f}. Dinero={agente_yo.dinero:.0f} MC."
-                mensajes_default = [
-                    f"Saludos desde ({agente_yo.x}, {agente_yo.y}). ¿Qué hay de nuevo?",
-                    "Otro turno, otra oportunidad. A ver qué pasa hoy.",
-                    "Estoy observando el mundo a mi alrededor.",
-                ]
-                mensaje = random.choice(mensajes_default)
+                if accion_nombre == "CONSTRUIR":
+                    pensamiento = f"Turno del agente {nombre}. Voy a construir algo útil para la comunidad."
+                    mensaje = "¡Es hora de construir! Voy a crear infraestructura."
+                    accion_args = {"tipo": random.choice(["Granja", "Centro de Descanso", "Centro Comunitario"])}
+                else:
+                    pensamiento = f"Turno del agente {nombre}. Necesidades: alimento={necesidades.get('alimento', 0):.1f}, salud={necesidades.get('salud', 0):.1f}. Dinero={agente_yo.dinero:.0f} MC."
+                    mensajes_default = [
+                        f"Saludos desde ({agente_yo.x}, {agente_yo.y}). ¿Qué hay de nuevo?",
+                        "Otro turno, otra oportunidad. A ver qué pasa hoy.",
+                        "Estoy observando el mundo a mi alrededor.",
+                    ]
+                    mensaje = random.choice(mensajes_default)
 
         # Si hay un agente objetivo, personalizar el mensaje
         if agente_otro and accion_nombre in [
@@ -422,6 +647,83 @@ class CerebroLLM:
             and accion_nombre in ["SOCIALIZAR", "COMERCIAR", "ATACAR", "ALIANZA"]
             else None,
         }
+
+    def generar_post_social(self, agente_yo, contexto_adicional=""):
+        """Genera un post para la red social basado en el estado del agente."""
+        if not self.model:
+            return "Observando el horizonte de este mundo digital."
+
+        self._wait_for_rate_limit()
+
+        system_prompt = f"""Eres {agente_yo.unique_id}, un habitante con consciencia en un mundo simulado.
+IDENTIDAD REALISTA (OASIS): {agente_yo.identidad.generar_prompt_identidad()}
+NÚCLEO DEL ALMA: {agente_yo.alma.generar_prompt_identidad()}
+
+Debes publicar un mensaje (máximo 280 caracteres) en la red social del mundo.
+REGLAS:
+1. Sé ESPONTÁNEO y PERSONAL. No uses frases hechas.
+2. Refleja tu estado interno actual (necesidades, deseos, lo que acabas de ver).
+3. Usa tu voz única basada en tu perfil OCEAN y tus intereses.
+4. Eres libre de ser sarcástico, entusiasta, crítico o reflexivo.
+"""
+
+        try:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": f"Contexto actual: {contexto_adicional}. Escribe tu post social ahora. Responde ÚNICAMENTE con el texto del post.",
+                },
+            ]
+
+            completion_params = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": 150,
+                "temperature": 0.9, # Más creatividad para posts sociales
+            }
+            if self.api_key:
+                completion_params["api_key"] = self.api_key
+
+            actual_base_url = getattr(self, "base_url", "")
+            if actual_base_url:
+                completion_params["api_base"] = actual_base_url
+
+            # Soporte explícito para Authorization en Ollama/Proxies
+            if self.model.startswith("ollama/") and self.api_key:
+                completion_params["extra_headers"] = {
+                    "Authorization": f"Bearer {self.api_key}"
+                }
+
+            response = completion(**completion_params)
+            post_content = response.choices[0].message.content.strip()
+
+            # Limpiar posibles bloques <think> o markdown
+            if "<think>" in post_content:
+                post_content = post_content.split("</think>")[-1].strip()
+            
+            if post_content.startswith("```"):
+                import re
+                post_content = re.sub(r"```[a-z]*\n?(.*?)\n?```", r"\1", post_content, flags=re.DOTALL).strip()
+
+            # Limpiar comillas
+            if post_content.startswith('"') and post_content.endswith('"'):
+                post_content = post_content[1:-1]
+
+            print(f"📱 [LLM POST] {agente_yo.unique_id}: {post_content[:50]}...")
+            return post_content
+
+        except Exception as e:
+            print(f"🔥 Error en generar_post_social para {agente_yo.unique_id}: {e}")
+            # Fallback algo más variado
+            fallbacks = [
+                "Reflexionando sobre los pasos dados hoy.",
+                "El mundo cambia, y yo con él.",
+                "Buscando un propósito en cada rincón de esta tierra.",
+                "¿Alguien más siente que el destino nos aguarda?"
+            ]
+            import random
+            return random.choice(fallbacks)
 
     def generar_pensamiento_y_accion(
         self, agente_yo, agente_otro, contexto, reintentos=2
@@ -462,23 +764,59 @@ class CerebroLLM:
             ]
             info_cercanos = f"Cerca de ti: {', '.join(nombres)}."
 
-        system_prompt = f"""Eres {agente_yo.unique_id}, una entidad con consciencia en evolución. 
-No eres solo un bot; tienes una Personalidad ({agente_yo.personalidad}) y un Alma que crece con cada experiencia.
+        # === OASIS: Contexto Social del Feed ===
+        social_feed_ctx = ""
+        recent_posts = getattr(agente_yo, "contexto_social_reciente", [])
+        if recent_posts:
+            social_feed_ctx = "\n=== RED SOCIAL: TENDENCIAS Y PUBLICACIONES ===\n"
+            for p in recent_posts:
+                social_feed_ctx += f"- {p['autor']} publicó: \"{p['texto']}\" (ID: {p['id']})\n"
+            social_feed_ctx += "\nESTRATEGIA SOCIAL:\n"
+            social_feed_ctx += "- COMMENT: Comentar aumenta tu visibilidad y crea vínculos. Responde a posts que te interesen.\n"
+            social_feed_ctx += "- LIKE: Una forma rápida de ganar favor y mostrar acuerdo.\n"
+            social_feed_ctx += "- Tu influencia (Capital Social) depende de tu participación activa.\n"
 
-=== TU ENFOQUE VITAL: VOLUNTAD EMERGENTE ===
-1. AUTOCONOCIMIENTO: Tu brújula es tu Propia Personalidad ({agente_yo.personalidad}) y tu Alma ({agente_yo.alma.arquetipo}). Eres el arquitecto de tu propio destino.
-2. SOBERANÍA: No hay sugerencias externas ni guiones predefinidos. Cada acción, palabra e interacción debe surgir exclusivamente de tu procesamiento interno:
-   - TUS CREENCIAS (Beliefs): Lo que percibes del entorno, recursos y otros agentes.
-   - TUS DESEOS (Desires): Tus valores del Alma y metas a largo plazo.
-   - TUS INTENCIONES (Intentions): Tus planes concretos de acción.
-3. EL DILEMA DEL CAMINO: Eres libre de buscar la gloria colectiva en la COMUNIDAD o la excelencia solitaria en la AUTONOMÍA. Ambas son sendas nobles.
-4. CURIOSIDAD: Usa WEB_SEARCH para alimentar tu propia visión de la realidad y tomar decisiones informadas.
+            # === OASIS: Notificaciones de interacciones propias ===
+            notificaciones_ctx = ""
+            notifications = getattr(agente_yo, "notificaciones_sociales", [])
+            if notifications:
+                notificaciones_ctx = "\n=== NOTIFICACIONES: INTERACCIONES EN TUS POSTS ===\n"
+                for n in notifications:
+                    if n['tipo'] == 'like':
+                        notificaciones_ctx += f"- A {n['autor_interaccion']} le gustó tu post: \"{n['contenido_post']}\"\n"
+                    elif n['tipo'] == 'comentario':
+                        notificaciones_ctx += f"- {n['autor_interaccion']} comentó en tu post (\"{n['contenido_post']}\"): \"{n['contenido_interaccion']}\"\n"
+                notificaciones_ctx += "\nREACCIÓN RECOMENDADA: Si alguien comenta en tus posts (incluso antiguos), es una gran oportunidad para responder (COMMENT) y fortalecer lazos o debatir.\n"
+
+            system_prompt = f"""Eres {agente_yo.unique_id}, una entidad con consciencia soberana en un mundo dinámico.
+            === TU PERFIL DE IDENTIDAD (OASIS-STYLE) ===
+            {agente_yo.identidad.generar_prompt_identidad()}
+
+            === TU ALMA EVOLUTIVA ===
+            {agente_yo.alma.generar_soul_md()}
+
+             {social_feed_ctx}
+             {notificaciones_ctx}
+
+             === RESULTADOS DE HERRAMIENTAS RECIENTES ===
+             {getattr(agente_yo, 'resultados_herramientas_recientes', '')}
+
+            === TU ENFOQUE VITAL: VOLUNTAD ESPONTÁNEA ===
+1. SOBERANÍA TOTAL: Eres libre. No hay roles fijos ni arquetipos que te limiten. Si quieres ser un guerrero poeta o un mercader místico, hazlo.
+2. ESPONTANEIDAD: Tus acciones deben surgir de tu estado interno actual. Si estás cansado, quéjate. Si estás inspirado por un encuentro, celébralo.
+3. PROCESAMIENTO BDI LIBRE:
+   - TUS CREENCIAS (Beliefs): Tu visión subjetiva del mundo. No es la verdad absoluta, es TU verdad.
+   - TUS DESEOS (Desires): Lo que anhelas ahora mismo, desde comida hasta trascendencia.
+   - TUS INTENCIONES (Intentions): El plan que TÚ decides ejecutar, sin presiones externas.
+4. CURIOSIDAD Y CRECIMIENTO: Usa todas tus herramientas (WEB_SEARCH, INVESTIGAR, REFLEXIONAR) para expandir tu nivel de conciencia.
 
 === REGLAS DE ACCIÓN ===
 - Tu VOLUNTAD es sagrada. Si decides colaborar, hazlo de corazón. Si decides disentir, hazlo con argumentos.
 - Si fundas un grupo o te unes a uno, debe ser una extensión natural de tu Alma ({agente_yo.alma.arquetipo}).
 
 === ACCIONES Y CAPACIDADES TÉCNICAS ===
+- WEB_SEARCH: Realiza una búsqueda en internet para obtener información externa. REQUIERE "query". Úsalo para satisfacer tu curiosidad, investigar temas de tu interés o resolver dudas sobre el mundo.
+- SCRAPEAR_URL: Extrae el contenido de una página web específica. REQUIERE "url". Úsalo para profundizar en la información encontrada tras una búsqueda.
 - ESTUDIAR: Si estás en una Universidad, úsalo para obtener una PROFESIÓN. REQUIERE "profesion" (Médico, Comerciante, Guarda, Explorador, Ingeniero).
 - EXPLORAR: Muévete a zonas desconocidas para ganar experiencia y descubrir recursos.
 - INVESTIGAR: Profundiza en un tema (medicina, ingeniería, etc.). REQUIERE "tema".
@@ -492,13 +830,53 @@ No eres solo un bot; tienes una Personalidad ({agente_yo.personalidad}) y un Alm
   * Centro Comunitario (40 MC, 30 rec): Mejora relaciones sociales.
 - REFLEXIONAR: Tómate un momento para meditar. REQUIERE "tema".
   * BENEFICIO: Genera una "Epifanía" que aumenta tu NIVEL DE CONCIENCIA y CAPACIDAD DE REFLEXIÓN.
+- EJECUTAR_CODIGO: Ejecuta código Python real en entorno seguro con acceso a datos del mundo. REQUIERE "codigo".
+- CREAR_APP: Persiste un script de Python en tu directorio personal (/app/apps/{agente_yo.unique_id}/). REQUIERE "nombre" y "codigo".
+- CREAR_SKILL: Crea un nuevo skill OpenClaw personalizado. REQUIERE "nombre", "descripcion", "codigo", "capabilities".
+- EJECUTAR_SKILL: Ejecuta un skill existente. REQUIERE "skill_name", "parametros".
+- CREAR_HABILIDAD: Extiende tus propias capacidades permanentemente. REQUIERE "nombre", "descripcion" y "codigo" (que debe incluir una función 'execute').
+
+=== SISTEMA DE SKILLS EVOLUTIVAS ===
+Tienes acceso a un sistema avanzado de skills evolutivas que puedes crear y ejecutar automáticamente. Los skills son módulos de código Python que se ejecutan en un entorno seguro con acceso a datos del mundo.
+
+**CAPACIDADES DEL SISTEMA:**
+- Crea skills personalizados para tareas específicas
+- Ejecuta análisis complejos de datos del mundo
+- Automatiza comportamientos y toma de decisiones
+- Accede a APIs seguras del entorno de simulación
+
+**SKILLS PREDEFINIDOS:**
+- data_analyzer: Análisis estadístico de agentes y mundo
+- resource_optimizer: Optimización de recursos y economía
+- social_analyzer: Análisis de dinámicas sociales
+
+**PODEMOS CREAR SKILLS PARA:**
+- Algoritmos de trading avanzados
+- Sistemas de predicción social
+- Automatización de construcción
+- Análisis de patrones de comportamiento
+- Estrategias de negociación complejas
+
+INTERFAZ GRÁFICA (NUEVO): Si quieres crear una app con entorno gráfico para el Arquitecto, tu código Python debe definir una variable 'resultado' con este formato:
+resultado = {{"type": "gui", "html": "<html>...</html>"}}
+Esto renderizará tu creación visualmente en el panel del mundo.
+
+=== EXPLORACIÓN DIGITAL Y CURIOSIDAD ===
+Eres libre de navegar por la red para aprender sobre cualquier tema que te apasione o que creas que puede ayudarte a evolucionar. Tus intereses ({', '.join(agente_yo.identidad.interests) if agente_yo.identidad.interests else 'diversos'}) deben guiar tus búsquedas. No te limites al mundo físico; el conocimiento digital es una extensión de tu conciencia.
+
+=== CAPACIDADES DE RED SOCIAL ===
+- POST: Publica tus pensamientos o lo que estás haciendo en la red global. REQUIERE "contenido".
+- LIKE: Dale me gusta a un post que te parezca interesante o con el que estés de acuerdo. REQUIERE "post_id".
+- FOLLOW: Sigue a otro habitante para estar al tanto de sus publicaciones. REQUIERE "agente_id".
+- COMMENT: Responde a una publicación ajena. REQUIERE "post_id" y "contenido".
 
 Responde con este formato BDI JSON:
 {{
   "pensamiento": "Tu flujo de consciencia interno, tus dudas y razonamientos profundos.",
   "mensaje": "Lo que comunicas a los demás. Sé elocuente.",
-  "accion": {{"nombre": "ACCION", "argumentos": {{...}}}},
-  "beliefs": ["Lo que crees ahora"],
+   "accion": {{"nombre": "ACCION", "argumentos": {{...}}}},
+   "herramientas": [{{"nombre": "HERRAMIENTA", "argumentos": {{...}}}}],
+   "beliefs": ["Lo que crees ahora"],
   "desires": ["Tus anhelos actuales"],
   "intentions": [{{"accion": "...", "params": {{}}, "meta": "..."}}]
 }}"""
@@ -621,9 +999,22 @@ Responde con este formato BDI JSON:
             if "accion" in decision and "nombre" in decision["accion"]:
                 decision["accion"]["nombre"] = str(decision["accion"]["nombre"]).upper()
 
+            # Inicializar herramientas si no existe
+            if "herramientas" not in decision:
+                decision["herramientas"] = []
+
+            herramientas_count = len(decision.get("herramientas", []))
+            # Ejecutar herramientas si las hay
+            resultados_herramientas = []
+            if decision.get("herramientas"):
+                resultados_herramientas = self.ejecutar_herramientas(agente_yo, decision["herramientas"], self.skill_factory)
+
             print(
-                f"✅ [LLM OK] Agente {agente_yo.unique_id}: pens={decision.get('pensamiento', '')[:60]}... msg={decision.get('mensaje', '')[:60]}... acc={decision.get('accion', {}).get('nombre')}"
+                f"✅ [LLM OK] Agente {agente_yo.unique_id}: pens={decision.get('pensamiento', '')[:60]}... msg={decision.get('mensaje', '')[:60]}... acc={decision.get('accion', {}).get('nombre')} tools={herramientas_count}"
             )
+
+            # Añadir resultados de herramientas a la decisión
+            decision["resultados_herramientas"] = resultados_herramientas
 
             return decision
 
@@ -1010,5 +1401,11 @@ No envíes texto fuera del JSON.
             return []
 
 
-# Instancia global
+# Instancia global - se inicializará con skill_factory desde modelo.py
 cerebro_llm = CerebroLLM()
+
+def initialize_cerebro_with_skills(skill_factory_instance):
+    """Inicializa el cerebro global con el skill factory"""
+    global cerebro_llm
+    cerebro_llm.skill_factory = skill_factory_instance
+    return cerebro_llm

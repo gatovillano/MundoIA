@@ -24,13 +24,17 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
 
     const baseDepth = 8;
 
+    // Dimensiones del mapa (puede ser rectangular)
+    const mapWidth = mapa?.length || 0;
+    const mapHeight = mapa?.[0]?.length || 0;
+
     // Partículas
     const particleData = useMemo(() => {
         if (!mapa || mapa.length === 0) return [];
         return Array.from({ length: 30 }).map((_, i) => ({
             id: i,
-            x: (Math.random() - 0.5) * mapa.length * tileW * 2,
-            y: (Math.random() - 0.2) * mapa[0].length * tileH * 2,
+            x: (Math.random() - 0.5) * mapWidth * tileW * 2,
+            y: (Math.random() - 0.2) * mapHeight * tileH * 2,
             r: 1 + Math.random() * 2,
             delay: Math.random() * 15
         }));
@@ -287,11 +291,31 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
 
         particlesGroup.selectAll("circle").data(particleData).join("circle").attr("cx", d => d.x).attr("cy", d => d.y).attr("r", d => d.r).attr("fill", "#7c4dff").attr("opacity", 0).attr("class", "animate-particle").style("animation-delay", d => `${d.delay}s`);
 
-        const zoom = d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.3, 3]).on("zoom", (event) => g.attr("transform", event.transform));
-        if (!initializedRef.current) {
+        const zoom = d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.1, 4]).on("zoom", (event) => g.attr("transform", event.transform));
+        
+        // RECALCULAR ZOOM SI LAS DIMENSIONES CAMBIAN O NO SE HA INICIALIZADO
+        const mapKey = `${mapWidth}x${mapHeight}`;
+        const lastMapKey = (svg.node() as any)?.__lastMapKey;
+
+        if (!initializedRef.current || lastMapKey !== mapKey) {
             svg.call(zoom);
-            svg.call(zoom.transform, d3.zoomIdentity.translate(width/2, height/4).scale(1.0));
+            // Calcular centro del mapa para zoom inicial - soporta mapas rectangulares
+            const mapPixelWidth = (mapWidth + mapHeight) * (tileW / 2);
+            const mapPixelHeight = (mapWidth + mapHeight) * (tileH / 2);
+            
+            const centerX = width / 2;
+            const centerY = height / 4; // Un poco más arriba para perspectiva isométrica
+            
+            // Escala dinámica según el tamaño del mapa para que quepa siempre
+            const scale = Math.min(1.0, (width * 0.8) / mapPixelWidth, (height * 0.8) / mapPixelHeight);
+            
+            svg.transition().duration(800).call(
+                zoom.transform, 
+                d3.zoomIdentity.translate(centerX, centerY).scale(scale)
+            );
+            
             initializedRef.current = true;
+            (svg.node() as any).__lastMapKey = mapKey;
         }
 
         if (showLinks && relationships) {
@@ -420,15 +444,32 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
             <button onClick={() => setShowLinks(!showLinks)} className="absolute top-20 right-6 glass-panel p-2.5 rounded-xl border border-white/10 hover:border-purple-500/50 transition-all z-50">
                 {showLinks ? <Link className="w-4 h-4 text-emerald-400" /> : <Link2Off className="w-4 h-4 text-gray-400" />}
             </button>
-            <div className="absolute top-20 left-6 p-3 rounded-xl border-2 border-[#424242] text-[9px] space-y-2 pointer-events-none w-36 bg-[#212121]/90 shadow-[2px_2px_0px_#000]">
-                <div className="text-[#E0E0E0] font-bold uppercase mb-1 border-b-2 border-[#424242] pb-1.5 font-monospace">Biomas</div>
-                <div className="grid grid-cols-1 gap-y-1.5 px-1 font-monospace text-[#BDBDBD]">
-                    <LegendBox top="#7CB342" left="#558B2F" right="#689F38" label="Hierba" />
-                    <LegendBox top="#B0BEC5" left="#546E7A" right="#37474F" label="Montaña" />
-                    <LegendBox top="#29B6F6" left="#0288D1" right="#039BE5" label="Lago" />
-                    <LegendBox top="#558B2F" left="#33691E" right="#417A27" label="Bosque" />
-                    <LegendBox top="#FFE082" left="#FFB300" right="#FFCA28" label="Desierto" />
+            <div className="absolute top-20 left-6 flex flex-col gap-3">
+                {/* Leyenda de Biomas */}
+                <div className="p-3 rounded-xl border-2 border-[#424242] text-[9px] space-y-2 pointer-events-none w-36 bg-[#212121]/90 shadow-[2px_2px_0px_#000]">
+                    <div className="text-[#E0E0E0] font-bold uppercase mb-1 border-b-2 border-[#424242] pb-1.5 font-monospace">Biomas</div>
+                    <div className="grid grid-cols-1 gap-y-1.5 px-1 font-monospace text-[#BDBDBD]">
+                        <LegendBox top="#7CB342" left="#558B2F" right="#689F38" label="Hierba" />
+                        <LegendBox top="#B0BEC5" left="#546E7A" right="#37474F" label="Montaña" />
+                        <LegendBox top="#29B6F6" left="#0288D1" right="#039BE5" label="Lago" />
+                        <LegendBox top="#558B2F" left="#33691E" right="#417A27" label="Bosque" />
+                        <LegendBox top="#FFE082" left="#FFB300" right="#FFCA28" label="Desierto" />
+                    </div>
                 </div>
+                {/* Dimensiones del Mundo */}
+                {mapa && mapa.length > 0 && (
+                    <div className="p-3 rounded-xl border-2 border-[#424242] text-[9px] pointer-events-none bg-[#212121]/90 shadow-[2px_2px_0px_#000]">
+                        <div className="text-[#E0E0E0] font-bold uppercase mb-2 border-b-2 border-[#424242] pb-1 font-monospace">Dimensiones</div>
+                        <div className="font-monospace text-[#BDBDBD] flex items-center gap-2">
+                            <span className="text-yellow-500 font-bold">{mapWidth}</span>
+                            <span className="text-gray-600">×</span>
+                            <span className="text-emerald-400 font-bold">{mapHeight}</span>
+                        </div>
+                        <div className="text-[7px] text-gray-500 mt-1 font-monospace">
+                            {mapWidth * mapHeight} casillas totales
+                        </div>
+                    </div>
+                )}
             </div>
             {weather === 'rainy' && <div className="absolute inset-0 pointer-events-none bg-[url('/rain.png')] opacity-15 animate-rain"></div>}
         </div>

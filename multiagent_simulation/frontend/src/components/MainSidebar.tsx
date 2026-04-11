@@ -18,7 +18,9 @@ import {
     Activity,
     MessageCircle,
     Music,
-    VolumeX
+    VolumeX,
+    Globe,
+    TrendingUp
 } from "lucide-react";
 
 import { useState, useRef } from "react";
@@ -90,6 +92,7 @@ export default function MainSidebar({
 
     const actionItems = [
         { id: "chat", icon: MessageCircle, label: "Chat", color: "text-cyan-400" },
+        { id: "social", icon: Globe, label: "Red Social", color: "text-[#00e5ff]" },
         { id: "factions", icon: Flag, label: "Sociedades", color: "text-[#ffd600]" },
         { id: "institutions", icon: Landmark, label: "Instituciones", color: "text-emerald-400" },
         { id: "missions", icon: Zap, label: "Misiones", color: "text-[#ffea00]" },

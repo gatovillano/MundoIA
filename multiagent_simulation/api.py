@@ -310,148 +310,38 @@ class SessionManager:
         if not sim:
             return
 
-        # Construir diccionario de grupos dinámicos y preparar lista de civilizaciones reales
-        grupos_dinamicos = {}
-        civilizaciones_viz = {}
-
-        # Iterar sobre todas las "civilizaciones" del modelo (que ahora incluyen grupos y civs)
-        for civ_id, civ in sim.civilizaciones.items():
-            # Calcular recursos en tiempo real para todos
-            miembros = [
-                a
-                for a in sim.agentes
-                if a.civilizacion_id == civ_id or a.grupo_id == civ_id
-            ]
-            recursos_totales = sum(a.recursos for a in miembros)
-
-            data_viz = {
-                "nombre": civ.nombre,
-                "color": civ.color,
-                "descripcion": getattr(civ, "descripcion", ""),
-                "recursos": recursos_totales,
-                "tipo": civ.tipo.lower()
-                if hasattr(civ, "tipo")
-                else "grupo_dinamico",  # Fallback
-                "members": len(miembros),  # Incluir número de miembros
-            }
-
-            if getattr(civ, "tipo", "GRUPO") == "CIVILIZACION":
-                civilizaciones_viz[civ_id] = data_viz
-            else:
-                grupos_dinamicos[civ_id] = data_viz
-
-        # Añadir también grupos que solo existen en objetivos_grupos pero no han instanciado Civilizacion (caso legacy/safety)
-        for grupo_id, mision in sim.objetivos_grupos.items():
-            if grupo_id not in sim.civilizaciones:
-                miembros = [a for a in sim.agentes if a.grupo_id == grupo_id]
-                if miembros:
-                    color_idx = hash(grupo_id) % len(sim.colores_paleta)
-                    grupos_dinamicos[grupo_id] = {
-                        "nombre": mision[:30] + "..." if len(mision) > 30 else mision,
-                        "color": sim.colores_paleta[color_idx],
-                        "recursos": sum(a.recursos for a in miembros),
-                        "tipo": "grupo",
-                        "members": len(miembros),  # Incluir número de miembros
-                    }
-
-        # Consolidar propuestas (Leyes Globales + Leyes de Facciones + Asambleas)
-        todas_propuestas = list(sim.leyes_globales)
-        for g_id, leyes in sim.facciones_leyes.items():
-            for ley in leyes:
-                ley_copy = ley.copy()
-                ley_copy["grupo_id"] = g_id
-                todas_propuestas.append(ley_copy)
-
-        # Añadir asambleas como propuestas tipo asamblea
-        for asamblea in sim.asambleas_globales:
-            todas_propuestas.append(
-                {
-                    "id": asamblea["id"],
-                    "proponente_id": asamblea["proponente_id"],
-                    "texto": asamblea["tema"],
-                    "tipo": "asamblea",
-                    "estado": asamblea["estado"],
-                    "votos_si": asamblea["votos_si"],
-                    "votos_no": asamblea["votos_no"],
-                }
-            )
-
-        # Stats Payload
-        current_stats = {
-            "step": sim.paso_actual,
-            "groups": len(set(a.grupo_id for a in sim.agentes if a.grupo_id)),
-            "economy": sim.economia,
-            "weather": sim.weather,
-            "lore": sim.lore,
-            "civilizaciones": civilizaciones_viz,
-            "grupos_dinamicos": grupos_dinamicos,
-            "propuestas": todas_propuestas,
-            "relaciones_grupos": {
-                f"{k[0]}:{k[1]}": v for k, v in sim.relaciones_grupos.items()
-            },
-            "guerras_activas": [f"{g1}:{g2}" for g1, g2 in sim.guerras_activas],
-            "misiones": sim.sistema_misiones.to_dict(),
-            "user_score": sim.sistema_misiones.obtener_puntaje(user_id or "default"),
-            "recent_completed_missions": getattr(
-                sim, "misiones_completadas_este_turno", []
-            ),
-            "instituciones": {k: v.to_dict() for k, v in sim.instituciones.items()},
-            "historia": sim.historia.to_dict(),
-            "ranking": [
-                {"user_id": r[0], "username": r[1], "puntos": r[2]}
-                for r in sim.db.get_ranking()
-            ]
-            if sim.db_active
-            else [],
-            "logs": sim.historial_logs if include_logs else [],
-            "agente_poseido_id": getattr(sim, "agente_poseido_id", None),
-        }
-
-        # Solo incluir el mapa si se solicita explícitamente (ahorro masivo de ancho de banda)
-        if include_map:
-            current_stats["mapa"] = [
-                [t.to_dict() if t else None for t in row] for row in sim.mapa
-            ]
-
-        def get_delta(old, new):
-            if not isinstance(old, dict) or not isinstance(new, dict):
-                return new if old != new else None
-
-            diff = {}
-            for k, v in new.items():
-                if k not in old:
-                    diff[k] = v
-                else:
-                    if isinstance(v, dict):
-                        sub_diff = get_delta(old[k], v)
-                        if sub_diff is not None:
-                            diff[k] = sub_diff
-                    elif isinstance(v, list):
-                        if old[k] != v:
-                            diff[k] = v
-                    elif old[k] != v:
-                        diff[k] = v
-            return diff if diff else None
-
         # Determinar si enviamos delta o completo (enviar completo cada 50 pasos para sincronización)
         is_first = user_id not in self.last_stats
-        force_full = include_map or include_logs or (sim.paso_actual % 50 == 0)
+        force_full = include_map or is_first or include_logs or (sim.paso_actual % 50 == 0)
+        
+        # Si es la primera vez, forzar la inclusión del mapa si no viene marcada
+        effective_include_map = include_map or is_first
+        
+        # Construir el payload completo de estadísticas usando el método auxiliar
+        current_stats = self._build_stats_payload(sim, user_id, include_logs, effective_include_map)
 
         if is_first or force_full:
             await self.send_to_user(user_id, {**current_stats, "type": "stats"})
             self.last_stats[user_id] = current_stats
         else:
-            delta = get_delta(self.last_stats.get(user_id, {}), current_stats)
+            delta = self.get_delta(self.last_stats.get(user_id, {}), current_stats)
             if delta:
+                # IMPORTANTE: Asegurar que socialFeed se envíe si hay cambios,
+                # a veces get_delta puede fallar con listas de objetos complejos.
+                if "socialFeed" in current_stats and (
+                    "socialFeed" not in self.last_stats.get(user_id, {}) or 
+                    len(current_stats["socialFeed"]) != len(self.last_stats[user_id].get("socialFeed", []))
+                ):
+                    delta["socialFeed"] = current_stats["socialFeed"]
+
                 await self.send_to_user(
                     user_id,
                     {
                         "type": "stats_delta",
-                        "step": sim.paso_actual,  # Siempre incluimos el paso actual por seguridad
+                        "step": sim.paso_actual,
                         "delta": delta,
                     },
                 )
-                # Actualizar el rastro del último estado enviado
                 self.last_stats[user_id] = current_stats
 
         # Agentes
@@ -528,7 +418,7 @@ class SessionManager:
                 if agent_id not in last_agents:
                     updates[agent_id] = agent_data
                 else:
-                    agent_delta = get_delta(last_agents[agent_id], agent_data)
+                    agent_delta = self.get_delta(last_agents[agent_id], agent_data)
                     if agent_delta:
                         updates[agent_id] = agent_delta
 
@@ -555,9 +445,149 @@ class SessionManager:
                             "strength": a.memoria.obtener_fuerza(neighbor),
                         }
                     )
-            await self.send_to_user(
-                user_id, {"type": "relationships", "data": relationships}
+                await self.send_to_user(
+                    user_id, {"type": "relationships", "data": relationships}
+                )
+
+    def _build_stats_payload(self, sim, user_id, include_logs, include_map):
+        """Construye el payload de estadísticas para el usuario."""
+        # Construir diccionario de grupos dinámicos y preparar lista de civilizaciones reales
+        grupos_dinamicos = {}
+        civilizaciones_viz = {}
+
+        for civ_id, civ in sim.civilizaciones.items():
+            miembros = [
+                a
+                for a in sim.agentes
+                if a.civilizacion_id == civ_id or a.grupo_id == civ_id
+            ]
+            recursos_totales = sum(a.recursos for a in miembros)
+
+            data_viz = {
+                "nombre": civ.nombre,
+                "color": civ.color,
+                "descripcion": getattr(civ, "descripcion", ""),
+                "recursos": recursos_totales,
+                "tipo": civ.tipo.lower()
+                if hasattr(civ, "tipo")
+                else "grupo_dinamico",
+            }
+            civilizaciones_viz[civ_id] = data_viz
+            if hasattr(civ, "tipo") and civ.tipo == "Civilizacion":
+                pass
+            else:
+                grupos_dinamicos[civ_id] = data_viz
+
+        todas_propuestas = []
+        for g_id, leyes in sim.facciones_leyes.items():
+            for ley in leyes:
+                ley_copy = ley.copy()
+                ley_copy["grupo_id"] = g_id
+                todas_propuestas.append(ley_copy)
+
+        for asamblea in sim.asambleas_globales:
+            todas_propuestas.append(
+                {
+                    "id": asamblea["id"],
+                    "proponente_id": asamblea["proponente_id"],
+                    "texto": asamblea["tema"],
+                    "tipo": "asambleas",
+                    "estado": asamblea["estado"],
+                    "votos_si": asamblea["votos_si"],
+                    "votos_no": asamblea["votos_no"],
+                }
             )
+
+        current_stats = {
+            "step": sim.paso_actual,
+            "groups": len(set(a.grupo_id for a in sim.agentes if a.grupo_id)),
+            "economy": sim.economia,
+            "weather": sim.weather,
+            "lore": sim.lore,
+            "civilizaciones": civilizaciones_viz,
+            "grupos_dinamicos": grupos_dinamicos,
+            "propuestas": todas_propuestas,
+            "relaciones_grupos": {
+                f"{k[0]}:{k[1]}": v for k, v in sim.relaciones_grupos.items()
+            },
+            "guerras_activas": [f"{g1}:{g2}" for g1, g2 in sim.guerras_activas],
+            "misiones": sim.sistema_misiones.to_dict(),
+            "user_score": sim.sistema_misiones.obtener_puntaje(user_id or "default"),
+            "recent_completed_missions": getattr(
+                sim, "misiones_completadas_este_turno", []
+            ),
+            "instituciones": {k: v.to_dict() for k, v in sim.instituciones.items()},
+            "historia": sim.historia.to_dict(),
+            "ranking": [
+                {"user_id": r[0], "username": r[1], "puntos": r[2]}
+                for r in sim.db.get_ranking()
+            ]
+            if sim.db_active
+            else [],
+            "logs": sim.historial_logs if include_logs else [],
+            "agente_poseido_id": getattr(sim, "agente_poseido_id", None),
+            "socialFeed": [
+                {
+                    "id": p.id,
+                    "autor_id": p.autor_id,
+                    "contenido": p.contenido,
+                    "tipo": p.tipo,
+                    "temas": p.temas,
+                    "likes": p.likes,
+                    "likes_por": getattr(p, 'likes_por', []),
+                    "comentarios": p.comentarios,
+                    "comentarios_detalle": [
+                        {
+                            "id": c.id,
+                            "autor_id": c.autor_id,
+                            "contenido": c.contenido,
+                            "timestamp": c.timestamp
+                        } for c in (sim.social_recsys.interest_recsys.comentarios.get(p.id, []) if hasattr(sim, 'social_recsys') and sim.social_recsys and hasattr(sim.social_recsys, 'interest_recsys') else [])
+                    ],
+                    "timestamp": p.timestamp
+                } for p in (sim.social_recsys.interest_recsys.posts.values() if hasattr(sim, 'social_recsys') and sim.social_recsys and hasattr(sim.social_recsys, 'interest_recsys') else [])
+            ],
+        }
+
+        if include_map:
+            # Obtener el mapa de forma robusta desde WorldSystem
+            if hasattr(sim, 'world') and sim.world:
+                current_stats["mapa"] = sim.world.get_serializable()
+            elif hasattr(sim, 'mapa') and sim.mapa:
+                current_stats["mapa"] = [[t.to_dict() if hasattr(t, 'to_dict') else t for t in row] for row in sim.mapa]
+            else:
+                # Generar mapa de emergencia si sigue vacío
+                print("⚠️ [WS] Mapa vacío, intentando regenerar...")
+                if hasattr(sim, 'generar_mapa'):
+                    sim.generar_mapa()
+                    current_stats["mapa"] = sim.world.get_serializable() if hasattr(sim, 'world') else []
+
+        # Debug social feed
+        if current_stats.get("socialFeed"):
+            print(f"📱 [DEBUG WS] Enviando {len(current_stats['socialFeed'])} posts en el feed social.")
+
+        return current_stats
+
+    def get_delta(self, old, new):
+        """Calcula la diferencia entre dos diccionarios."""
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            return new if old != new else None
+
+        diff = {}
+        for k, v in new.items():
+            if k not in old:
+                diff[k] = v
+            else:
+                if isinstance(v, dict):
+                    sub_diff = self.get_delta(old[k], v)
+                    if sub_diff is not None:
+                        diff[k] = sub_diff
+                elif isinstance(v, list):
+                    if old[k] != v:
+                        diff[k] = v
+                elif old[k] != v:
+                    diff[k] = v
+        return diff if diff else None
 
 
 session_manager = SessionManager()
@@ -593,6 +623,7 @@ class AIConfig(BaseModel):
     api_key: str
     model: str
     base_url: Optional[str] = None
+    tavily_api_key: Optional[str] = None
 
 
 # --- ENDPOINTS ---
@@ -612,20 +643,21 @@ async def get_chat_map(user_id: str):
     modelo = session_manager.simulations.get(user_id)
     if not modelo or not hasattr(modelo, 'mapa') or not modelo.mapa:
         raise HTTPException(status_code=404, detail="Mapa no disponible")
-    
+
     map_data = []
-    size = len(modelo.mapa)
-    for x in range(size):
+    filas = len(modelo.mapa)
+    cols = len(modelo.mapa[0]) if filas > 0 else 0
+    for x in range(filas):
         row = []
-        for y in range(size):
-            tile = modelo.mapa[x][y]
+        for y in range(cols):
+            tile = modelo.mapa[x][y] if y < len(modelo.mapa[x]) else None
             if tile:
                 row.append(tile.to_dict())
             else:
                 row.append(None)
         map_data.append(row)
-    
-    return {"map": map_data, "size": size, "user_id": user_id}
+
+    return {"map": map_data, "filas": filas, "cols": cols, "user_id": user_id}
 
 
 @app.get("/chat/{user_id}/stats")
@@ -668,6 +700,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     if not sim:
         print(f"🔌 WS: Creando simulación para {user_id}")
         sim = session_manager.create_simulation(user_id)
+
+    # REGENERACIÓN DE EMERGENCIA SI MAPA ESTÁ VACÍO
+    if not hasattr(sim, 'mapa') or len(sim.mapa) == 0:
+        print("🚨 [WS] Mapa vacío al conectar. Forzando generación...")
+        if hasattr(sim, 'generar_mapa'):
+            sim.generar_mapa()
 
     # Enviar estado inicial con logs históricos y MAPA completo
     await session_manager.broadcast_state(user_id, include_logs=True, include_map=True)
@@ -849,6 +887,48 @@ async def god_mode(user_id: str, req: GodAction):
                 user_id
             )  # Actualizar frontend inmediatamente
             return {"status": "success", "message": f"Clima cambiado a {new_weather}"}
+
+    elif req.action_type == "EXECUTE_SKILL":
+        agent_id = req.params.get("agent_id")
+        skill_name = req.params.get("skill_name")
+        argumentos = req.params.get("argumentos", {})
+        
+        agente = sim.get_agent_by_id(agent_id)
+        if not agente:
+            raise HTTPException(status_code=404, detail="Agente no encontrado")
+            
+        from skills_manager import skill_manager
+        resultado = skill_manager.ejecutar_skill(
+            skill_name, 
+            argumentos, 
+            agente_id=agent_id, 
+            agent_skills=agente.skills
+        )
+        
+        # Enviar actualización inmediata si la skill cambió algo
+        await session_manager.broadcast_state(user_id)
+        
+        return {"status": "success", "resultado": resultado}
+
+    elif req.action_type == "EXECUTE_APP":
+        agent_id = req.params.get("agent_id")
+        app_name = req.params.get("app_name")
+        
+        agente = sim.get_agent_by_id(agent_id)
+        if not agente:
+            raise HTTPException(status_code=404, detail="Agente no encontrado")
+            
+        app_data = agente.apps.get(app_name)
+        if not app_data:
+            raise HTTPException(status_code=404, detail="App no encontrada")
+            
+        from herramientas import herramientas
+        resultado = herramientas.ejecutar_codigo_seguro(
+            app_data["code"], 
+            agente_id=agent_id
+        )
+        
+        return {"status": "success", "resultado": resultado}
 
     elif req.action_type == "TRIGGER_EVENT":
         event_type = req.params.get("event")
@@ -1227,10 +1307,28 @@ async def god_mode(user_id: str, req: GodAction):
             return {"status": "error", "message": msg}
 
     elif req.action_type == "EXPAND_WORLD":
-        exito, msg = sim.expandir_mundo()
+        direccion = req.params.get("direccion")  # 'north', 'south', 'east', 'west', o None
+        cantidad = req.params.get("cantidad", 5)
+        comprador_id = req.params.get("comprador_id", "arquitecto")  # Por defecto arquitecto
+        exito, msg = sim.expandir_mundo(direccion=direccion, cantidad=cantidad, comprador_id=comprador_id)
         if exito:
             await session_manager.broadcast_state(user_id, include_map=True)
-            return {"status": "success", "message": msg, "cost": sim.COSTO_EXPANSION}
+            return {"status": "success", "message": msg}
+        else:
+            raise HTTPException(status_code=400, detail=msg)
+
+    elif req.action_type == "PURCHASE_LAND":
+        grupo_id = req.params.get("grupo_id")
+        direccion = req.params.get("direccion")  # 'north', 'south', 'east', 'west', o None
+        cantidad = req.params.get("cantidad", 1)
+
+        if not grupo_id:
+            raise HTTPException(status_code=400, detail="Se requiere grupo_id")
+
+        exito, msg = sim.comprar_terreno_grupo(grupo_id, direccion=direccion, cantidad=cantidad)
+        if exito:
+            await session_manager.broadcast_state(user_id, include_map=True)
+            return {"status": "success", "message": msg}
         else:
             raise HTTPException(status_code=400, detail=msg)
 
@@ -1470,6 +1568,7 @@ async def get_ai_config():
         "model": cerebro_llm.model,
         "api_key": cerebro_llm.api_key,
         "base_url": getattr(cerebro_llm, "base_url", ""),
+        "tavily_api_key": getattr(cerebro_llm, "tavily_api_key", ""),
     }
 
 
@@ -1478,7 +1577,7 @@ async def update_ai_config(config: AIConfig):
     from cerebro_llm import cerebro_llm
 
     # Si el modelo incluye el prefijo del proveedor (ej: openrouter/), lo usamos tal cual
-    success = cerebro_llm.update_config(config.model, config.api_key, config.base_url)
+    success = cerebro_llm.update_config(config.model, config.api_key, config.base_url, config.tavily_api_key)
     if success:
         return {
             "status": "success",
@@ -1874,6 +1973,76 @@ async def get_agent_thoughts(user_id: str, agent_id: str, limit: int = 20):
     # Devolver los últimos 'limit' pensamientos, ordenados por turno
     recent = thoughts[-limit:] if thoughts else []
     return {"agent_id": agent_id, "thoughts": recent}
+
+
+@app.post("/social/post/{user_id}")
+async def arquitecto_post(user_id: str, request: dict):
+    """Permite al Arquitecto publicar un post en la red social."""
+    sim = session_manager.get_simulation(user_id)
+    if not sim:
+        raise HTTPException(status_code=404, detail="Simulación no encontrada")
+    
+    content = request.get("content", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Contenido requerido")
+    
+    tipo = request.get("tipo", "opinion")
+    temas = request.get("temas", [])
+    
+    autor_id = f"arquitecto_{user_id}"
+    
+    if hasattr(sim, 'social_recsys') and sim.social_recsys:
+        post = sim.social_recsys.crear_post(autor_id, content, tipo, temas, timestamp=sim.paso_actual)
+        print(f"📱 [SOCIAL] Arquitecto {user_id} publicó: '{content[:50]}...'")
+        return {"success": True, "post_id": post.id}
+    else:
+        raise HTTPException(status_code=404, detail="Sistema social no disponible")
+
+
+@app.post("/social/like/{user_id}")
+async def arquitecto_like(user_id: str, request: dict):
+    """Permite al Arquitecto dar like a un post."""
+    sim = session_manager.get_simulation(user_id)
+    if not sim:
+        raise HTTPException(status_code=404, detail="Simulación no encontrada")
+    
+    post_id = request.get("post_id", "").strip()
+    if not post_id:
+        raise HTTPException(status_code=400, detail="post_id requerido")
+    
+    autor_id = f"arquitecto_{user_id}"
+    
+    if hasattr(sim, 'social_recsys') and sim.social_recsys:
+        success = sim.social_recsys.likear_post(post_id, autor_id)
+        if success:
+            print(f"👍 [SOCIAL] Arquitecto {user_id} dio like a {post_id}")
+            return {"success": True}
+        else:
+            raise HTTPException(status_code=400, detail="No se pudo dar like (post no encontrado o ya likeado)")
+    else:
+        raise HTTPException(status_code=404, detail="Sistema social no disponible")
+
+
+@app.post("/social/comment/{user_id}")
+async def arquitecto_comment(user_id: str, request: dict):
+    """Permite al Arquitecto comentar en un post."""
+    sim = session_manager.get_simulation(user_id)
+    if not sim:
+        raise HTTPException(status_code=404, detail="Simulación no encontrada")
+    
+    post_id = request.get("post_id", "").strip()
+    content = request.get("content", "").strip()
+    if not post_id or not content:
+        raise HTTPException(status_code=400, detail="post_id y content requeridos")
+    
+    autor_id = f"arquitecto_{user_id}"
+    
+    if hasattr(sim, 'social_recsys') and sim.social_recsys:
+        comentario = sim.social_recsys.agregar_comentario(post_id, autor_id, content)
+        print(f"💬 [SOCIAL] Arquitecto {user_id} comentó en {post_id}: '{content[:50]}...'")
+        return {"success": True, "comment_id": comentario.id}
+    else:
+        raise HTTPException(status_code=404, detail="Sistema social no disponible")
 
 
 if __name__ == "__main__":

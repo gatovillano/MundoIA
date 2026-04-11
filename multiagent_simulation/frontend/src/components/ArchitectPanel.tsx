@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { 
-    CloudRain, Sun, CloudLightning, Zap, TrendingUp, TrendingDown, 
+import {
+    CloudRain, Sun, CloudLightning, Zap, TrendingUp, TrendingDown,
     Skull, Heart, X, Coins, BookOpen, Users, Flag, Send, MessageSquare,
-    Globe, Radio
+    Globe, Radio, MapPlus, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Wallet
 } from "lucide-react";
 import { motion } from "framer-motion";
 import useGameStore from "@/store/useGameStore";
@@ -33,6 +33,9 @@ export default function ArchitectPanel({ userId, onClose }: ArchitectPanelProps)
     const [isGlobalMessage, setIsGlobalMessage] = useState(true);
     const [assemblyTopic, setAssemblyTopic] = useState("");
     const [status, setStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error', msg: string }>({ type: 'idle', msg: '' });
+    const [landPurchaseDirection, setLandPurchaseDirection] = useState<'north' | 'south' | 'east' | 'west' | null>(null);
+    const [landPurchaseCount, setLandPurchaseCount] = useState(1);
+    const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
 
     const selectedAgent = agents.find(a => a.id === selectedAgentId);
 
@@ -220,6 +223,121 @@ export default function ArchitectPanel({ userId, onClose }: ArchitectPanelProps)
                     </div>
                 </Section>
 
+                {/* 3.2 Expansión del Mundo */}
+                <Section title="Expansión Territorial">
+                    <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-4">
+                        <div className="flex justify-between items-center px-1">
+                            <span className="text-[10px] text-gray-400 font-mono tracking-widest uppercase">Costo por Casilla</span>
+                            <span className="text-sm font-bold text-emerald-400 font-mono">{economy?.total_dinero ? (1000).toFixed(0) : 1000} MC</span>
+                        </div>
+
+                        {/* Selector de cantidad */}
+                        <div className="flex justify-between items-center px-1">
+                            <span className="text-[10px] text-gray-400 font-mono tracking-widest uppercase">Casillas</span>
+                            <span className="text-sm font-bold text-yellow-500 font-mono">{landPurchaseCount}</span>
+                        </div>
+                        <input
+                            type="range" min="1" max="10" value={landPurchaseCount}
+                            onChange={(e) => setLandPurchaseCount(parseInt(e.target.value))}
+                            className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                        />
+
+                        {/* Selector de dirección */}
+                        <div className="grid grid-cols-4 gap-2">
+                            <DirectionBtn
+                                icon={ArrowUp}
+                                label="Norte"
+                                active={landPurchaseDirection === 'north'}
+                                onClick={() => setLandPurchaseDirection(landPurchaseDirection === 'north' ? null : 'north')}
+                            />
+                            <DirectionBtn
+                                icon={ArrowDown}
+                                label="Sur"
+                                active={landPurchaseDirection === 'south'}
+                                onClick={() => setLandPurchaseDirection(landPurchaseDirection === 'south' ? null : 'south')}
+                            />
+                            <DirectionBtn
+                                icon={ArrowLeft}
+                                label="Oeste"
+                                active={landPurchaseDirection === 'west'}
+                                onClick={() => setLandPurchaseDirection(landPurchaseDirection === 'west' ? null : 'west')}
+                            />
+                            <DirectionBtn
+                                icon={ArrowRight}
+                                label="Este"
+                                active={landPurchaseDirection === 'east'}
+                                onClick={() => setLandPurchaseDirection(landPurchaseDirection === 'east' ? null : 'east')}
+                            />
+                        </div>
+
+                        <button
+                            onClick={() => sendGodAction("EXPAND_WORLD", {
+                                direccion: landPurchaseDirection,
+                                cantidad: landPurchaseCount
+                            })}
+                            className="w-full py-3 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                        >
+                            <MapPlus className="w-4 h-4" />
+                            Expandir Mundo ({landPurchaseCount} casillas)
+                        </button>
+
+                        <div className="text-[8px] text-gray-500 font-mono text-center">
+                            {landPurchaseDirection ? `Expansión hacia ${landPurchaseDirection.toUpperCase()}` : 'Expansión uniforme (todas direcciones)'}
+                        </div>
+                    </div>
+                </Section>
+
+                {/* 3.3 Compra de Terreno por Grupos */}
+                <Section title="Compra de Terreno (Grupos)">
+                    <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-4">
+                        <div className="flex items-center gap-2 px-1">
+                            <Wallet className="w-3.5 h-3.5 text-purple-400" />
+                            <span className="text-[10px] text-gray-400 font-mono uppercase">Seleccionar Grupo</span>
+                        </div>
+
+                        {/* Lista de grupos disponibles */}
+                        <GroupSelector
+                            selectedGroupId={selectedGroupId}
+                            onSelectGroupId={setSelectedGroupId}
+                        />
+
+                        {selectedGroupId && (
+                            <>
+                                <div className="flex justify-between items-center px-1">
+                                    <span className="text-[10px] text-gray-400 font-mono tracking-widest uppercase">Casillas</span>
+                                    <span className="text-sm font-bold text-yellow-500 font-mono">{landPurchaseCount}</span>
+                                </div>
+                                <input
+                                    type="range" min="1" max="10" value={landPurchaseCount}
+                                    onChange={(e) => setLandPurchaseCount(parseInt(e.target.value))}
+                                    className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                />
+
+                                <div className="flex justify-between items-center px-1 text-[9px] font-mono">
+                                    <span className="text-gray-500">Costo Total:</span>
+                                    <span className="text-purple-400 font-bold">{landPurchaseCount * 1000} MC</span>
+                                </div>
+
+                                <button
+                                    onClick={() => sendGodAction("PURCHASE_LAND", {
+                                        grupo_id: selectedGroupId,
+                                        direccion: landPurchaseDirection,
+                                        cantidad: landPurchaseCount
+                                    })}
+                                    className="w-full py-3 bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/30 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                                >
+                                    <MapPlus className="w-4 h-4" />
+                                    Comprar Terreno
+                                </button>
+                            </>
+                        )}
+
+                        <div className="text-[8px] text-gray-500 font-mono text-center">
+                            El grupo seleccionado compra terreno con sus fondos
+                        </div>
+                    </div>
+                </Section>
+
                 {/* 3.5 Gestión de Misiones */}
                 <Section title="Objetivos Colectivos (Misiones)">
                     <div className="space-y-4">
@@ -344,4 +462,68 @@ function WideBtn({ icon: Icon, label, onClick, color }: any) {
             <span className="text-[9px] font-bold uppercase tracking-widest">{label}</span>
         </button>
     )
+}
+
+function DirectionBtn({ icon: Icon, label, active, onClick }: any) {
+    return (
+        <button
+            onClick={onClick}
+            className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all active:scale-95 ${
+                active
+                    ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400'
+                    : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.08] text-gray-500'
+            }`}
+        >
+            <Icon className="w-4 h-4 mb-1" />
+            <span className="text-[7px] font-bold uppercase tracking-widest">{label}</span>
+        </button>
+    )
+}
+
+function GroupSelector({ selectedGroupId, onSelectGroupId }: {
+    selectedGroupId: string | null;
+    onSelectGroupId: (id: string | null) => void;
+}) {
+    const { civilizaciones, gruposDinamicos } = useGameStore();
+
+    const allGroups = [
+        ...Object.entries(civilizaciones || {}).map(([id, data]: any) => ({ id, ...data, type: 'civilizacion' })),
+        ...Object.entries(gruposDinamicos || {}).map(([id, data]: any) => ({ id, ...data, type: 'grupo' }))
+    ];
+
+    if (allGroups.length === 0) {
+        return (
+            <div className="text-[9px] text-gray-600 font-mono text-center py-4">
+                No hay grupos o civilizaciones activas
+            </div>
+        );
+    }
+
+    return (
+        <div className="max-h-40 overflow-y-auto custom-scrollbar space-y-1">
+            {allGroups.map(group => (
+                <button
+                    key={group.id}
+                    onClick={() => onSelectGroupId(selectedGroupId === group.id ? null : group.id)}
+                    className={`w-full flex items-center justify-between p-2 rounded-lg border transition-all ${
+                        selectedGroupId === group.id
+                            ? 'bg-purple-500/20 border-purple-500/50'
+                            : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.08]'
+                    }`}
+                >
+                    <div className="flex items-center gap-2">
+                        <div
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: group.color || '#7c4dff' }}
+                        />
+                        <span className="text-[9px] font-bold text-gray-300">{group.id}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-[7px] text-gray-500 font-mono uppercase">{group.type}</span>
+                        <span className="text-[8px] text-emerald-400 font-mono">{group.dinero?.toFixed(0) || 0} MC</span>
+                    </div>
+                </button>
+            ))}
+        </div>
+    );
 }

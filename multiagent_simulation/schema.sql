@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS agentes (
     identidad JSONB DEFAULT '{}',
     heartbeat_config JSONB DEFAULT '{}',
     memoria_persistente_data JSONB DEFAULT '{}',
+    apps JSONB DEFAULT '{}',
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id, user_id)
 );

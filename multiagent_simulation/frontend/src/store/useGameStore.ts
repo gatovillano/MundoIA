@@ -28,6 +28,9 @@ interface GameState {
     ranking: any[];
     instituciones: Record<string, any>;
     agentePoseidoId: string | null;
+    socialFeed: any[];  // === RED SOCIAL OASIS ===
+    socialMode: 'twitter' | 'reddit';
+    setSocialMode: (mode: 'twitter' | 'reddit') => void;
     toggleThoughts: () => void;
     selectAgent: (agentId: string | null) => void;
     poseerAgente: (agentId: string) => Promise<boolean>;
@@ -54,6 +57,7 @@ interface PersistedState {
     mapa: any[][];
     lore: string;
     apiHost: string;
+    socialMode: 'twitter' | 'reddit';
 }
 
 const customStorage: PersistStorage<GameState> = {
@@ -74,7 +78,8 @@ const customStorage: PersistStorage<GameState> = {
                     username: value.state.username,
                     mapa: value.state.mapa,
                     lore: value.state.lore,
-                    apiHost: value.state.apiHost
+                    apiHost: value.state.apiHost,
+                    socialMode: value.state.socialMode || 'twitter'
                 },
                 version: value.version
             };
@@ -114,6 +119,9 @@ const useGameStore = create(
             ranking: [],
             instituciones: {},
             agentePoseidoId: null,
+            socialFeed: [],  // === RED SOCIAL OASIS ===
+            socialMode: 'twitter',
+            setSocialMode: (mode) => set({ socialMode: mode }),
             socket: null,
             bubbleCleanupInterval: null,
             userId: null,
@@ -180,6 +188,13 @@ const useGameStore = create(
 
                 newSocket.onmessage = (event) => {
                     const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'stats' || data.type === 'initial_state') {
+                        console.log("📊 [WS] Recibiendo estado inicial/stats. Mapa presente:", !!data.mapa);
+                        if (data.mapa) {
+                            console.log(`🗺️ [WS] Dimensiones del mapa recibido: ${data.mapa.length}x${data.mapa[0]?.length || 0}`);
+                        }
+                    }
 
                     if (data.type === 'clear_logs') {
                         set({ logs: [], speechBubbles: {} });
@@ -224,6 +239,7 @@ const useGameStore = create(
                             ranking: data.ranking || [],
                             instituciones: data.instituciones || {},
                             agentePoseidoId: data.agente_poseido_id || null,
+                            socialFeed: data.socialFeed || [],  // === RED SOCIAL OASIS ===
                         };
 
                         if (data.mapa) {

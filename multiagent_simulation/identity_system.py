@@ -129,6 +129,22 @@ class Identidad:
     titulo: str = ""  # "El Sabio", "El Intrépido", etc.
     lema: str = ""  # Frase que define al agente
 
+    # --- OASIS-like UserProfile Traits (CAMEL-AI) ---
+    ocean: Dict[str, float] = field(default_factory=lambda: {
+        "openness": 0.5,
+        "conscientiousness": 0.5,
+        "extraversion": 0.5,
+        "agreeableness": 0.5,
+        "neuroticism": 0.5
+    })
+    demographics: Dict[str, str] = field(default_factory=lambda: {
+        "gender": "unknown",
+        "age_range": "adult",
+        "social_class": "middle"
+    })
+    political_orientation: float = 0.0  # -1.0 (rebel/anarchist) to 1.0 (authoritarian/conservative)
+    interests: List[str] = field(default_factory=list)
+
     # Identidad visual conceptual
     colores_asociados: List[str] = field(default_factory=list)
     simbolo_personal: str = ""  # Descripción textual de un símbolo
@@ -182,6 +198,21 @@ class Identidad:
         if self.vibe:
             partes.append(f"Tu vibe es: {self.vibe}.")
 
+        # OCEAN
+        ocean_str = ", ".join([f"{k}: {v:.1f}" for k, v in self.ocean.items()])
+        partes.append(f"Tu perfil psicológico (OCEAN): {ocean_str}.")
+
+        # Demographics
+        demo_str = ", ".join([f"{k}: {v}" for k, v in self.demographics.items()])
+        partes.append(f"Tus datos demográficos: {demo_str}.")
+
+        if self.interests:
+            partes.append(f"Tus intereses: {', '.join(self.interests)}.")
+
+        if self.political_orientation != 0:
+            orientacion = "radical/rebelde" if self.political_orientation < -0.5 else "tradicional/orden" if self.political_orientation > 0.5 else "moderada"
+            partes.append(f"Tu orientación política tiende a: {orientacion} ({self.political_orientation:.1f}).")
+
         if self.titulo:
             partes.append(f"Te conocen como '{self.titulo}'.")
 
@@ -198,6 +229,10 @@ class Identidad:
             "vibe": self.vibe,
             "titulo": self.titulo,
             "lema": self.lema,
+            "ocean": self.ocean,
+            "demographics": self.demographics,
+            "political_orientation": self.political_orientation,
+            "interests": self.interests,
             "colores_asociados": self.colores_asociados,
             "simbolo_personal": self.simbolo_personal,
             "origen": self.origen,
@@ -264,6 +299,37 @@ def generar_identidad_inicial(arquetipo: str, turno: int = 0) -> Identidad:
     ]
     lema = random.choice(lemas)
 
+    # OCEAN (Mapeo desde la personalidad base si es posible, o aleatorio)
+    ocean = {
+        "openness": random.uniform(0.1, 0.9),
+        "conscientiousness": random.uniform(0.1, 0.9),
+        "extraversion": random.uniform(0.1, 0.9),
+        "agreeableness": random.uniform(0.1, 0.9),
+        "neuroticism": random.uniform(0.1, 0.9)
+    }
+
+    # Demographics
+    genders = ["Masculino", "Femenino", "No-binario", "Fluido", "Andrógino"]
+    ages = ["Joven", "Adulto joven", "Adulto", "Veterano", "Anciano"]
+    social_classes = ["Baja", "Media-Baja", "Media", "Media-Alta", "Alta", "Élite"]
+    
+    demographics = {
+        "gender": random.choice(genders),
+        "age_range": random.choice(ages),
+        "social_class": random.choice(social_classes)
+    }
+
+    # Political Orientation (-1.0 a 1.0)
+    political_orientation = random.uniform(-1.0, 1.0)
+
+    # Interests
+    pool_intereses = [
+        "filosofía", "música", "arquitectura", "historia", "alquimia", 
+        "combate", "cocina", "astronomía", "botánica", "política", 
+        "criptografía", "comercio", "arte", "misticismo", "ingeniería"
+    ]
+    intereses = random.sample(pool_intereses, k=random.randint(2, 4))
+    
     # Colores asociados
     colores = random.sample(["azul", "rojo", "verde", "dorado", "plateado", "púrpura", "bronce", "blanco", "negro", "turquesa"], k=2)
 
@@ -274,6 +340,10 @@ def generar_identidad_inicial(arquetipo: str, turno: int = 0) -> Identidad:
         vibe=vibe,
         titulo=titulo,
         lema=lema,
+        ocean=ocean,
+        demographics=demographics,
+        political_orientation=political_orientation,
+        interests=intereses,
         colores_asociados=colores,
         turno_nacimiento=turno,
     )

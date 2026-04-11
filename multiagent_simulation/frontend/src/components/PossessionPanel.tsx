@@ -55,7 +55,7 @@ export default function PossessionPanel() {
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[600px] z-[100]"
+            className="fixed bottom-2 sm:bottom-6 left-1/2 -translate-x-1/2 w-[95vw] sm:w-[600px] max-w-[95vw] z-[100]"
         >
             <div className="bg-[#0a0b10]/95 backdrop-blur-xl border border-yellow-500/30 rounded-3xl shadow-2xl shadow-yellow-500/10 overflow-hidden">
                 {/* Header */}
@@ -68,7 +68,7 @@ export default function PossessionPanel() {
                             Interfaz de Posesión: Agente {agent.id.substring(0, 6)}
                         </span>
                     </div>
-                    <div className="flex gap-1 overflow-x-auto custom-scrollbar-hide max-w-[350px]">
+                    <div className="flex gap-1 overflow-x-auto custom-scrollbar-hide max-w-[calc(100vw-8rem)] sm:max-w-[350px]">
                         <TabBtn active={activeTab === 'chat'} icon={MessageSquare} label="Comms" onClick={() => setActiveTab('chat')} />
                         <TabBtn active={activeTab === 'vital'} icon={Heart} label="Vital" onClick={() => setActiveTab('vital')} />
                         <TabBtn active={activeTab === 'social'} icon={Users2} label="Social" onClick={() => setActiveTab('social')} />
@@ -79,7 +79,7 @@ export default function PossessionPanel() {
                 </div>
 
                 {/* Content */}
-                <div className="p-6 h-64 overflow-y-auto custom-scrollbar">
+                <div className="p-4 sm:p-6 h-48 sm:h-64 overflow-y-auto custom-scrollbar">
                     <AnimatePresence mode="wait">
                         {activeTab === 'chat' && (
                             <motion.div 
@@ -129,7 +129,7 @@ export default function PossessionPanel() {
                                 initial={{ opacity: 0, x: 10 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: -10 }}
-                                className="grid grid-cols-2 gap-4"
+                                className="grid grid-cols-1 sm:grid-cols-2 gap-4"
                             >
                                 <ActionCard icon={Coffee} title="Comer" desc="Consumir alimentos" onClick={() => executeAction("comer")} />
                                 <ActionCard icon={Heart} title="Curarse" desc="Usar medicinas" onClick={() => executeAction("curarse")} />
@@ -147,7 +147,7 @@ export default function PossessionPanel() {
                                 initial={{ opacity: 0, x: 10 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: -10 }}
-                                className="grid grid-cols-2 gap-4"
+                                className="grid grid-cols-1 sm:grid-cols-2 gap-4"
                             >
                                 <div className="col-span-2 flex flex-col gap-2 mb-2">
                                     <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Objetivo de Interacción</span>
@@ -204,7 +204,7 @@ export default function PossessionPanel() {
                                 initial={{ opacity: 0, x: 10 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: -10 }}
-                                className="grid grid-cols-2 gap-4"
+                                className="grid grid-cols-1 sm:grid-cols-2 gap-4"
                             >
                                 <ActionCard 
                                     icon={Construction} 
@@ -239,7 +239,7 @@ export default function PossessionPanel() {
                                 initial={{ opacity: 0, x: 10 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: -10 }}
-                                className="grid grid-cols-2 gap-4"
+                                className="grid grid-cols-1 sm:grid-cols-2 gap-4"
                             >
                                 <ActionCard 
                                     icon={Users2} 
@@ -292,7 +292,7 @@ export default function PossessionPanel() {
                                 exit={{ opacity: 0, x: -10 }}
                                 className="flex flex-col items-center justify-center h-full gap-4"
                             >
-                                <div className="grid grid-cols-3 gap-2">
+                                <div className="grid grid-cols-3 gap-1 sm:gap-2">
                                     <div />
                                     <MoveBtn icon={ChevronUp} onClick={() => moveAgent(0, -1)} />
                                     <div />

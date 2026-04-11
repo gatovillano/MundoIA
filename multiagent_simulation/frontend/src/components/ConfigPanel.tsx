@@ -20,11 +20,14 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
     const [provider, setProvider] = useState("OpenRouter");
     const [apiKey, setApiKey] = useState("");
     const [baseUrl, setBaseUrl] = useState("");
+    const [tavilyApiKey, setTavilyApiKey] = useState("");
     const [selectedModel, setSelectedModel] = useState("");
     const [models, setModels] = useState<ModelInfo[]>([]);
     const [isLoadingModels, setIsLoadingModels] = useState(false);
     const [status, setStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error', msg: string }>({ type: 'idle', msg: '' });
     const [searchTerm, setSearchTerm] = useState("");
+
+    const { socialMode, setSocialMode } = useGameStore();
 
     // Cargar config inicial
     useEffect(() => {
@@ -71,6 +74,7 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
                 const data = await res.json();
                 setApiKey(data.api_key || "");
                 setBaseUrl(data.base_url || "");
+                setTavilyApiKey(data.tavily_api_key || "");
                 setSelectedModel(data.model || "");
                 let loadedProv = "OpenRouter";
                 if (data.model?.includes("openrouter/")) {
@@ -123,7 +127,8 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
                     provider,
                     api_key: apiKey,
                     model: finalModel,
-                    base_url: baseUrl
+                    base_url: baseUrl,
+                    tavily_api_key: tavilyApiKey
                 })
             });
 
@@ -206,6 +211,35 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
                 </div>
             </Section>
 
+            {/* Herramientas Externas */}
+            <Section title="Herramientas Externas">
+                <div className="space-y-4">
+                    <div className="relative group">
+                        <input
+                            type="password"
+                            value={tavilyApiKey}
+                            onChange={(e) => setTavilyApiKey(e.target.value)}
+                            placeholder="Tavily API Key (para navegación web)..."
+                            autoComplete="off"
+                            className="w-full bg-black/60 border border-white/10 rounded-2xl p-4 pr-12 text-xs text-white placeholder:text-gray-700 focus:border-indigo-500/40 focus:outline-none transition-all font-mono"
+                        />
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-indigo-500/30">
+                            <Search className="w-4 h-4" />
+                        </div>
+                    </div>
+                    <div className="px-1">
+                        <a
+                            href="https://tavily.com/"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[9px] text-indigo-400/60 hover:text-indigo-400 flex items-center gap-1.5 transition-colors uppercase font-bold tracking-widest"
+                        >
+                            Obtener Tavily Key <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                    </div>
+                </div>
+            </Section>
+
             {/* Model Selector */}
             <Section title="Modelos Disponibles">
                 <div className="space-y-4">
@@ -255,6 +289,30 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
                             )}
                         </div>
                     </div>
+                </div>
+            </Section>
+
+            {/* Interfaz de Red Social */}
+            <Section title="Interfaz de Red Social">
+                <div className="grid grid-cols-2 gap-2 p-1 bg-black/40 rounded-2xl border border-white/5 shadow-inner">
+                    <button
+                        onClick={() => setSocialMode('twitter')}
+                        className={`py-3 text-[10px] font-bold uppercase rounded-xl transition-all flex items-center justify-center gap-2 ${socialMode === 'twitter' ? 'bg-[#1d9bf0]/20 text-[#1d9bf0] border border-[#1d9bf0]/30' : 'text-gray-500 hover:text-gray-300'}`}
+                    >
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                        </svg>
+                        X / Twitter
+                    </button>
+                    <button
+                        onClick={() => setSocialMode('reddit')}
+                        className={`py-3 text-[10px] font-bold uppercase rounded-xl transition-all flex items-center justify-center gap-2 ${socialMode === 'reddit' ? 'bg-[#ff4500]/20 text-[#ff4500] border border-[#ff4500]/30' : 'text-gray-500 hover:text-gray-300'}`}
+                    >
+                        <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M16.5 9a1.5 1.5 0 1 0 1.5 1.5A1.5 1.5 0 0 0 16.5 9zM10.25 13a.75.75 0 0 0 0 1.5h.5a.75.75 0 0 0 0-1.5zM14.5 9a1.5 1.5 0 1 0 1.5 1.5A1.5 1.5 0 0 0 14.5 9zM10 0a10 10 0 1 0 10 10A10 10 0 0 0 10 0zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm4.5-12.5a.5.5 0 1 0-.5-.5.5.5 0 0 0 .5.5zM6.5 10a1.5 1.5 0 1 0 1.5-1.5 1.5 1.5 0 0 0-1.5 1.5zm1 4.5A4.49 4.49 0 0 1 10 16a4.49 4.49 0 0 1 2.5-1.5.5.5 0 1 1 .14.98A3.49 3.49 0 0 0 10 17a3.49 3.49 0 0 0-2.64-1.52.5.5 0 1 1 .14-.98zM5 9a1.5 1.5 0 1 0 1.5 1.5A1.5 1.5 0 0 0 5 9z" />
+                        </svg>
+                        Reddit
+                    </button>
                 </div>
             </Section>
 

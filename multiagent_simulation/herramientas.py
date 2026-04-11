@@ -6,9 +6,14 @@ load_dotenv()
 
 class HerramientasAgente:
     def __init__(self, log_callback=None):
-        self.brave_key = os.getenv("BRAVE_API_KEY")
         self.log_callback = log_callback
     
+    @property
+    def tavily_key(self):
+        # Lazy import para evitar circular import
+        from cerebro_llm import cerebro_llm
+        return cerebro_llm.tavily_api_key
+
     def _log(self, mensaje, categoria="herramienta"):
         """Envía un log si hay callback configurado."""
         if self.log_callback:
@@ -27,31 +32,24 @@ class HerramientasAgente:
         return f"El precio actual del recurso es de {precio:.2f} MC por unidad."
 
     def web_search(self, query, agente_id=None):
-        """Realiza una búsqueda general en la web usando la API de Brave."""
+        """Realiza una búsqueda general en la web usando la API de Tavily."""
         self._log(f"🔍 [WEB SEARCH] Agente {agente_id} busca: '{query}'", "herramienta")
-        if not self.brave_key:
-            self._log(f"⚠️ [WEB SEARCH] Sin API Key de Brave", "herramienta")
-            return "No tengo configurada la llave de búsqueda web (Brave)."
+        if not self.tavily_key:
+            self._log(f"⚠️ [WEB SEARCH] Sin API Key de Tavily", "herramienta")
+            return "No tengo configurada la llave de búsqueda web (Tavily)."
         
         try:
-            url = "https://api.search.brave.com/res/v1/web/search"
-            headers = {
-                "Accept": "application/json",
-                "Accept-Encoding": "gzip",
-                "X-Subscription-Token": self.brave_key
-            }
-            params = {"q": query, "count": 5}
-            response = requests.get(url, headers=headers, params=params)
-            data = response.json()
+            tavily = TavilyClient(api_key=self.tavily_key)
+            response = tavily.search(query=query, search_depth="basic", max_results=5)
             
-            results = data.get("web", {}).get("results", [])
+            results = response.get("results", [])
             if not results:
                 self._log(f"⚠️ [WEB SEARCH] Sin resultados", "herramienta")
                 return "No se encontraron resultados relevantes en la web."
             
-            info = "Resultados de búsqueda web: "
+            info = "Resultados de búsqueda web (Tavily): "
             for r in results:
-                info += f"- {r['title']}: {r['description']} "
+                info += f"- {r['title']} ({r['url']}): {r['content']} "
             
             self._log(f"✅ [WEB SEARCH] Encontrados {len(results)} resultados", "herramienta")
             return info
@@ -83,38 +81,80 @@ class HerramientasAgente:
             return f"Error al scrapear {url}: {str(e)}"
 
     def ejecutar_codigo_seguro(self, codigo, agente_id=None):
-        """Ejecuta código Python en un entorno restringido."""
+        """Ejecuta código Python de forma persistente y potente para el agente."""
         self._log(f"💻 [PROGRAMMABLE REALITY] Agente {agente_id} ejecutando código...", "herramienta")
         
-        # Diccionario de funciones permitidas (Safe globals)
-        safe_globals = {
-            "abs": abs, "min": min, "max": max, "sum": sum, "round": round,
-            "len": len, "list": list, "dict": dict, "set": set, "range": range,
-            "int": int, "float": float, "str": str, "bool": bool, "print": print,
-            "any": any, "all": all, "sorted": sorted, "type": type
+        # Preparar entorno de ejecución más capaz
+        import sys
+        import os
+        import json
+        import requests
+        from io import StringIO
+        
+        # Directorio de apps del agente
+        apps_dir = os.path.join("apps", str(agente_id))
+        os.makedirs(apps_dir, exist_ok=True)
+        
+        # Sandbox temporal para ejecución
+        sandbox_dir = os.path.join("sandbox", str(agente_id))
+        os.makedirs(sandbox_dir, exist_ok=True)
+
+        # Globals con acceso a librerías comunes y utilidades
+        execution_globals = {
+            "os": os, "sys": sys, "json": json, "requests": requests,
+            "agente_id": agente_id, "apps_dir": apps_dir, "sandbox_dir": sandbox_dir,
+            "print": print, "len": len, "range": range, "list": list, "dict": dict,
+            "open": open, # Permitir I/O en su sandbox
         }
         
         try:
-            # Capturar salida
-            import sys
-            from io import StringIO
             old_stdout = sys.stdout
             redirected_output = sys.stdout = StringIO()
             
-            exec(codigo, {"__builtins__": safe_globals}, {})
+            # Ejecutar con el directorio del agente como contexto de trabajo
+            # Capturamos el resultado si el código termina con una expresión
+            # Para scripts, es mejor que definan una variable 'result' o similar.
+            # O simplemente exec el código y ver si 'result' existe en locales.
+            exec_locals = {}
+            exec(codigo, execution_globals, exec_locals)
             
             sys.stdout = old_stdout
-            result = redirected_output.getvalue()
+            std_output = redirected_output.getvalue()
             
-            # Truncar resultado para evitar saturar el contexto
-            if len(result) > 1000:
-                result = result[:1000] + "\n... [Resultado truncado]"
+            # El agente puede dejar su resultado en la variable 'resultado' del script
+            resultado_script = exec_locals.get("resultado")
+            
+            if len(std_output) > 2000:
+                std_output = std_output[:2000] + "\n... [Resultado truncado]"
             
             self._log(f"✅ [PROGRAMMABLE REALITY] Ejecución exitosa.", "herramienta")
-            return result if result else "Código ejecutado sin salida."
+            
+            if isinstance(resultado_script, dict):
+                if std_output:
+                    resultado_script["_stdout"] = std_output
+                return resultado_script
+            
+            return f"{resultado_script if resultado_script is not None else 'Ejecución exitosa.'}\n\n[Salida]:\n{std_output}" if std_output else str(resultado_script)
         except Exception as e:
+            if 'sys' in locals() and 'old_stdout' in locals():
+                sys.stdout = old_stdout
             self._log(f"❌ [PROGRAMMABLE REALITY] Error: {str(e)}", "herramienta")
             return f"Error de ejecución: {str(e)}"
+
+    def crear_app(self, nombre, codigo, agente_id):
+        """Persiste una aplicación/script para el agente."""
+        try:
+            apps_dir = os.path.join("apps", str(agente_id))
+            os.makedirs(apps_dir, exist_ok=True)
+            
+            file_path = os.path.join(apps_dir, f"{nombre}.py")
+            with open(file_path, "w") as f:
+                f.write(codigo)
+            
+            self._log(f"💾 [APP CREATED] Agente {agente_id} creó la app: {nombre}", "herramienta")
+            return f"App '{nombre}' guardada en {file_path}. Puedes ejecutarla con ejecutar_codigo_seguro importándola."
+        except Exception as e:
+            return f"Error al crear app: {str(e)}"
 
 # Instancia global
 herramientas = HerramientasAgente()

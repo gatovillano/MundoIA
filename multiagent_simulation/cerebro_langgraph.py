@@ -202,6 +202,18 @@ def analizar_situacion(state: AgentState):
         contexto += "Considera compartir esta reflexión en tus conversaciones.\n"
         contexto += "==============================\n"
 
+    # --- OASIS: Notificaciones de interacciones propias ---
+    notifications = getattr(agente_yo, "notificaciones_sociales", [])
+    if notifications:
+        contexto += "\n=== NOTIFICACIONES: INTERACCIONES EN TUS POSTS ===\n"
+        for n in notifications[-10:]:
+            if n['tipo'] == 'like':
+                contexto += f"- A {n['autor_interaccion']} le gustó tu post: \"{n['contenido_post']}\"\n"
+            elif n['tipo'] == 'comentario':
+                contexto += f"- {n['autor_interaccion']} comentó en tu post (\"{n['contenido_post']}\"): \"{n['contenido_interaccion']}\"\n"
+        contexto += "\nESTRATEGIA RECOMENDADA: Si alguien comenta en tus posts, responde (COMMENT) para ganar capital social y fortalecer lazos.\n"
+        contexto += "==============================================\n"
+
     # --- PRESIONES VITALES Y OPORTUNIDADES DINÁMICAS ---
     urgencias = []
 
@@ -562,6 +574,12 @@ def ejecutar_herramientas(state: AgentState):
     # === ALIAS: WEB_SEARCH -> web_search ===
     if nombre_accion == "web_search":
         nombre_accion = "web_search"
+    
+    if nombre_accion == "ejecutar_codigo":
+        nombre_accion = "ejecutar_codigo"
+        
+    if nombre_accion == "crear_app":
+        nombre_accion = "crear_app"
 
     # === USAR SKILL_MANAGER PARA EL RESTO ===
     resultado_skill = skill_manager.ejecutar_skill(
@@ -626,13 +644,26 @@ def ejecutar_herramientas(state: AgentState):
         resultado = resultado_skill.get("resultado", "")
 
         # Manejar el caso especial de crear_habilidad
-        if nombre_accion == "CREAR_HABILIDAD":
+        if nombre_accion == "crear_habilidad":
             if isinstance(resultado, dict) and resultado.get("status") == "success":
                 new_skill_data = resultado.get("new_skill")
                 agente_yo.skills[new_skill_data["name"]] = new_skill_data
                 mensaje_res = f"Habilidad '{new_skill_data['name']}' creada con éxito. ¡Ahora puedo usarla!"
                 modelo.log(
                     f"🧠 [EVOLUCIÓN] Agente {agente_yo.unique_id} ha desarrollado la habilidad: {new_skill_data['name']}",
+                    categoria="sistema",
+                )
+                modelo.notificar_cambio_estado()
+                return {"info_externa": mensaje_res}
+
+        # Manejar el caso especial de crear_app
+        if nombre_accion == "crear_app":
+            if isinstance(resultado, dict) and resultado.get("status") == "success":
+                app_data = resultado.get("app")
+                agente_yo.apps[app_data["name"]] = app_data
+                mensaje_res = f"Aplicación '{app_data['name']}' creada y guardada. Ahora puedo invocarla."
+                modelo.log(
+                    f"💻 [APP CREATED] Agente {agente_yo.unique_id} ha creado una nueva App: {app_data['name']}",
                     categoria="sistema",
                 )
                 modelo.notificar_cambio_estado()

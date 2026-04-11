@@ -24,7 +24,8 @@ import UnifiedPanel from "@/components/UnifiedPanel";
 import PossessionPanel from "@/components/PossessionPanel";
 import StatsPanel from "@/components/StatsPanel";
 import ChatPanel from "@/components/ChatPanel";
-import { Book, Settings as SettingsIcon } from "lucide-react";
+import SocialPanel from "@/components/SocialPanel";
+import { Book, Settings as SettingsIcon, Globe } from "lucide-react";
 
 export default function GamePage() {
     const router = useRouter();
@@ -353,6 +354,12 @@ const RightPanelManager = React.memo(({ activePanel, onClose, selectedAgentId, u
             return (
                 <UnifiedPanel isOpen={true} onClose={onClose} title="Chat con Agentes" subtitle="Conversaciones Directas" icon={MessageCircle} color="text-cyan-400">
                     <ChatPanel userId={userId} onClose={onClose} />
+                </UnifiedPanel>
+            );
+        case 'social':
+            return (
+                <UnifiedPanel isOpen={true} onClose={onClose} title="Red Social" subtitle="MundoIA Social" icon={Globe} color="text-[#00e5ff]">
+                    <SocialPanel />
                 </UnifiedPanel>
             );
         case 'architect':

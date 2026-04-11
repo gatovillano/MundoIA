@@ -130,10 +130,49 @@ export default function NetworkView() {
             );
 
         nodeSelection.select(".ring").attr("stroke", (d) => d.color || "#7c4dff");
-        nodeSelection.select(".core").attr("stroke", (d) => d.id === selectedAgentId ? "#ffffff" : (d.color || "#7c4dff"))
+        
+        // Tamaño del nodo basado en Capital Social
+        nodeSelection.select(".core")
+            .attr("r", (d) => {
+                const capital = d.social_metrics?.capital_social || 10;
+                return 5 + (capital / 100) * 8; // 5 a 13px basado en capital social
+            })
+            .attr("stroke", (d) => d.id === selectedAgentId ? "#ffffff" : (d.color || "#7c4dff"))
             .attr("stroke-width", (d) => d.id === selectedAgentId ? 2 : 1.5);
         nodeSelection.select(".id-text").text(d => d.id.replace("A", ""));
-        nodeSelection.select(".label-text").text(d => d.profesion || "Agente").attr("opacity", d => d.id === selectedAgentId ? 1 : 0);
+
+        // Label muestra nivel de influencia si está seleccionado
+        nodeSelection.select(".label-text")
+            .text(d => {
+                if (d.id === selectedAgentId) {
+                    return d.social_metrics?.nivel_influencia || "Desconocido";
+                }
+                return d.profesion || "";
+            })
+            .attr("opacity", d => d.id === selectedAgentId ? 1 : 0);
+
+        // Añadir indicador de seguidores como anillo exterior
+        nodeSelection.each(function(d: any) {
+            const g = d3.select(this);
+            const capital = d.social_metrics?.capital_social || 10;
+            const followers = d.social_metrics?.seguidores || 0;
+            
+            // Eliminar indicador previo de seguidores
+            g.select(".followers-ring").remove();
+            
+            // Añadir anillo de seguidores si tiene
+            if (followers > 0) {
+                const ringRadius = 18 + (capital / 100) * 5;
+                g.insert("circle", ":first-child")
+                    .attr("class", "followers-ring")
+                    .attr("r", ringRadius)
+                    .attr("fill", "none")
+                    .attr("stroke", "#00e5ff")
+                    .attr("stroke-width", Math.min(2, 0.5 + followers / 10))
+                    .attr("stroke-dasharray", "3,2")
+                    .attr("opacity", 0.6);
+            }
+        });
 
         // 4. Burbujas
         let bubbleLayer = g.select<SVGGElement>(".bubble-layer");

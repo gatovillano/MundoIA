@@ -30,7 +30,7 @@ export default function UnifiedPanel({
                     animate={{ x: 0, opacity: 1 }}
                     exit={{ x: 400, opacity: 0 }}
                     transition={{ type: "spring", damping: 30, stiffness: 300 }}
-                    className="fixed right-6 top-6 bottom-6 w-[400px] solid-panel rounded-2xl z-[70] flex flex-col overflow-hidden shadow-2xl border border-white/5"
+                    className="fixed right-2 sm:right-6 top-2 sm:top-6 bottom-2 sm:bottom-6 w-[calc(100vw-1rem)] sm:w-[350px] md:w-[400px] solid-panel rounded-2xl z-[70] flex flex-col overflow-hidden shadow-2xl border border-white/5"
                 >
                     {/* Header */}
                     <div className="relative p-6 pb-6 border-b border-white/5 bg-gradient-to-b from-white/5 to-transparent">

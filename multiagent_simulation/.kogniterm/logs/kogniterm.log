@@ -13032,3 +13032,293 @@ RuntimeError: App is not running
 2026-04-07 05:56:36,538 - kogniterm.core.llm.streaming_executor - ERROR - Error in execution: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1775606400000"},"provider_name":null}},"user_id":"user_39D90IfKfMvRmqSghhC269pKnhL"}
 2026-04-07 05:56:36,539 - kogniterm.terminal.agent_interaction_manager - INFO - LOG_DEBUG: bash_agent_app.invoke finished
 2026-04-07 05:56:36,539 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: after invoke_agent
+2026-04-08 20:19:19,555 - kogniterm.core.llm.provider_config - INFO - 🤖 OpenRouter activo: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+2026-04-08 20:19:19,555 - kogniterm.core.multi_provider_manager - INFO - MultiProviderManager inicializado con 8 proveedores
+2026-04-08 20:19:21,499 - kogniterm.core.skills.skill_manager - INFO - SkillManager inicializado. Bases: bundled=/home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/bundled, managed=/home/gato/.kogniterm/skills/managed, workspace=/home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/workspace
+2026-04-08 20:19:21,499 - kogniterm.core.skills.skill_manager - INFO - Refrescando sistema de skills...
+2026-04-08 20:19:21,499 - kogniterm.core.skills.skill_manager - INFO - Buscando skills en bundled: /home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/bundled
+2026-04-08 20:19:21,553 - kogniterm.core.skills.skill_manager - INFO - Buscando skills en workspace: /home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/workspace
+2026-04-08 20:19:21,562 - kogniterm.core.skills.skill_manager - INFO - Discovery completado: 23 skills encontradas
+2026-04-08 20:19:21,566 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'code_tools' cargada (2 herramientas)
+2026-04-08 20:19:21,615 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'python_executor' cargada (1 herramientas)
+2026-04-08 20:19:21,616 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'plan_creation' cargada (1 herramientas)
+2026-04-08 20:19:21,849 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'web_tools' cargada (4 herramientas)
+2026-04-08 20:19:21,849 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'execute_command' cargada (1 herramientas)
+2026-04-08 20:19:21,849 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'think' cargada (1 herramientas)
+2026-04-08 20:19:21,851 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'pc_interaction' cargada (1 herramientas)
+2026-04-08 20:19:21,851 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_append' cargada (1 herramientas)
+2026-04-08 20:19:21,852 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'task_complete' cargada (1 herramientas)
+2026-04-08 20:19:21,852 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_read' cargada (1 herramientas)
+2026-04-08 20:19:21,854 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'file_operations' cargada (13 herramientas)
+2026-04-08 20:19:21,854 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'skill_factory' cargada (1 herramientas)
+2026-04-08 20:19:21,855 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'call_agent' cargada (1 herramientas)
+2026-04-08 20:19:21,856 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_init' cargada (1 herramientas)
+2026-04-08 20:19:21,856 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'search_memory' cargada (1 herramientas)
+2026-04-08 20:19:21,856 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'call_agents_parallel' cargada (1 herramientas)
+2026-04-08 20:19:21,857 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'file_read_directory' cargada (1 herramientas)
+2026-04-08 20:19:21,857 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'refresh_tools' cargada (1 herramientas)
+2026-04-08 20:19:21,858 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'set_llm_instructions' cargada (1 herramientas)
+2026-04-08 20:19:21,858 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_summarize' cargada (1 herramientas)
+2026-04-08 20:19:21,858 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'parse_iso_mirrors_from_html' cargada (1 herramientas)
+2026-04-08 20:19:21,859 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'docker_error_logs' cargada (1 herramientas)
+2026-04-08 20:19:21,859 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'evolution_test_skill' cargada (1 herramientas)
+2026-04-08 20:19:21,859 - kogniterm.core.llm_service - INFO - LLMService tools synchronized: ['codebase_search', 'code_analysis', 'python_executor', 'plan_creation_skill', 'github', 'tavily_search', 'web_fetch', 'web_scraping', 'execute_command', 'think', 'pc_interaction_skill', 'memory_append', 'task_complete_skill', 'memory_read', 'glob_search_tool', 'search_in_file_tool', 'copy_file_tool', 'delete_file_tool', 'move_file_tool', 'list_directory_tool', 'append_file_tool', 'create_directory_tool', 'write_file_tool', 'get_file_info_tool', 'read_file_tool', 'read_many_files_tool', 'sophisticated_editor_tool', 'skill_factory', 'call_agent_skill', 'memory_init', 'search_memory', 'call_agents_parallel', 'file_read_directory', 'refresh_tools', 'set_llm_instructions_skill', 'memory_summarize', 'parse_iso_mirrors_from_html', 'docker_error_logs', 'run_evolution_test']
+2026-04-08 20:19:21,859 - kogniterm.core.skills.skill_manager - INFO - Sistema de herramientas de LLMService sincronizado.
+2026-04-08 20:19:21,859 - kogniterm.core.skills.skill_manager - INFO - Refresco completado. Total herramientas: 39
+2026-04-08 20:19:21,859 - kogniterm.core.llm_service - INFO - LLMService tools synchronized: ['codebase_search', 'code_analysis', 'python_executor', 'plan_creation_skill', 'github', 'tavily_search', 'web_fetch', 'web_scraping', 'execute_command', 'think', 'pc_interaction_skill', 'memory_append', 'task_complete_skill', 'memory_read', 'glob_search_tool', 'search_in_file_tool', 'copy_file_tool', 'delete_file_tool', 'move_file_tool', 'list_directory_tool', 'append_file_tool', 'create_directory_tool', 'write_file_tool', 'get_file_info_tool', 'read_file_tool', 'read_many_files_tool', 'sophisticated_editor_tool', 'skill_factory', 'call_agent_skill', 'memory_init', 'search_memory', 'call_agents_parallel', 'file_read_directory', 'refresh_tools', 'set_llm_instructions_skill', 'memory_summarize', 'parse_iso_mirrors_from_html', 'docker_error_logs', 'run_evolution_test']
+2026-04-08 20:19:22,029 - kogniterm.core.context.vector_db_manager - INFO - ChromaDB connection closed.
+2026-04-08 20:19:27,767 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: process_agent_request started for: Hola
+2026-04-08 20:19:27,813 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: loop iteration start
+2026-04-08 20:19:27,814 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: before invoke_agent
+2026-04-08 20:19:27,814 - kogniterm.terminal.agent_interaction_manager - INFO - LOG_DEBUG: inside AgentInteractionManager.invoke_agent - calling bash_agent_app.invoke
+2026-04-08 20:19:27,817 - kogniterm.core.agents.base_agent - INFO - [LOG_DEBUG] BaseAgentNode.call_model INICIANDO
+2026-04-08 20:19:27,817 - kogniterm.core.agents.base_agent - INFO - [LOG_DEBUG] Historial preparado (mensajes: 15)
+2026-04-08 20:19:27,818 - kogniterm.core.llm_service - INFO - LOG_DEBUG: LLMService.invoke called. disable_summarization=False
+2026-04-08 20:19:27,818 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Processing history (count: 15)
+2026-04-08 20:19:27,820 - kogniterm.core.llm_service - INFO - LOG_DEBUG: History processed (count: 15)
+2026-04-08 20:19:27,820 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Pre-prepare_litellm_messages
+2026-04-08 20:19:27,820 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Post-prepare_litellm_messages (count=13)
+2026-04-08 20:19:27,820 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Pre-get_litellm_tools
+2026-04-08 20:19:27,820 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Post-get_litellm_tools (count=39)
+2026-04-08 20:19:27,820 - kogniterm.core.multi_provider_manager - INFO - Usando proveedor: openrouter
+2026-04-08 20:19:27,821 - kogniterm.core.multi_provider_manager - INFO - LOG_DEBUG: [MultiProviderManager] Preparando llamada a litellm.completion para modelo: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+2026-04-08 20:19:38,092 - kogniterm.core.multi_provider_manager - INFO - LOG_DEBUG: [MultiProviderManager] litellm.completion RETORNÓ (stream=True)
+2026-04-08 20:19:38,093 - kogniterm.core.multi_provider_manager - INFO - ✅ Solicitud exitosa con openrouter (10272.07ms)
+2026-04-08 20:19:39,070 - kogniterm.core.multi_provider_manager - INFO - LOG_DEBUG: [MultiProviderManager] Stream COMPLETADO (4 chunks)
+2026-04-08 20:19:41,232 - kogniterm.core.context.vector_db_manager - INFO - ChromaDB connection closed.
+2026-04-08 20:19:41,233 - kogniterm.core.agents.base_agent - INFO - [LOG_DEBUG] BaseAgentNode.call_model INICIANDO
+2026-04-08 20:19:41,234 - kogniterm.core.agents.base_agent - INFO - [LOG_DEBUG] Historial preparado (mensajes: 18)
+2026-04-08 20:19:41,241 - kogniterm.terminal.tui.tui_app - ERROR - Error crítico en invoke_agent: App is not running
+Traceback (most recent call last):
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/tui/tui_app.py", line 1595, in process_agent_request
+    final_state = self.agent_interaction_manager.invoke_agent(user_input)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/agent_interaction_manager.py", line 94, in invoke_agent
+    final_state_dict = self.bash_agent_app.invoke(self.agent_state, config={"recursion_limit": 200})
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/pregel/main.py", line 3290, in invoke
+    for chunk in self.stream(
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/pregel/main.py", line 2724, in stream
+    for _ in runner.tick(
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/pregel/_runner.py", line 167, in tick
+    run_with_retry(
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/pregel/_retry.py", line 71, in run_with_retry
+    return task.proc.invoke(task.input, config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/_internal/_runnable.py", line 656, in invoke
+    input = context.run(step.invoke, input, config, **kwargs)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/_internal/_runnable.py", line 400, in invoke
+    ret = self.func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/core/agents/bash_agent.py", line 37, in call_model_node
+    return BaseAgentNode.call_model(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/core/agents/base_agent.py", line 86, in call_model
+    terminal_ui.print_status("Pensando...", spinner_style="dots")
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/tui/tui_app.py", line 293, in print_status
+    self._safe_call(self.app._start_spinner)
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/tui/tui_app.py", line 208, in _safe_call
+    self.app.call_from_thread(func, *args, **kwargs)
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/textual/app.py", line 1769, in call_from_thread
+    raise RuntimeError("App is not running")
+RuntimeError: App is not running
+During task with name 'call_model' and id 'a6df83d1-4cec-8aa3-2759-42393864cdab'
+
+2026-04-08 20:19:41,243 - kogniterm.terminal.tui.tui_app - ERROR - Error fatal en process_agent_request: App is not running
+Traceback (most recent call last):
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/tui/tui_app.py", line 1595, in process_agent_request
+    final_state = self.agent_interaction_manager.invoke_agent(user_input)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/agent_interaction_manager.py", line 94, in invoke_agent
+    final_state_dict = self.bash_agent_app.invoke(self.agent_state, config={"recursion_limit": 200})
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/pregel/main.py", line 3290, in invoke
+    for chunk in self.stream(
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/pregel/main.py", line 2724, in stream
+    for _ in runner.tick(
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/pregel/_runner.py", line 167, in tick
+    run_with_retry(
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/pregel/_retry.py", line 71, in run_with_retry
+    return task.proc.invoke(task.input, config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/_internal/_runnable.py", line 656, in invoke
+    input = context.run(step.invoke, input, config, **kwargs)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/langgraph/_internal/_runnable.py", line 400, in invoke
+    ret = self.func(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/core/agents/bash_agent.py", line 37, in call_model_node
+    return BaseAgentNode.call_model(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/core/agents/base_agent.py", line 86, in call_model
+    terminal_ui.print_status("Pensando...", spinner_style="dots")
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/tui/tui_app.py", line 293, in print_status
+    self._safe_call(self.app._start_spinner)
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/tui/tui_app.py", line 208, in _safe_call
+    self.app.call_from_thread(func, *args, **kwargs)
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/textual/app.py", line 1769, in call_from_thread
+    raise RuntimeError("App is not running")
+RuntimeError: App is not running
+During task with name 'call_model' and id 'a6df83d1-4cec-8aa3-2759-42393864cdab'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/tui/tui_app.py", line 1601, in process_agent_request
+    self.tui_ui.print_message(f"❌ Error crítico al invocar al agente: {str(e)}", style="bold red")
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/tui/tui_app.py", line 225, in print_message
+    self._safe_call(_write)
+  File "/home/gato/Proyectos/Gemini-Interpreter/kogniterm/terminal/tui/tui_app.py", line 208, in _safe_call
+    self.app.call_from_thread(func, *args, **kwargs)
+  File "/home/gato/Proyectos/Gemini-Interpreter/venv/lib/python3.12/site-packages/textual/app.py", line 1769, in call_from_thread
+    raise RuntimeError("App is not running")
+RuntimeError: App is not running
+
+2026-04-08 20:53:54,030 - kogniterm.core.llm.provider_config - INFO - 🤖 OpenRouter activo: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+2026-04-08 20:53:54,031 - kogniterm.core.multi_provider_manager - INFO - MultiProviderManager inicializado con 8 proveedores
+2026-04-08 20:53:56,060 - kogniterm.core.skills.skill_manager - INFO - SkillManager inicializado. Bases: bundled=/home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/bundled, managed=/home/gato/.kogniterm/skills/managed, workspace=/home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/workspace
+2026-04-08 20:53:56,060 - kogniterm.core.skills.skill_manager - INFO - Refrescando sistema de skills...
+2026-04-08 20:53:56,060 - kogniterm.core.skills.skill_manager - INFO - Buscando skills en bundled: /home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/bundled
+2026-04-08 20:53:56,119 - kogniterm.core.skills.skill_manager - INFO - Buscando skills en workspace: /home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/workspace
+2026-04-08 20:53:56,124 - kogniterm.core.skills.skill_manager - INFO - Discovery completado: 23 skills encontradas
+2026-04-08 20:53:56,127 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'code_tools' cargada (2 herramientas)
+2026-04-08 20:53:56,165 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'python_executor' cargada (1 herramientas)
+2026-04-08 20:53:56,166 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'plan_creation' cargada (1 herramientas)
+2026-04-08 20:53:56,393 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'web_tools' cargada (4 herramientas)
+2026-04-08 20:53:56,394 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'execute_command' cargada (1 herramientas)
+2026-04-08 20:53:56,394 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'think' cargada (1 herramientas)
+2026-04-08 20:53:56,395 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'pc_interaction' cargada (1 herramientas)
+2026-04-08 20:53:56,395 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_append' cargada (1 herramientas)
+2026-04-08 20:53:56,396 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'task_complete' cargada (1 herramientas)
+2026-04-08 20:53:56,396 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_read' cargada (1 herramientas)
+2026-04-08 20:53:56,398 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'file_operations' cargada (13 herramientas)
+2026-04-08 20:53:56,399 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'skill_factory' cargada (1 herramientas)
+2026-04-08 20:53:56,400 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'call_agent' cargada (1 herramientas)
+2026-04-08 20:53:56,400 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_init' cargada (1 herramientas)
+2026-04-08 20:53:56,400 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'search_memory' cargada (1 herramientas)
+2026-04-08 20:53:56,401 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'call_agents_parallel' cargada (1 herramientas)
+2026-04-08 20:53:56,401 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'file_read_directory' cargada (1 herramientas)
+2026-04-08 20:53:56,401 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'refresh_tools' cargada (1 herramientas)
+2026-04-08 20:53:56,402 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'set_llm_instructions' cargada (1 herramientas)
+2026-04-08 20:53:56,402 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_summarize' cargada (1 herramientas)
+2026-04-08 20:53:56,402 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'parse_iso_mirrors_from_html' cargada (1 herramientas)
+2026-04-08 20:53:56,403 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'docker_error_logs' cargada (1 herramientas)
+2026-04-08 20:53:56,403 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'evolution_test_skill' cargada (1 herramientas)
+2026-04-08 20:53:56,403 - kogniterm.core.llm_service - INFO - LLMService tools synchronized: ['codebase_search', 'code_analysis', 'python_executor', 'plan_creation_skill', 'github', 'tavily_search', 'web_fetch', 'web_scraping', 'execute_command', 'think', 'pc_interaction_skill', 'memory_append', 'task_complete_skill', 'memory_read', 'glob_search_tool', 'search_in_file_tool', 'copy_file_tool', 'delete_file_tool', 'move_file_tool', 'list_directory_tool', 'append_file_tool', 'create_directory_tool', 'write_file_tool', 'get_file_info_tool', 'read_file_tool', 'read_many_files_tool', 'sophisticated_editor_tool', 'skill_factory', 'call_agent_skill', 'memory_init', 'search_memory', 'call_agents_parallel', 'file_read_directory', 'refresh_tools', 'set_llm_instructions_skill', 'memory_summarize', 'parse_iso_mirrors_from_html', 'docker_error_logs', 'run_evolution_test']
+2026-04-08 20:53:56,403 - kogniterm.core.skills.skill_manager - INFO - Sistema de herramientas de LLMService sincronizado.
+2026-04-08 20:53:56,403 - kogniterm.core.skills.skill_manager - INFO - Refresco completado. Total herramientas: 39
+2026-04-08 20:53:56,403 - kogniterm.core.llm_service - INFO - LLMService tools synchronized: ['codebase_search', 'code_analysis', 'python_executor', 'plan_creation_skill', 'github', 'tavily_search', 'web_fetch', 'web_scraping', 'execute_command', 'think', 'pc_interaction_skill', 'memory_append', 'task_complete_skill', 'memory_read', 'glob_search_tool', 'search_in_file_tool', 'copy_file_tool', 'delete_file_tool', 'move_file_tool', 'list_directory_tool', 'append_file_tool', 'create_directory_tool', 'write_file_tool', 'get_file_info_tool', 'read_file_tool', 'read_many_files_tool', 'sophisticated_editor_tool', 'skill_factory', 'call_agent_skill', 'memory_init', 'search_memory', 'call_agents_parallel', 'file_read_directory', 'refresh_tools', 'set_llm_instructions_skill', 'memory_summarize', 'parse_iso_mirrors_from_html', 'docker_error_logs', 'run_evolution_test']
+2026-04-08 20:53:56,574 - kogniterm.core.context.vector_db_manager - INFO - ChromaDB connection closed.
+2026-04-08 20:54:03,618 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: process_agent_request started for: Hola
+2026-04-08 20:54:03,626 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: loop iteration start
+2026-04-08 20:54:03,626 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: before invoke_agent
+2026-04-08 20:54:03,626 - kogniterm.terminal.agent_interaction_manager - INFO - LOG_DEBUG: inside AgentInteractionManager.invoke_agent - calling bash_agent_app.invoke
+2026-04-08 20:54:03,629 - kogniterm.core.agents.base_agent - INFO - [LOG_DEBUG] BaseAgentNode.call_model INICIANDO
+2026-04-08 20:54:03,629 - kogniterm.core.agents.base_agent - INFO - [LOG_DEBUG] Historial preparado (mensajes: 16)
+2026-04-08 20:54:03,629 - kogniterm.core.llm_service - INFO - LOG_DEBUG: LLMService.invoke called. disable_summarization=False
+2026-04-08 20:54:03,629 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Processing history (count: 16)
+2026-04-08 20:54:03,630 - kogniterm.core.llm_service - INFO - LOG_DEBUG: History processed (count: 16)
+2026-04-08 20:54:03,631 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Pre-prepare_litellm_messages
+2026-04-08 20:54:03,631 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Post-prepare_litellm_messages (count=14)
+2026-04-08 20:54:03,631 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Pre-get_litellm_tools
+2026-04-08 20:54:03,631 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Post-get_litellm_tools (count=39)
+2026-04-08 20:54:03,631 - kogniterm.core.multi_provider_manager - INFO - Usando proveedor: openrouter
+2026-04-08 20:54:03,632 - kogniterm.core.multi_provider_manager - INFO - LOG_DEBUG: [MultiProviderManager] Preparando llamada a litellm.completion para modelo: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+2026-04-08 20:54:08,679 - kogniterm.core.multi_provider_manager - INFO - LOG_DEBUG: [MultiProviderManager] litellm.completion RETORNÓ (stream=True)
+2026-04-08 20:54:08,679 - kogniterm.core.multi_provider_manager - INFO - ✅ Solicitud exitosa con openrouter (5047.68ms)
+2026-04-08 20:54:08,701 - kogniterm.core.multi_provider_manager - INFO - LOG_DEBUG: [MultiProviderManager] Stream COMPLETADO (4 chunks)
+2026-04-08 20:54:08,727 - kogniterm.terminal.agent_interaction_manager - INFO - LOG_DEBUG: bash_agent_app.invoke finished
+2026-04-08 20:54:08,727 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: after invoke_agent
+2026-04-08 20:54:18,842 - kogniterm.core.context.vector_db_manager - INFO - ChromaDB connection closed.
+2026-04-08 20:58:00,990 - kogniterm.core.llm.provider_config - INFO - 🤖 OpenRouter activo: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+2026-04-08 20:58:00,991 - kogniterm.core.multi_provider_manager - INFO - MultiProviderManager inicializado con 8 proveedores
+2026-04-08 20:58:02,912 - kogniterm.core.skills.skill_manager - INFO - SkillManager inicializado. Bases: bundled=/home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/bundled, managed=/home/gato/.kogniterm/skills/managed, workspace=/home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/workspace
+2026-04-08 20:58:02,913 - kogniterm.core.skills.skill_manager - INFO - Refrescando sistema de skills...
+2026-04-08 20:58:02,913 - kogniterm.core.skills.skill_manager - INFO - Buscando skills en bundled: /home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/bundled
+2026-04-08 20:58:02,961 - kogniterm.core.skills.skill_manager - INFO - Buscando skills en workspace: /home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/workspace
+2026-04-08 20:58:02,966 - kogniterm.core.skills.skill_manager - INFO - Discovery completado: 23 skills encontradas
+2026-04-08 20:58:02,969 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'code_tools' cargada (2 herramientas)
+2026-04-08 20:58:03,007 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'python_executor' cargada (1 herramientas)
+2026-04-08 20:58:03,008 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'plan_creation' cargada (1 herramientas)
+2026-04-08 20:58:03,237 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'web_tools' cargada (4 herramientas)
+2026-04-08 20:58:03,237 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'execute_command' cargada (1 herramientas)
+2026-04-08 20:58:03,238 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'think' cargada (1 herramientas)
+2026-04-08 20:58:03,239 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'pc_interaction' cargada (1 herramientas)
+2026-04-08 20:58:03,239 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_append' cargada (1 herramientas)
+2026-04-08 20:58:03,240 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'task_complete' cargada (1 herramientas)
+2026-04-08 20:58:03,241 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_read' cargada (1 herramientas)
+2026-04-08 20:58:03,243 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'file_operations' cargada (13 herramientas)
+2026-04-08 20:58:03,243 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'skill_factory' cargada (1 herramientas)
+2026-04-08 20:58:03,244 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'call_agent' cargada (1 herramientas)
+2026-04-08 20:58:03,244 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_init' cargada (1 herramientas)
+2026-04-08 20:58:03,245 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'search_memory' cargada (1 herramientas)
+2026-04-08 20:58:03,245 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'call_agents_parallel' cargada (1 herramientas)
+2026-04-08 20:58:03,246 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'file_read_directory' cargada (1 herramientas)
+2026-04-08 20:58:03,246 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'refresh_tools' cargada (1 herramientas)
+2026-04-08 20:58:03,247 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'set_llm_instructions' cargada (1 herramientas)
+2026-04-08 20:58:03,247 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_summarize' cargada (1 herramientas)
+2026-04-08 20:58:03,247 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'parse_iso_mirrors_from_html' cargada (1 herramientas)
+2026-04-08 20:58:03,247 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'docker_error_logs' cargada (1 herramientas)
+2026-04-08 20:58:03,248 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'evolution_test_skill' cargada (1 herramientas)
+2026-04-08 20:58:03,248 - kogniterm.core.llm_service - INFO - LLMService tools synchronized: ['codebase_search', 'code_analysis', 'python_executor', 'plan_creation_skill', 'github', 'tavily_search', 'web_fetch', 'web_scraping', 'execute_command', 'think', 'pc_interaction_skill', 'memory_append', 'task_complete_skill', 'memory_read', 'glob_search_tool', 'search_in_file_tool', 'copy_file_tool', 'delete_file_tool', 'move_file_tool', 'list_directory_tool', 'append_file_tool', 'create_directory_tool', 'write_file_tool', 'get_file_info_tool', 'read_file_tool', 'read_many_files_tool', 'sophisticated_editor_tool', 'skill_factory', 'call_agent_skill', 'memory_init', 'search_memory', 'call_agents_parallel', 'file_read_directory', 'refresh_tools', 'set_llm_instructions_skill', 'memory_summarize', 'parse_iso_mirrors_from_html', 'docker_error_logs', 'run_evolution_test']
+2026-04-08 20:58:03,248 - kogniterm.core.skills.skill_manager - INFO - Sistema de herramientas de LLMService sincronizado.
+2026-04-08 20:58:03,248 - kogniterm.core.skills.skill_manager - INFO - Refresco completado. Total herramientas: 39
+2026-04-08 20:58:03,248 - kogniterm.core.llm_service - INFO - LLMService tools synchronized: ['codebase_search', 'code_analysis', 'python_executor', 'plan_creation_skill', 'github', 'tavily_search', 'web_fetch', 'web_scraping', 'execute_command', 'think', 'pc_interaction_skill', 'memory_append', 'task_complete_skill', 'memory_read', 'glob_search_tool', 'search_in_file_tool', 'copy_file_tool', 'delete_file_tool', 'move_file_tool', 'list_directory_tool', 'append_file_tool', 'create_directory_tool', 'write_file_tool', 'get_file_info_tool', 'read_file_tool', 'read_many_files_tool', 'sophisticated_editor_tool', 'skill_factory', 'call_agent_skill', 'memory_init', 'search_memory', 'call_agents_parallel', 'file_read_directory', 'refresh_tools', 'set_llm_instructions_skill', 'memory_summarize', 'parse_iso_mirrors_from_html', 'docker_error_logs', 'run_evolution_test']
+2026-04-08 20:58:03,431 - kogniterm.core.context.vector_db_manager - INFO - ChromaDB connection closed.
+2026-04-08 20:58:16,655 - kogniterm.core.context.vector_db_manager - INFO - ChromaDB connection closed.
+2026-04-08 20:58:32,167 - kogniterm.core.llm.provider_config - INFO - 🤖 OpenRouter activo: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+2026-04-08 20:58:32,167 - kogniterm.core.multi_provider_manager - INFO - MultiProviderManager inicializado con 8 proveedores
+2026-04-08 20:58:34,182 - kogniterm.core.skills.skill_manager - INFO - SkillManager inicializado. Bases: bundled=/home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/bundled, managed=/home/gato/.kogniterm/skills/managed, workspace=/home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/workspace
+2026-04-08 20:58:34,182 - kogniterm.core.skills.skill_manager - INFO - Refrescando sistema de skills...
+2026-04-08 20:58:34,182 - kogniterm.core.skills.skill_manager - INFO - Buscando skills en bundled: /home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/bundled
+2026-04-08 20:58:34,231 - kogniterm.core.skills.skill_manager - INFO - Buscando skills en workspace: /home/gato/Proyectos/Gemini-Interpreter/kogniterm/skills/workspace
+2026-04-08 20:58:34,237 - kogniterm.core.skills.skill_manager - INFO - Discovery completado: 23 skills encontradas
+2026-04-08 20:58:34,241 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'code_tools' cargada (2 herramientas)
+2026-04-08 20:58:34,283 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'python_executor' cargada (1 herramientas)
+2026-04-08 20:58:34,284 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'plan_creation' cargada (1 herramientas)
+2026-04-08 20:58:34,513 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'web_tools' cargada (4 herramientas)
+2026-04-08 20:58:34,514 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'execute_command' cargada (1 herramientas)
+2026-04-08 20:58:34,514 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'think' cargada (1 herramientas)
+2026-04-08 20:58:34,515 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'pc_interaction' cargada (1 herramientas)
+2026-04-08 20:58:34,515 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_append' cargada (1 herramientas)
+2026-04-08 20:58:34,516 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'task_complete' cargada (1 herramientas)
+2026-04-08 20:58:34,516 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_read' cargada (1 herramientas)
+2026-04-08 20:58:34,519 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'file_operations' cargada (13 herramientas)
+2026-04-08 20:58:34,519 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'skill_factory' cargada (1 herramientas)
+2026-04-08 20:58:34,520 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'call_agent' cargada (1 herramientas)
+2026-04-08 20:58:34,521 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_init' cargada (1 herramientas)
+2026-04-08 20:58:34,521 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'search_memory' cargada (1 herramientas)
+2026-04-08 20:58:34,521 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'call_agents_parallel' cargada (1 herramientas)
+2026-04-08 20:58:34,522 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'file_read_directory' cargada (1 herramientas)
+2026-04-08 20:58:34,522 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'refresh_tools' cargada (1 herramientas)
+2026-04-08 20:58:34,523 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'set_llm_instructions' cargada (1 herramientas)
+2026-04-08 20:58:34,523 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'memory_summarize' cargada (1 herramientas)
+2026-04-08 20:58:34,523 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'parse_iso_mirrors_from_html' cargada (1 herramientas)
+2026-04-08 20:58:34,524 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'docker_error_logs' cargada (1 herramientas)
+2026-04-08 20:58:34,524 - kogniterm.core.skills.skill_manager - INFO - ✅ Skill 'evolution_test_skill' cargada (1 herramientas)
+2026-04-08 20:58:34,524 - kogniterm.core.llm_service - INFO - LLMService tools synchronized: ['codebase_search', 'code_analysis', 'python_executor', 'plan_creation_skill', 'github', 'tavily_search', 'web_fetch', 'web_scraping', 'execute_command', 'think', 'pc_interaction_skill', 'memory_append', 'task_complete_skill', 'memory_read', 'glob_search_tool', 'search_in_file_tool', 'copy_file_tool', 'delete_file_tool', 'move_file_tool', 'list_directory_tool', 'append_file_tool', 'create_directory_tool', 'write_file_tool', 'get_file_info_tool', 'read_file_tool', 'read_many_files_tool', 'sophisticated_editor_tool', 'skill_factory', 'call_agent_skill', 'memory_init', 'search_memory', 'call_agents_parallel', 'file_read_directory', 'refresh_tools', 'set_llm_instructions_skill', 'memory_summarize', 'parse_iso_mirrors_from_html', 'docker_error_logs', 'run_evolution_test']
+2026-04-08 20:58:34,524 - kogniterm.core.skills.skill_manager - INFO - Sistema de herramientas de LLMService sincronizado.
+2026-04-08 20:58:34,524 - kogniterm.core.skills.skill_manager - INFO - Refresco completado. Total herramientas: 39
+2026-04-08 20:58:34,524 - kogniterm.core.llm_service - INFO - LLMService tools synchronized: ['codebase_search', 'code_analysis', 'python_executor', 'plan_creation_skill', 'github', 'tavily_search', 'web_fetch', 'web_scraping', 'execute_command', 'think', 'pc_interaction_skill', 'memory_append', 'task_complete_skill', 'memory_read', 'glob_search_tool', 'search_in_file_tool', 'copy_file_tool', 'delete_file_tool', 'move_file_tool', 'list_directory_tool', 'append_file_tool', 'create_directory_tool', 'write_file_tool', 'get_file_info_tool', 'read_file_tool', 'read_many_files_tool', 'sophisticated_editor_tool', 'skill_factory', 'call_agent_skill', 'memory_init', 'search_memory', 'call_agents_parallel', 'file_read_directory', 'refresh_tools', 'set_llm_instructions_skill', 'memory_summarize', 'parse_iso_mirrors_from_html', 'docker_error_logs', 'run_evolution_test']
+2026-04-08 20:58:34,714 - kogniterm.core.context.vector_db_manager - INFO - ChromaDB connection closed.
+2026-04-08 20:59:10,023 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: process_agent_request started for: Hola
+2026-04-08 20:59:10,028 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: loop iteration start
+2026-04-08 20:59:10,029 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: before invoke_agent
+2026-04-08 20:59:10,029 - kogniterm.terminal.agent_interaction_manager - INFO - LOG_DEBUG: inside AgentInteractionManager.invoke_agent - calling bash_agent_app.invoke
+2026-04-08 20:59:10,032 - kogniterm.core.agents.base_agent - INFO - [LOG_DEBUG] BaseAgentNode.call_model INICIANDO
+2026-04-08 20:59:10,032 - kogniterm.core.agents.base_agent - INFO - [LOG_DEBUG] Historial preparado (mensajes: 4)
+2026-04-08 20:59:10,034 - kogniterm.core.llm_service - INFO - LOG_DEBUG: LLMService.invoke called. disable_summarization=False
+2026-04-08 20:59:10,034 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Processing history (count: 4)
+2026-04-08 20:59:10,035 - kogniterm.core.llm_service - INFO - LOG_DEBUG: History processed (count: 4)
+2026-04-08 20:59:10,035 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Pre-prepare_litellm_messages
+2026-04-08 20:59:10,035 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Post-prepare_litellm_messages (count=2)
+2026-04-08 20:59:10,035 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Pre-get_litellm_tools
+2026-04-08 20:59:10,035 - kogniterm.core.llm_service - INFO - LOG_DEBUG: Post-get_litellm_tools (count=39)
+2026-04-08 20:59:10,036 - kogniterm.core.multi_provider_manager - INFO - Usando proveedor: openrouter
+2026-04-08 20:59:10,036 - kogniterm.core.multi_provider_manager - INFO - LOG_DEBUG: [MultiProviderManager] Preparando llamada a litellm.completion para modelo: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+2026-04-08 20:59:13,101 - kogniterm.core.multi_provider_manager - INFO - LOG_DEBUG: [MultiProviderManager] litellm.completion RETORNÓ (stream=True)
+2026-04-08 20:59:13,101 - kogniterm.core.multi_provider_manager - INFO - ✅ Solicitud exitosa con openrouter (3065.25ms)
+2026-04-08 20:59:13,152 - kogniterm.core.multi_provider_manager - INFO - LOG_DEBUG: [MultiProviderManager] Stream COMPLETADO (3 chunks)
+2026-04-08 20:59:13,163 - kogniterm.terminal.agent_interaction_manager - INFO - LOG_DEBUG: bash_agent_app.invoke finished
+2026-04-08 20:59:13,164 - kogniterm.terminal.tui.tui_app - INFO - LOG_DEBUG: after invoke_agent
