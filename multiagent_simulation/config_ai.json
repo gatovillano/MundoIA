@@ -1,6 +1,0 @@
-{
-    "model": "ollama/gemma4:31b",
-    "api_key": "0791d5bb2b804b829163cbc07038f2ec.CjrJo-500rGFQV2Jgz0Y_P3Q",
-    "base_url": "https://ollama.com",
-    "tavily_api_key": "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"
-}

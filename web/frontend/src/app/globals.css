@@ -1,0 +1,275 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@plugin "tailwindcss-animate";
+
+@theme {
+  /* Bases */
+  --color-background: #030305;
+  --color-foreground: #e2e2e2;
+
+  /* Primary - "Cyber Violet" */
+  --color-primary: #7c4dff;
+  --color-primary-foreground: #ffffff;
+
+  /* Secondary - "Neon Mint" */
+  --color-secondary: #00e676;
+  --color-secondary-foreground: #000000;
+
+  /* Accents */
+  --color-accent: #2d2e36;
+  --color-accent-foreground: #ffffff;
+
+  /* Semantic */
+  --color-destructive: #ff1744;
+  --color-warning: #ffab00;
+  --color-info: #2979ff;
+  --color-success: #00e676;
+
+  /* Fonts */
+  --font-outfit: 'Outfit', sans-serif;
+  --font-jetbrains: 'JetBrains Mono', monospace;
+}
+
+/* Base Styles */
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: 'Outfit', sans-serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Font Classes */
+.font-outfit {
+  font-family: 'Outfit', sans-serif;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Typography Utilities */
+.text-gradient {
+  background: linear-gradient(135deg, #7c4dff 0%, #00e676 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-glow {
+  text-shadow: 0 0 10px rgba(124, 77, 255, 0.5);
+}
+
+/* Surface Utilities - Glassmorphism System */
+.glass-panel {
+  background: rgba(10, 11, 16, 0.5);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+}
+
+.solid-panel {
+  background: #0a0b10;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+}
+
+.glass-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border-color: rgba(124, 77, 255, 0.4);
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 15px 45px -15px rgba(124, 77, 255, 0.4);
+}
+
+/* Animations */
+@keyframes pulse-soft {
+
+  0%,
+  100% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 3s ease-in-out infinite;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(124, 77, 255, 0.2);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 77, 255, 0.5);
+}
+
+/* Estética Pokémon GameBoy */
+@keyframes pixel-wobble {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes pixel-walk {
+  0% {
+    transform: translateX(-1px);
+  }
+
+  50% {
+    transform: translateX(1px);
+  }
+
+  100% {
+    transform: translateX(-1px);
+  }
+}
+
+.animate-pixel-idle {
+  animation: pixel-wobble 0.8s steps(2) infinite;
+}
+
+.animate-pixel-walk {
+  animation: pixel-walk 0.4s steps(2) infinite;
+}
+
+.pixel-border {
+  image-rendering: pixelated;
+  shape-rendering: crispEdges;
+}
+
+/* Reemplazar colores cyber por paleta GameBoy */
+:root {
+  --gb-grass: #88d070;
+  --gb-forest: #388050;
+  --gb-mountain: #706858;
+  --gb-water: #5890f0;
+  --gb-desert: #e0d0a0;
+  --gb-outline: #000000;
+}
+
+@keyframes water-drift {
+  0% {
+    transform: translate(0, 0);
+  }
+
+  100% {
+    transform: translate(10px, 10px);
+  }
+}
+
+@keyframes particle-drift {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0;
+  }
+
+  50% {
+    opacity: 0.3;
+  }
+
+  100% {
+    transform: translate(50px, -50px) scale(0.5);
+    opacity: 0;
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes blink {
+
+  0%,
+  90%,
+  100% {
+    transform: scaleY(1);
+  }
+
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+
+.animate-float {
+  animation: float 2.5s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.animate-water {
+  animation: water-drift 10s linear infinite;
+}
+
+.animate-particle {
+  animation: particle-drift 15s linear infinite;
+  transform-box: fill-box;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 12s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.animate-blink {
+  animation: blink 4s infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* Tailwind Utilities */
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}

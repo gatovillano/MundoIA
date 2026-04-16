@@ -1242,6 +1242,7 @@ class Agente:
 
         # --- CREACIONES DEL AGENTE ---
         self.apps = {}  # Aplicaciones/Código Python creado por el agente
+        self.acciones_control_usuario = []  # Plan de turno enviado por el usuario (máx 3)
 
         # Necesidades: 10.0 = Satisfecho, 0.0 = Crítico
         if necesidades:
@@ -3829,6 +3830,7 @@ class ModeloRelacional:
         self.historia = LibretaHistoria()
         self.db_active = True
         self.db = DatabaseManager()
+        self.cerebro_llm = cerebro_llm  # Instancia global de CerebroLLM
         if self.db:
             if self.db.connect():
                 if self.user_id:
@@ -3907,7 +3909,70 @@ class ModeloRelacional:
         ):
             agente.comer()
 
-        # 2. CEREBRO: LANGGRAPH / LLM / BDI
+        # 2. CONTROL DE USUARIO (Plan de turno forzado)
+        if getattr(agente, "acciones_control_usuario", []):
+            acciones_plan = agente.acciones_control_usuario
+            agente.acciones_control_usuario = []  # Limpiar para evitar bucles
+            
+            self.log(f"🎮 [CONTROL] Ejecutando plan de {len(acciones_plan)} acciones para {agente.unique_id}", categoria="sistema")
+            
+            for i, user_action in enumerate(acciones_plan):
+                try:
+                    # Obtener contexto para el LLM (usando lógica del cerebro si está disponible)
+                    contexto_str = "Situación normal de supervivencia."
+                    if hasattr(agente, "cerebro") and hasattr(agente.cerebro, "agent_id"):
+                        from agents.cerebro_langgraph import analizar_situacion
+                        state_mini = {
+                            "agente_yo_id": agente.unique_id,
+                            "modelo_instance": self,
+                            "info_externa": ""
+                        }
+                        res_analisis = analizar_situacion(state_mini)
+                        contexto_str = res_analisis.get("info_externa", contexto_str)
+
+                    # Generar narrativa para esta acción específica
+                    if self.cerebro_llm and getattr(self.cerebro_llm, "model", None):
+                        decision = self.cerebro_llm.generar_pensamiento_para_accion_forzada(
+                            agente, None, contexto_str, user_action
+                        )
+                    else:
+                        decision = {
+                            "pensamiento": "Siento un impulso irresistible de actuar.",
+                            "mensaje": "Cumpliré con mi destino.",
+                            "accion": user_action
+                        }
+                    
+                    pensamiento = decision.get("pensamiento", "")
+                    mensaje = decision.get("mensaje", "")
+                    accion_dict = decision.get("accion", user_action)
+                    
+                    # 1. Actualizar estado cognitivo
+                    if pensamiento:
+                        agente.pensamiento_actual = pensamiento
+                    
+                    # 2. Comunicación
+                    if mensaje:
+                        agente.decir(mensaje, pensamiento=pensamiento)
+                    
+                    # 3. Ejecución física
+                    agente.ejecutar_accion_final(accion_dict)
+                    
+                    # Notificar éxito de la acción parcial
+                    if self.realtime_event_callback:
+                        self.realtime_event_callback("action_event", {
+                            "agent_id": agente.unique_id,
+                            "step": self.paso_actual,
+                            "status": "completed",
+                            "action_name": accion_dict.get("nombre", user_action.get("nombre", "CONTROL")),
+                            "sub_step": i + 1
+                        })
+                        
+                except Exception as e:
+                    self.log(f"❌ [CONTROL ERROR] Fallo en acción {i+1}: {e}", categoria="error")
+            
+            return  # Terminar turno controlado aquí
+
+        # 3. CEREBRO: LANGGRAPH / LLM / BDI
         # Llamar al cerebro avanzado para decidir pensamiento, mensaje y acción
         decision = agente.cerebro.pensar(agente)
 

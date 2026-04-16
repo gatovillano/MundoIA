@@ -1,0 +1,71 @@
+services:
+  mundoia-db:
+    image: postgres:16
+    container_name: mundoia-db
+    environment:
+      POSTGRES_DB: mundoia
+      POSTGRES_USER: architect
+      POSTGRES_PASSWORD: mundoia_secret_2026
+    ports:
+      - "5434:5432"
+    volumes:
+      - mundoia_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U architect -d mundoia"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mundoia_net
+
+  mundoia-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: mundoia-backend
+    env_file: .env
+    environment:
+      - DB_HOST=mundoia-db
+      - DB_PORT=5432
+      - FLASK_ENV=development
+      - DISABLE_AIOHTTP_TRANSPORT=true
+    command: uvicorn api.api:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./:/app
+    ports:
+      - "8005:8000"
+    depends_on:
+      mundoia-db:
+        condition: service_healthy
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - mundoia_net
+
+  mundoia-frontend:
+    build:
+      context: ./web/frontend
+      dockerfile: Dockerfile.frontend
+    container_name: mundoia-frontend
+    command: npm run dev
+    volumes:
+      - ./web/frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      - WATCHPACK_POLLING=true
+    ports:
+      - "3005:3000"
+    depends_on:
+      - mundoia-backend
+    networks:
+      - mundoia_net
+
+volumes:
+  mundoia_data:
+
+networks:
+  mundoia_net:
+    driver: bridge

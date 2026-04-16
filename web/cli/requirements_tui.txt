@@ -1,0 +1,13 @@
+# MUNDO IA - TUI Dependencies
+# Instalación: pip install -r requirements_tui.txt
+
+# Core TUI Framework
+textual>=0.40.0
+rich>=13.0.0
+
+# Remote Connectivity (para remote_tui.py)
+websockets>=12.0
+aiohttp>=3.9.0
+
+# Helpers
+typing-extensions>=4.5.0

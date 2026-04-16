@@ -1,0 +1,6 @@
+{
+    "model": "ollama/nemotron-3-super",
+    "api_key": "9893f16127b140f6816de15c24719c6d.Cwv-kKn2FTA9QAq0HCSROPEF",
+    "base_url": "https://ollama.com",
+    "tavily_api_key": "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"
+}

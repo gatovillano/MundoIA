@@ -1,3 +1,22 @@
+## 15-04-26 Implementación de Modo "Control de Agentes" (Turno Manual con LLM)
+
+- **Fecha y hora**: 2026-04-15.
+- **Descripción de la tarea**: Crear un modo de control donde el usuario dicta hasta 3 acciones para un agente, las cuales se ejecutan en su turno con narrativa generada por LLM.
+- **Desafíos encontrados**:
+    - El modo "posesión" anterior ejecutaba acciones inmediatamente y sin contexto narrativo.
+    - Los agentes necesitaban una forma de integrar mandatos externos en su personalidad y alma.
+    - El ciclo de turno de la simulación debía permitir múltiples acciones físicas si provenían de un plan de usuario.
+- **Soluciones implementadas**:
+    - **Backend**: Se añadió `acciones_control_usuario` a la clase `Agente` y el endpoint `SET_CONTROL_ACTIONS` en la API.
+    - **Cerebro**: Nuevo método `generar_pensamiento_para_accion_forzada` en `CerebroLLM` que obliga al agente a justificar narrativamente las órdenes del Arquitecto.
+    - **Simulación**: Modificación de `_procesar_turno_agente` en `ModeloRelacional` para interceptar y ejecutar secuencialmente planes de usuario antes del pensamiento autónomo.
+    - **Frontend**: Nuevo componente `ControlAgentePanel.tsx` que categoriza absolutamente todas las acciones y habilidades (Vital, Social, Eco, Saber, Leyes, Dev, Move, War).
+    - **Interfaz**: Integración en `AgentSidebar.tsx` con transiciones animadas entre vista de información y vista de control.
+- **Resultados**:
+    - El usuario puede orquestar turnos complejos para cualquier agente sin romper la coherencia narrativa del mundo.
+    - Los agentes reaccionan ante las órdenes del usuario expresando pensamientos y mensajes fieles a su alma.
+    - Se proporciona acceso total a todas las mecánicas del juego (skills, construcciones, leyes, social) desde un panel unificado.
+
 ## 15-04-26 Social LLM Ratio en 1.0 (posts sociales siempre con IA)
 
 - **Fecha y hora**: 2026-04-15.
@@ -392,3 +411,16 @@ Corrección de errores de ejecución que impedían el inicio correcto de la simu
 ## 11-04-26 Uso de Nombre Propio por Agentes
 
 - **Identidad en el LLM**: Se ajustó el contexto en `cerebro_langgraph.py` y `cerebro_llm.py` para que los agentes utilicen y perciban el nombre propio (`identidad.nombre`) de sí mismos y de otros agentes en lugar del identificador técnico (`unique_id`) durante sus interacciones, reflexiones y decisiones.
+
+---
+
+## 16-04-26 Multipartida por usuario: menú inicio, QuickPlay y persistencia
+
+- **Fecha y hora**: 2026-04-16.
+- **Descripción de la tarea**: Implementada la experiencia de multipartida por usuario: pantalla inicial (/start) con opciones Cargar / Iniciar nueva / Partida Rápida; generación rápida de partidas con agentes aleatorios (QuickPlay) y persistencia ligada a la cuenta.
+- **Cambios implementados**:
+  - Backend: añadidos endpoints en `api/api.py`: POST `/games/quickplay`, POST `/games/save`, GET `/games/list/{user_id}`, POST `/games/load`, GET `/ranking`. Se reutiliza `ModeloRelacional.spawn_agent`, `guardar_estado` y `cargar_estado`.
+  - Frontend: nueva ruta `web/frontend/src/app/start/page.tsx`, redirección desde `/auth` a `/start`, y botón "Guardar partida" en `web/frontend/src/app/game/page.tsx` que llama a `/games/save`.
+  - Persistencia: `DatabaseManager.get_world_state`, `save_score` y `get_ranking` reutilizados para listar y rankear partidas por mejor puntaje.
+- **Observaciones**: Autorización y validación de `user_id` deben revisarse; es recomendable limitar frecuencia/tamaño de guardados para evitar escrituras masivas.
+- **Siguientes pasos**: Añadir modal de carga detallada, pruebas de integración (guardar/cargar/quickplay), y protección de endpoints (tokens/sesiones).

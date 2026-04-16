@@ -1,2 +1,0 @@
-
-Cuando finalices los cambios en un proyecto o workspace, debes registrarlos en el archivo docs/Cambios.md, al final del archivo. Siempre revisalo primero para que no sobreescribas nada y para seguir el formato de registro.
