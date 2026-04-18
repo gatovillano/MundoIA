@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import useGameStore from "@/store/useGameStore";
 import { getHttpUrl } from "@/utils/apiConfig";
-import { Play, Pause, RefreshCw, LogOut, Map as MapIcon, Share2, Zap, Brain, Users, Box, ChevronDown, Clock, Activity, BarChart3, Terminal, X, Flag, CircleDashed, Star, Sun, CloudRain, Landmark, MessageCircle } from "lucide-react";
+import { Play, Pause, RefreshCw, LogOut, Map as MapIcon, Share2, Zap, Brain, Users, Box, ChevronDown, ChevronRight, Clock, Activity, BarChart3, Terminal, X, Flag, CircleDashed, Star, Sun, CloudRain, Landmark, MessageCircle, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 import WorldViewport from "@/components/WorldViewport";
@@ -70,6 +70,10 @@ export default function GamePage() {
     const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
     const [currentCelebratingMission, setCurrentCelebratingMission] = useState<any>(null);
     const [showInstructions, setShowInstructions] = useState(false);
+    const [showModeSelection, setShowModeSelection] = useState(true);
+    const [protocolStep, setProtocolStep] = useState<'intervention' | 'operation'>('intervention');
+    const [loadingAction, setLoading] = useState(false);
+    const [savedGames, setSavedGames] = useState<any[]>([]);
 
     // Initial connection and auth check
     useEffect(() => {
@@ -86,26 +90,7 @@ export default function GamePage() {
         return () => disconnect();
     }, [isAuthenticated, router, connect, disconnect]);
 
-    // Monitor for new completed missions to celebrate
-    const lastCelebratedMissionRef = useRef<string | null>(null);
-    useEffect(() => {
-        if (recentCompletedMissions && recentCompletedMissions.length > 0) {
-            const latestMission = recentCompletedMissions[0];
-            if (latestMission.id !== lastCelebratedMissionRef.current) {
-                lastCelebratedMissionRef.current = latestMission.id;
-                setCurrentCelebratingMission(latestMission);
-            }
-        }
-    }, [recentCompletedMissions]);
-
-    // Auto-scroll logic for logs
-    useEffect(() => {
-        if (autoScrollEnabled && lastLogRef.current && showLogs) {
-            lastLogRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
-        }
-    }, [logs, autoScrollEnabled, showLogs]);
-
-    const handleControl = async (action: "start" | "pause" | "reset") => {
+    const handleControl = async (action: "start" | "pause" | "reset", forcedMode?: boolean) => {
         if (!userId) return;
 
         if (action === "reset") {
@@ -114,10 +99,16 @@ export default function GamePage() {
         }
 
         try {
+            const modeToUse = forcedMode !== undefined ? forcedMode : useGameStore.getState().modoControlTotal;
+            
             const response = await fetch(getHttpUrl("/game/control"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id: userId, action }),
+                body: JSON.stringify({ 
+                    user_id: userId, 
+                    action, 
+                    modo_control_total: modeToUse 
+                }),
             });
 
             if (await _handleSessionExpiredResponse(response)) {
@@ -129,6 +120,58 @@ export default function GamePage() {
             }
         } catch (e) {
             console.error("Error controlling game:", e);
+        }
+    };
+
+    const handleSelectIntervention = (isControlTotal: boolean) => {
+        useGameStore.setState({ modoControlTotal: isControlTotal });
+        // Si venimos desde la pantalla de inicio y ya se ejecutó la operación (new/load/quick),
+        // no pasar al paso de 'operation' (evitamos preguntar de nuevo). Cerramos el modal.
+        const startupDone = useGameStore.getState().startupOperationDone;
+        if (startupDone) {
+            useGameStore.setState({ startupOperationDone: false });
+            setShowModeSelection(false);
+            return;
+        }
+
+        setProtocolStep('operation');
+        fetchSavedGames();
+    };
+
+    const fetchSavedGames = async () => {
+        if (!userId) return;
+        try {
+            const res = await fetch(getHttpUrl(`/games/list/${userId}`));
+            if (res.ok) {
+                const data = await res.json();
+                setSavedGames(data.games || []);
+            }
+        } catch (e) { console.error(e); }
+    };
+
+    const handleOperation = async (type: 'continue' | 'new' | 'quick') => {
+        if (!userId) return;
+        setLoading(true);
+        try {
+            if (type === 'continue') {
+                await fetch(getHttpUrl('/games/load'), {
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ user_id: userId })
+                });
+            } else if (type === 'new') {
+                await fetch(getHttpUrl('/game/control'), {
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ user_id: userId, action: 'reset' })
+                });
+            } else if (type === 'quick') {
+                await fetch(getHttpUrl('/games/quickplay'), {
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ user_id: userId, num_agents: 12, save: true })
+                });
+            }
+            setShowModeSelection(false);
+        } catch (e) {
+            console.error(e);
+            alert("Error en la operación de inicio.");
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -276,6 +319,150 @@ export default function GamePage() {
                     userId={userId || ""}
                 />
 
+                <AnimatePresence>
+                    {showModeSelection && (
+                        <motion.div 
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-[100] flex items-center justify-center bg-[#030305]/95 backdrop-blur-3xl p-6"
+                        >
+                            <motion.div 
+                                initial={{ scale: 0.98, opacity: 0, y: 10 }}
+                                animate={{ scale: 1, opacity: 1, y: 0 }}
+                                className="w-full max-w-5xl bg-[#0a0b10] border border-white/10 rounded-[40px] overflow-hidden shadow-[0_0_100px_rgba(124,77,255,0.1)] flex flex-col lg:flex-row"
+                            >
+                                <div className="flex-1 p-12 lg:p-16 space-y-10 relative">
+                                    {/* Loading Overlay for Actions */}
+                                    <AnimatePresence>
+                                        {loadingAction && (
+                                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center">
+                                                <div className="flex flex-col items-center gap-4">
+                                                    <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+                                                    <span className="text-[10px] font-mono text-indigo-400 uppercase tracking-[0.4em] animate-pulse">Procesando Realidad...</span>
+                                                </div>
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+
+                                    <div className="flex items-center justify-between border-b border-white/5 pb-8">
+                                        <div>
+                                            <div className="flex items-center gap-3 mb-2">
+                                                <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                                                <span className="text-[#7c4dff] font-mono text-[10px] uppercase tracking-[0.5em] font-black">Protocolo de Inicio</span>
+                                            </div>
+                                            <h2 className="text-4xl font-black text-white tracking-tighter uppercase">
+                                                {protocolStep === 'intervention' ? 'Nivel de Intervención' : 'Modo de Operación'}
+                                            </h2>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <div className={`w-12 h-1 rounded-full ${protocolStep === 'intervention' ? 'bg-[#7c4dff]' : 'bg-white/10'}`} />
+                                            <div className={`w-12 h-1 rounded-full ${protocolStep === 'operation' ? 'bg-[#7c4dff]' : 'bg-white/10'}`} />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                        {protocolStep === 'intervention' ? (
+                                            <>
+                                                <ProtocolCard 
+                                                    onClick={() => handleSelectIntervention(false)}
+                                                    icon={Globe}
+                                                    title="Observador"
+                                                    desc="La civilización evoluciona orgánicamente. Tu rol es guiar el destino mediante sugerencias y observar el flujo natural."
+                                                    tag="Autonomía"
+                                                />
+                                                <ProtocolCard 
+                                                    onClick={() => handleSelectIntervention(true)}
+                                                    icon={Zap}
+                                                    title="Arquitecto"
+                                                    desc="Toma el control táctico. La simulación espera tus órdenes para avanzar. Tú dictas cada paso de la historia."
+                                                    tag="Control Total"
+                                                    highlight
+                                                />
+                                            </>
+                                        ) : (
+                                            <>
+                                                {/* Operation options */}
+                                                <div className="space-y-4">
+                                                    <h3 className="text-[10px] font-mono text-white/30 uppercase tracking-[0.3em] mb-6">Secuencia de Carga</h3>
+                                                    
+                                                    <OperationButton 
+                                                        disabled={savedGames.length === 0}
+                                                        onClick={() => handleOperation('continue')}
+                                                        icon={Play}
+                                                        title="Continuar Simulación"
+                                                        desc={savedGames.length > 0 ? `Reanudar desde turno ${savedGames[0].paso_actual}` : 'No hay partidas guardadas'}
+                                                    />
+                                                    
+                                                    <OperationButton 
+                                                        onClick={() => handleOperation('new')}
+                                                        icon={RefreshCw}
+                                                        title="Nueva Partida"
+                                                        desc="Colapsar la realidad actual y comenzar un nuevo Big Bang desde cero."
+                                                    />
+
+                                                    <button 
+                                                        onClick={() => setProtocolStep('intervention')}
+                                                        className="text-[10px] font-mono text-gray-500 hover:text-white transition-colors flex items-center gap-2 mt-8 group"
+                                                    >
+                                                        <ChevronRight className="w-3 h-3 rotate-180" />
+                                                        VOLVER AL PASO ANTERIOR
+                                                    </button>
+                                                </div>
+
+                                                <div className="p-8 bg-indigo-500/5 border border-indigo-500/10 rounded-[32px] space-y-6">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className="p-3 bg-indigo-500/20 rounded-xl text-indigo-400">
+                                                            <Activity className="w-5 h-5" />
+                                                        </div>
+                                                        <h3 className="text-lg font-bold text-white uppercase tracking-tight">Partida Rápida</h3>
+                                                    </div>
+                                                    <p className="text-xs text-gray-500 leading-relaxed">Inyecta inmediatamente 12 agentes aleatorios y un mapa base para comenzar a experimentar sin esperas.</p>
+                                                    
+                                                    <button 
+                                                        onClick={() => handleOperation('quick')}
+                                                        className="w-full py-4 bg-indigo-500 hover:bg-indigo-400 text-white font-black text-xs uppercase tracking-widest rounded-2xl transition-all shadow-xl shadow-indigo-500/10 active:scale-95 flex items-center justify-center gap-3"
+                                                    >
+                                                        <Zap className="w-4 h-4 fill-current" />
+                                                        Lanzar Protocolo Rápido
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="hidden lg:flex w-80 bg-[#07080c] p-12 flex-col justify-between border-l border-white/5 relative">
+                                    <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10" />
+                                    <div className="relative z-10 space-y-8">
+                                        <div className="w-12 h-12 rounded-2xl border border-white/10 flex items-center justify-center bg-white/[0.02]">
+                                            <ShieldCheck className="w-6 h-6 text-indigo-500" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-4">Autenticación</h4>
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-full bg-[#00e676]/10 flex items-center justify-center">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-[#00e676]" />
+                                                </div>
+                                                <span className="text-[10px] font-mono text-white/80 uppercase tracking-widest">{username}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="relative z-10 space-y-4">
+                                        <div className="w-8 h-1 bg-white/20 rounded-full" />
+                                        <p className="text-white/40 font-mono text-[9px] leading-relaxed uppercase tracking-wider">
+                                            {protocolStep === 'intervention' 
+                                                ? 'ESPERANDO DEFINICIÓN DE INTERVENCIÓN...' 
+                                                : 'ESPERANDO SELECCIÓN DE OPERACIÓN...'}
+                                        </p>
+                                    </div>
+                                </div>
+                            </motion.div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
                 {!activePanel && <AgentSidebar />}
 
                 <AnimatePresence>
@@ -302,6 +489,70 @@ export default function GamePage() {
                 )}
             </div>
         </div>
+    );
+}
+
+// --- SUBCOMPONENTS FOR PROTOCOL MODAL ---
+
+function ProtocolCard({ icon: Icon, title, desc, tag, onClick, highlight = false }: any) {
+    return (
+        <button 
+            onClick={onClick}
+            className={`group relative p-10 text-left flex flex-col justify-between min-h-[320px] overflow-hidden rounded-[35px] transition-all duration-500 border ${
+                highlight 
+                ? 'bg-indigo-500/[0.03] border-indigo-500/10 hover:border-[#7c4dff] hover:bg-indigo-500/[0.07]' 
+                : 'bg-white/[0.02] border-white/5 hover:border-indigo-500/30 hover:bg-white/[0.04]'
+            }`}
+        >
+            {highlight && <div className="absolute inset-0 bg-gradient-to-br from-[#7c4dff]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />}
+            
+            <div className="space-y-6 relative z-10">
+                <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-500 border ${
+                    highlight 
+                    ? 'bg-[#7c4dff] text-white border-white/10 shadow-xl shadow-[#7c4dff]/20' 
+                    : 'bg-white/5 text-gray-400 group-hover:text-indigo-400 group-hover:bg-indigo-500/10 border-white/5 group-hover:border-indigo-500/20'
+                }`}>
+                    <Icon className={`w-8 h-8 ${highlight ? 'fill-current' : ''}`} />
+                </div>
+                <div>
+                    <h3 className="text-2xl font-bold text-white uppercase tracking-tight mb-3">{title}</h3>
+                    <p className="text-sm text-gray-500 leading-relaxed font-medium">{desc}</p>
+                </div>
+            </div>
+
+            <div className={`pt-6 border-t flex items-center justify-between relative z-10 ${highlight ? 'border-indigo-500/20' : 'border-white/5'}`}>
+                <div className="flex gap-1">
+                    {[1,2,3].map(i => (
+                        <div 
+                            key={i} 
+                            className={`w-3 h-1 rounded-full ${highlight ? 'bg-[#7c4dff]' : 'bg-white/10'}`} 
+                        />
+                    ))}
+                </div>
+                <span className={`text-[9px] font-mono uppercase tracking-widest font-black ${highlight ? 'text-[#7c4dff]' : 'text-indigo-400/60'}`}>
+                    {tag}
+                </span>
+            </div>
+        </button>
+    );
+}
+
+function OperationButton({ icon: Icon, title, desc, onClick, disabled = false }: any) {
+    return (
+        <button 
+            disabled={disabled}
+            onClick={onClick}
+            className="w-full group p-6 bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 hover:border-white/10 rounded-2xl transition-all text-left flex items-start gap-5 disabled:opacity-30 disabled:grayscale disabled:pointer-events-none"
+        >
+            <div className="p-3 bg-white/5 rounded-xl text-gray-500 group-hover:text-white transition-colors">
+                <Icon className="w-5 h-5" />
+            </div>
+            <div>
+                <h4 className="text-sm font-bold text-white uppercase tracking-wider mb-1">{title}</h4>
+                <p className="text-[11px] text-gray-500 leading-tight">{desc}</p>
+            </div>
+            <ChevronRight className="ml-auto w-4 h-4 text-white/0 group-hover:text-white/20 transition-all group-hover:translate-x-1" />
+        </button>
     );
 }
 

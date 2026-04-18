@@ -314,10 +314,20 @@ export default function AgentSidebar() {
                                                 </span>
                                             </div>
                                         </div>
-                                        <div>
-                                            <h2 className="text-2xl font-bold text-white tracking-tight mb-1 uppercase">
-                                                {agent.identidad?.nombre || agent.alma?.nombre_propio || "AGENTE"}
-                                            </h2>
+                                        <div className="flex-1">
+                                            <div className="flex justify-between items-start">
+                                                <h2 className="text-2xl font-bold text-white tracking-tight mb-1 uppercase">
+                                                    {agent.identidad?.nombre || agent.alma?.nombre_propio || "AGENTE"}
+                                                </h2>
+                                                <button 
+                                                    onClick={() => setIsControlling(true)}
+                                                    className="p-1.5 bg-indigo-500/20 hover:bg-indigo-500 text-indigo-400 hover:text-white rounded-lg transition-all border border-indigo-500/30 flex items-center gap-1 group shadow-lg shadow-indigo-500/10"
+                                                    title="Cambiar a Modo Control Total"
+                                                >
+                                                    <Zap className="w-3.5 h-3.5 group-hover:animate-pulse" />
+                                                    <span className="text-[9px] font-black uppercase tracking-tighter pr-1">Control</span>
+                                                </button>
+                                            </div>
                                             <div className="flex flex-wrap gap-2">
                                                 <Badge text={agent.profesion || "CIUDADANO"} color="bg-[#7c4dff]/20 text-[#7c4dff] border-[#7c4dff]/30" />
                                                 <Badge text="Activo" color="bg-[#00e676]/20 text-[#00e676] border-[#00e676]/30" />
@@ -498,28 +508,6 @@ function PerfilTab({
                                         {agentePoseidoId === agent.id 
                                             ? 'Cerrar enlace de consciencia' 
                                             : 'Tomar control directo del córtex'}
-                                    </p>
-                                </div>
-                            </div>
-                        </button>
-                    </div>
-
-                    <div className="relative group overflow-hidden rounded-2xl">
-                        <div className="absolute -inset-[1px] bg-gradient-to-r from-indigo-500 to-purple-500 opacity-30 group-hover:opacity-100 transition-opacity blur-[2px]" />
-                        <button
-                            onClick={onStartControl}
-                            className="relative w-full py-4 px-6 flex items-center justify-between bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 transition-all"
-                        >
-                            <div className="flex items-center gap-4">
-                                <div className="p-3 rounded-xl bg-indigo-500/20">
-                                    <Zap className="w-6 h-6" />
-                                </div>
-                                <div className="text-left">
-                                    <h4 className="text-sm font-black uppercase tracking-widest leading-none mb-1">
-                                        Control de Turno
-                                    </h4>
-                                    <p className="text-[10px] opacity-60 font-medium">
-                                        Dictar plan de hasta 3 acciones
                                     </p>
                                 </div>
                             </div>

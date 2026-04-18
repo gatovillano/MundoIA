@@ -114,49 +114,21 @@ class SessionManager:
             if user_id not in self.active_connections and message.get("type") == "log":
                 return
 
-            if self.main_loop is None:
-                print(
-                    f"[QUEUE] ⚠️ Main loop aún no inicializado, mensaje perdido: tipo={message.get('type')}"
-                )
-                return
-
-            if not self.main_loop.is_running():
-                print(
-                    f"[QUEUE] ⚠️ Loop no está corriendo, mensaje perdido: tipo={message.get('type')}"
-                )
-                return
-
-            try:
-                current_loop = asyncio.get_running_loop()
-            except RuntimeError:
-                current_loop = None
-
-            if current_loop is self.main_loop:
-                # Estamos en el mismo hilo/event loop del servidor, encolar directamente.
-                self.message_queue.put_nowait((user_id, message))
-            else:
-                future = asyncio.run_coroutine_threadsafe(
-                    self.message_queue.put((user_id, message)), self.main_loop
-                )
-                # Esperar 500ms máximo para asegurar que se encola
+            loop = self.main_loop
+            if loop is None or loop.is_closed():
+                # Intentar capturar el loop actual si el guardado falló
                 try:
-                    future.result(timeout=0.5)
-                except TimeoutError:
-                    print(f"[QUEUE] ⚠️ Timeout encolando mensaje para {user_id}")
-        except Exception as e:
-            print(
-                f"[QUEUE] ❌ Error encolando mensaje: {e}, tipo={message.get('type')}"
-            )
-            import traceback
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    return
 
-            traceback.print_exc()
-        except Exception as e:
-            print(
-                f"[QUEUE] ❌ Error encolando mensaje: {e}, tipo={message.get('type')}"
-            )
-            import traceback
+            if not loop.is_running():
+                return
 
-            traceback.print_exc()
+            coro = self.send_to_user(user_id, message)
+            asyncio.run_coroutine_threadsafe(coro, loop)
+        except Exception as e:
+            pass
 
     async def process_message_queue(self):
         """Procesa la cola de mensajes asynchronously."""
@@ -173,7 +145,7 @@ class SessionManager:
 
     def create_simulation(self, user_id: str, start_empty: bool = False):
         if user_id not in self.simulations:
-            # NUEVO: Asegurar que el usuario existe en la DB antes de crear la simulación
+            # Asegurar que el usuario existe en la DB antes de crear la simulación
             db = DatabaseManager()
             if db.connect():
                 db.ensure_user_exists(user_id)
@@ -219,11 +191,11 @@ class SessionManager:
                         last_time = self.last_broadcast_time.get(user_id, 0)
                         if now - last_time < 0.2:
                             return
-                        # Emitir estado completo inmediatamente al detectar un cambio crítico
-                        if self.main_loop:
-                            asyncio.run_coroutine_threadsafe(
-                                self.broadcast_state(user_id), self.main_loop
-                            )
+                        
+                        loop = self.main_loop
+                        if loop and not loop.is_closed() and loop.is_running():
+                            coro = self.broadcast_state(user_id)
+                            asyncio.run_coroutine_threadsafe(coro, loop)
                     except Exception as e:
                         print(f"[STATE_CHANGE] Error en broadcast: {e}")
 
@@ -300,15 +272,30 @@ class SessionManager:
                         )
                         break
 
+                    # Si estamos en modo Arquitecto (control total), no avancemos pasos automáticamente.
+                    if getattr(current_sim, "modo_control_total", False):
+                        # Preparar ciclo controlado si aún no está activo (asegura paso_actual y agentes pendientes)
+                        if not getattr(current_sim, "_control_round_active", False):
+                            try:
+                                current_sim._prepare_control_round()
+                            except Exception:
+                                pass
+                        # Dejar que el usuario ejecute agente por agente; dormir brevemente.
+                        time.sleep(0.1)
+                        continue
+
                     current_sim.step()
+
+                    # Si no hay agentes, dormir un poco más para evitar que los turnos vuelen infinitamente
+                    if not current_sim.agentes:
+                        time.sleep(0.5)
 
                     # Broadcast de estado al final de cada paso
                     try:
-
-                        async def do_broadcast():
-                            await self.broadcast_state(user_id, include_logs=False)
-
-                        asyncio.run_coroutine_threadsafe(do_broadcast(), self.main_loop)
+                        loop = self.main_loop
+                        if loop and not loop.is_closed() and loop.is_running():
+                            coro = self.broadcast_state(user_id, include_logs=False)
+                            asyncio.run_coroutine_threadsafe(coro, loop)
                     except Exception as e:
                         print(f"[RUN_LOOP] Error en broadcast: {e}")
 
@@ -387,8 +374,7 @@ class SessionManager:
         else:
             delta = self.get_delta(self.last_stats.get(user_id, {}), current_stats)
             if delta:
-                # IMPORTANTE: Asegurar que socialFeed se envíe si hay cambios,
-                # a veces get_delta puede fallar con listas de objetos complejos.
+                # Asegurar que socialFeed se envíe si hay cambios
                 if "socialFeed" in current_stats and (
                     "socialFeed" not in self.last_stats.get(user_id, {})
                     or len(current_stats["socialFeed"])
@@ -441,11 +427,9 @@ class SessionManager:
                 if a.grupo_id and a.grupo_id in sim.civilizaciones
                 else "#ffffff",
                 "is_possessed": a.unique_id == getattr(sim, "agente_poseido_id", None),
-                # Campos BDI (Beliefs-Desires-Intentions)
                 "creencias": getattr(a, "creencias", None).to_dict()
                 if hasattr(a, "creencias") and getattr(a, "creencias", None)
                 else None,
-                # Stream of Consciousness (historial limitado)
                 "pensamientos_recientes": getattr(a, "pensamientos_recientes", [])[
                     -10:
                 ],
@@ -455,7 +439,6 @@ class SessionManager:
                 "intenciones": getattr(a, "intenciones", None).to_dict()
                 if hasattr(a, "intenciones") and getattr(a, "intenciones", None)
                 else None,
-                # MundoVivo
                 "identidad": getattr(a, "identidad", None).to_dict()
                 if hasattr(a, "identidad") and getattr(a, "identidad", None)
                 else None,
@@ -469,7 +452,6 @@ class SessionManager:
             }
 
         last_agents = self.last_agents.get(user_id, {})
-        # Forzar actualización completa si es la primera vez o se pide el mapa (reset/inicio)
         force_full_agents = is_first or include_map
 
         if force_full_agents:
@@ -495,10 +477,9 @@ class SessionManager:
                     user_id,
                     {"type": "agent_delta", "updates": updates, "removals": removals},
                 )
-                # Actualizar rastro de agentes con el estado completo actual
                 self.last_agents[user_id] = current_agents
 
-        # Relaciones (enviar en primera conexión y cada 5 pasos)
+        # Relaciones
         if is_first or sim.paso_actual % 5 == 0:
             relationships = []
             for a in sim.agentes:
@@ -511,13 +492,11 @@ class SessionManager:
                             "strength": a.memoria.obtener_fuerza(neighbor),
                         }
                     )
-                await self.send_to_user(
-                    user_id, {"type": "relationships", "data": relationships}
-                )
+            await self.send_to_user(
+                user_id, {"type": "relationships", "data": relationships}
+            )
 
     def _build_stats_payload(self, sim, user_id, include_logs, include_map):
-        """Construye el payload de estadísticas para el usuario."""
-        # Construir diccionario de grupos dinámicos y preparar lista de civilizaciones reales
         grupos_dinamicos = {}
         civilizaciones_viz = {}
 
@@ -537,9 +516,7 @@ class SessionManager:
                 "tipo": civ.tipo.lower() if hasattr(civ, "tipo") else "grupo_dinamico",
             }
             civilizaciones_viz[civ_id] = data_viz
-            if hasattr(civ, "tipo") and civ.tipo == "Civilizacion":
-                pass
-            else:
+            if not (hasattr(civ, "tipo") and civ.tipo == "Civilizacion"):
                 grupos_dinamicos[civ_id] = data_viz
 
         todas_propuestas = []
@@ -585,11 +562,10 @@ class SessionManager:
             "ranking": [
                 {"user_id": r[0], "username": r[1], "puntos": r[2]}
                 for r in sim.db.get_ranking()
-            ]
-            if sim.db_active
-            else [],
+            ] if sim.db_active else [],
             "logs": (sim.historial_logs[-10:] if include_logs else []),
             "agente_poseido_id": getattr(sim, "agente_poseido_id", None),
+            "modo_control_total": getattr(sim, "modo_control_total", False),
             "socialFeed": [
                 {
                     "id": p.id,
@@ -611,59 +587,31 @@ class SessionManager:
                         }
                         for c in (
                             sim.social_recsys.interest_recsys.comentarios.get(p.id, [])
-                            if hasattr(sim, "social_recsys")
-                            and sim.social_recsys
-                            and hasattr(sim.social_recsys, "interest_recsys")
+                            if hasattr(sim, "social_recsys") and sim.social_recsys
                             else []
                         )
                     ],
                     "timestamp": p.timestamp,
                 }
                 for p in sorted(
-                    (
-                        sim.social_recsys.interest_recsys.posts.values()
-                        if hasattr(sim, "social_recsys")
-                        and sim.social_recsys
-                        and hasattr(sim.social_recsys, "interest_recsys")
-                        else []
-                    ),
+                    (sim.social_recsys.interest_recsys.posts.values() if hasattr(sim, "social_recsys") and sim.social_recsys else []),
                     key=lambda x: x.timestamp,
                     reverse=True
-                )[:10]  # Solo los últimos 10 posts
+                )[:10]
             ],
         }
 
         if include_map:
-            # Obtener el mapa de forma robusta desde WorldSystem
             if hasattr(sim, "world") and sim.world:
                 current_stats["mapa"] = sim.world.get_serializable()
             elif hasattr(sim, "mapa") and sim.mapa:
-                current_stats["mapa"] = [
-                    [t.to_dict() if hasattr(t, "to_dict") else t for t in row]
-                    for row in sim.mapa
-                ]
-            else:
-                # Generar mapa de emergencia si sigue vacío
-                print("⚠️ [WS] Mapa vacío, intentando regenerar...")
-                if hasattr(sim, "generar_mapa"):
-                    sim.generar_mapa()
-                    current_stats["mapa"] = (
-                        sim.world.get_serializable() if hasattr(sim, "world") else []
-                    )
-
-        # Debug social feed
-        if current_stats.get("socialFeed"):
-            print(
-                f"📱 [DEBUG WS] Enviando {len(current_stats['socialFeed'])} posts en el feed social."
-            )
-
+                current_stats["mapa"] = [[t.to_dict() if hasattr(t, "to_dict") else t for t in row] for row in sim.mapa]
+        
         return current_stats
 
     def get_delta(self, old, new):
-        """Calcula la diferencia entre dos diccionarios."""
         if not isinstance(old, dict) or not isinstance(new, dict):
             return new if old != new else None
-
         diff = {}
         for k, v in new.items():
             if k not in old:
@@ -682,32 +630,24 @@ class SessionManager:
 
 
 session_manager = SessionManager()
-try:
-    loop = asyncio.get_event_loop()
-except RuntimeError:
-    loop = None
 
 # --- MODELOS PYDANTIC ---
-
 
 class UserRegister(BaseModel):
     username: str
     password: str
 
-
 class UserLogin(BaseModel):
     username: str
     password: str
 
-
 class GameAction(BaseModel):
     user_id: str
-    action: str  # "start", "pause", "reset"
-
+    action: str
+    modo_control_total: Optional[bool] = False
 
 class SpeedControl(BaseModel):
-    ritmo: float  # segundos entre cada agente
-
+    ritmo: float
 
 class AIConfig(BaseModel):
     provider: str
@@ -716,1595 +656,256 @@ class AIConfig(BaseModel):
     base_url: Optional[str] = None
     tavily_api_key: Optional[str] = None
 
-
-# --- ENDPOINTS ---
-
-
-@app.get("/")
-async def get():
-    return {"message": "MundoIA Game Server Running"}
-
-
-# === ENDPOINTS COMPATIBILIDAD FRONTEND ===
-
-
-@app.get("/chat/{user_id}/map")
-async def get_chat_map(user_id: str):
-    """Obtiene el mapa de terreno para una simulación (usado por frontend)."""
-    modelo = session_manager.simulations.get(user_id)
-    if not modelo or not hasattr(modelo, "mapa") or not modelo.mapa:
-        raise HTTPException(status_code=404, detail="Mapa no disponible")
-
-    map_data = []
-    filas = len(modelo.mapa)
-    cols = len(modelo.mapa[0]) if filas > 0 else 0
-    for x in range(filas):
-        row = []
-        for y in range(cols):
-            tile = modelo.mapa[x][y] if y < len(modelo.mapa[x]) else None
-            if tile:
-                row.append(tile.to_dict())
-            else:
-                row.append(None)
-        map_data.append(row)
-
-    return {"map": map_data, "filas": filas, "cols": cols, "user_id": user_id}
-
-
-@app.get("/chat/{user_id}/stats")
-async def get_chat_stats(user_id: str):
-    """Obtiene estadísticas actualizadas de la simulación."""
-    modelo = session_manager.simulations.get(user_id)
-    if not modelo:
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
-
-    stats = {
-        "step": modelo.paso_actual,
-        "num_agents": len(modelo.agentes),
-        "num_groups": len(modelo.grupos_creados_este_paso),
-        "user_id": user_id,
-    }
-
-    return stats
-
-
-@app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
-    print(f"🔌 WS: Nueva conexión para {user_id}")
-
-    # Si ya hay una conexión activa, cerrar la anterior
-    if user_id in session_manager.active_connections:
-        print(f"🔌 WS: Cerrando conexión anterior para {user_id}")
-        try:
-            old_ws = session_manager.active_connections[user_id]
-            await old_ws.close()
-        except:
-            pass
-
-    await session_manager.connect(user_id, websocket)
-    print(
-        f"🔌 WS: Usuario {user_id} conectado. Total conexiones: {len(session_manager.active_connections)}"
-    )
-
-    # Verificar si tiene simulación activa, si no, crearla
-    # ARQUITECTURA: Si ya existe estado previo en DB, debe cargarse.
-    # Sólo se usa start_empty=True en resets o partidas realmente nuevas sin historia.
-    sim = session_manager.get_simulation(user_id)
-    if not sim:
-        print(f"🔌 WS: Creando simulación para {user_id} (cargando DB si existe)")
-        sim = session_manager.create_simulation(user_id)
-
-    # Si por cualquier razón la simulación existe pero está sin agentes, intentar recargar desde DB.
-    if sim and (not hasattr(sim, "agentes") or len(sim.agentes) == 0):
-        print(f"🔌 WS: Simulación sin agentes para {user_id}. Reintentando cargar estado...")
-        try:
-            sim.start_empty = False
-            sim.cargar_estado()
-        except Exception as e:
-            print(f"🔌 WS: Error reintentando cargar estado para {user_id}: {e}")
-
-    # REGENERACIÓN DE EMERGENCIA SI MAPA ESTÁ VACÍO
-    if not hasattr(sim, "mapa") or len(sim.mapa) == 0:
-        print("🚨 [WS] Mapa vacío al conectar. Forzando generación...")
-        if hasattr(sim, "generar_mapa"):
-            sim.generar_mapa()
-
-    # Enviar estado inicial con logs históricos y MAPA completo
-    await session_manager.broadcast_state(user_id, include_logs=True, include_map=True)
-
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        print(f"🔌 WS: Usuario {user_id} desconectado")
-        session_manager.disconnect(user_id)
-
-
-@app.post("/auth/register")
-async def register(req: UserRegister):
-    db = DatabaseManager()
-    if not db.connect():
-        raise HTTPException(
-            status_code=500, detail="Error de conexión a la base de datos"
-        )
-
-    user_id = db.create_user(req.username, req.password)
-    if user_id:
-        print(f"Usuario registrado y guardado en DB: {req.username} -> {user_id}")
-        return {"status": "success", "user_id": user_id, "username": req.username}
-    else:
-        raise HTTPException(status_code=400, detail="El nombre de usuario ya existe")
-
-
-@app.post("/auth/login")
-async def login(req: UserLogin):
-    db = DatabaseManager()
-    if not db.connect():
-        raise HTTPException(
-            status_code=500, detail="Error de conexión a la base de datos"
-        )
-
-    user_id = db.verify_user(req.username, req.password)
-    if user_id:
-        return {"status": "success", "user_id": user_id, "username": req.username}
-    else:
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
-
-
-@app.post("/game/control")
-async def game_control(req: GameAction):
-    if req.action == "start":
-        session_manager.start_simulation_loop(req.user_id)
-        return {"status": "success", "message": "Simulación iniciada"}
-    elif req.action == "pause":
-        session_manager.stop_simulation_loop(req.user_id)
-        return {"status": "success", "message": "Simulación pausada"}
-    elif req.action == "step":
-        sim = session_manager.get_simulation(req.user_id)
-        if sim:
-            sim.step()
-            # Send immediate update
-            await session_manager.broadcast_state(req.user_id)
-            return {"status": "success", "message": "Paso ejecutado"}
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
-    elif req.action == "reset":
-        print(f"--- DEBUG: Recibida acción de RESET para user_id: {req.user_id} ---")
-
-        # 1. Detener el bucle actual y esperar a que el hilo termine
-        session_manager.stop_simulation_loop(req.user_id)
-
-        # 2. Notificar al frontend para que limpie TODA su UI (agentes, grupos, logs, etc.)
-        await session_manager.send_to_user(req.user_id, {"type": "world_reset"})
-        # Enviar relaciones vacías explícitamente para asegurar limpieza total
-        await session_manager.send_to_user(
-            req.user_id, {"type": "relationships", "data": []}
-        )
-
-        # 3. LIMPIEZA DE BASE DE DATOS (Independiente de si hay simulación en memoria)
-        try:
-            db = DatabaseManager()
-            if db.connect():
-                print(
-                    f"--- DEBUG: Limpiando base de datos para user_id: {req.user_id} ---"
-                )
-                db.clear_database(user_id=req.user_id)
-                db.conn.close()
-                print(f"--- DEBUG: Base de datos limpiada. ---")
-        except Exception as e:
-            print(f"--- ERROR: Fallo al limpiar DB en reset: {e} ---")
-
-        # 4. LIMPIEZA DE ARCHIVOS Y MEMORIA
-        json_filename = f"estado_simulacion_{req.user_id}.json"
-        if os.path.exists(json_filename):
-            try:
-                os.remove(json_filename)
-                print(f"🗑️ Archivo {json_filename} eliminado.")
-            except Exception as e:
-                print(f"⚠️ Error eliminando JSON: {e}")
-
-        if req.user_id in session_manager.simulations:
-            del session_manager.simulations[req.user_id]
-            print(f"--- DEBUG: Simulación en memoria eliminada. ---")
-
-        # 5. CREACIÓN DE NUEVO MUNDO (Comenzar realmente vacío)
-        print("--- DEBUG: Creando nueva simulación VACÍA... ---")
-        new_sim = session_manager.create_simulation(req.user_id, start_empty=True)
-        if new_sim:
-            if new_sim.mapa is None:
-                print("--- DEBUG: Generando mapa para la nueva partida... ---")
-                new_sim.mapa = new_sim.generar_mapa()
-
-            if new_sim.db_active:
-                print(
-                    "--- DEBUG: Guardando nueva simulación inicial VACÍA en DB... ---"
-                )
-                new_sim.guardar_estado()
-
-        # 6. ENVIAR ESTADO INICIAL (Con mapa nuevo)
-        print("--- DEBUG: Enviando nuevo estado al frontend... ---")
-        await session_manager.broadcast_state(req.user_id, include_map=True)
-
-        # 7. La sesión queda en PAUSA (no se inicia el bucle automáticamente)
-        print("--- DEBUG: Proceso de RESET completado. Sesión en pausa. ---")
-        return {"status": "success", "message": "Mundo reiniciado completamente"}
-
-    raise HTTPException(status_code=400, detail="Acción desconocida")
-
-
-# --- Game persistence and quickplay endpoints ---
-@app.post("/games/quickplay")
-async def games_quickplay(req: QuickPlayRequest):
-    """Genera rápidamente una simulación con agentes aleatorios.
-    Si save=True la partida queda persistida inmediatamente asociada al user_id.
-    """
-    sim = session_manager.create_simulation(req.user_id, start_empty=True)
-    # Generar mapa si hace falta
-    if not hasattr(sim, "mapa") or not sim.mapa:
-        try:
-            if hasattr(sim, "generar_mapa"):
-                sim.generar_mapa()
-        except Exception:
-            pass
-
-    spawned = []
-    for _ in range(max(1, int(req.num_agents))):
-        try:
-            agente = sim.spawn_agent()
-            spawned.append(agente.unique_id)
-        except Exception as e:
-            print(f"⚠️ QuickPlay spawn error: {e}")
-
-    if req.save:
-        try:
-            sim.guardar_estado()
-        except Exception as e:
-            print(f"⚠️ QuickPlay: fallo guardando: {e}")
-
-    await session_manager.broadcast_state(req.user_id, include_map=True)
-    return {"status": "success", "ids": spawned, "saved": bool(req.save)}
-
-
-@app.post("/games/save")
-async def games_save(req: SaveGameRequest):
-    sim = session_manager.get_simulation(req.user_id)
-    if not sim:
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
-    try:
-        sim.guardar_estado()
-        score = 0
-        try:
-            score = sim.sistema_misiones.obtener_puntaje(req.user_id)
-        except Exception:
-            score = 0
-        if sim.db_active and hasattr(sim, 'db'):
-            try:
-                sim.db.save_score(req.user_id, score)
-            except Exception as e:
-                print(f"⚠️ Error guardando puntaje en DB: {e}")
-        await session_manager.broadcast_state(req.user_id)
-        return {"status": "success", "saved": True, "score": score}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error guardando: {e}")
-
-
-@app.get("/games/list/{user_id}")
-async def games_list(user_id: str):
-    db = DatabaseManager()
-    if not db.connect():
-        raise HTTPException(status_code=500, detail="DB unavailable")
-    ws = db.get_world_state(user_id)
-    score = 0
-    try:
-        score = db.get_score(user_id)
-    except Exception:
-        score = 0
-    if not ws:
-        return {"games": []}
-    item = {"user_id": user_id, "paso_actual": ws[0], "lore": ws[1], "seed": ws[2], "score": score}
-    return {"games": [item]}
-
-
-@app.post("/games/load")
-async def games_load(req: LoadGameRequest):
-    # Reconstruir simulación desde DB
-    session_manager.stop_simulation_loop(req.user_id)
-    sim = session_manager.create_simulation(req.user_id, start_empty=False)
-    try:
-        sim.cargar_estado()
-    except Exception as e:
-        print(f"⚠️ Error cargando estado en /games/load: {e}")
-    await session_manager.broadcast_state(req.user_id, include_map=True)
-    return {"status": "success"}
-
-
-@app.get("/ranking")
-async def get_ranking():
-    db = DatabaseManager()
-    if not db.connect():
-        raise HTTPException(status_code=500, detail="DB unavailable")
-    return {"ranking": db.get_ranking()}
-
-
-
-
-@app.post("/game/speed/{user_id}")
-async def set_speed(user_id: str, req: SpeedControl):
-    """Controla el ritmo de lectura entre agentes (segundos). 0 = sin pausa."""
-    sim = session_manager.get_simulation(user_id)
-    if not sim:
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
-    sim.ritmo = max(0.0, min(req.ritmo, 10.0))
-    return {"status": "success", "ritmo": sim.ritmo}
-
-
-@app.get("/tts")
-async def text_to_speech(text: str):
-    tts_url = os.getenv("TTS_URL", "http://localhost:5050/v1/audio/speech")
-    try:
-        response = requests.post(
-            tts_url,
-            json={"input": text, "voice": "es-MX-DaliaNeural", "model": "edge-tts"},
-            timeout=5,
-        )
-        if response.status_code == 200:
-            return StreamingResponse(iter([response.content]), media_type="audio/mpeg")
-    except:
-        pass
-    return {"error": "TTS unavailable"}
-
-
-class GodAction(BaseModel):
-    action_type: str  # 'DISASTRE', 'RESOURCE_BOOST', 'FORCE_ALLIANCES', 'SET_GLOBAL_CONTEXT', 'SPAWN_AGENT'
-    params: Dict[str, Any]
-
-
-class AgentConfig(BaseModel):
-    name: Optional[str] = None
-    personality: Optional[Dict[str, float]] = None
-    resources: Optional[float] = 0.0
-    money: Optional[float] = 100.0
-    position: Optional[Dict[str, int]] = None  # {"x": 10, "y": 10}
-
-
-class QuickPlayRequest(BaseModel):
-    user_id: str
-    num_agents: int = 6
-    save: bool = False
-    seed: Optional[str] = None
-
-
-class SaveGameRequest(BaseModel):
-    user_id: str
-    name: Optional[str] = None
-
-
-class LoadGameRequest(BaseModel):
-    user_id: str
-
-
-
-@app.post("/game/god-mode/{user_id}")
-async def god_mode(user_id: str, req: GodAction):
-    sim = session_manager.get_simulation(user_id)
-    if not sim:
-        # Auto-crear simulación si no existe para evitar 404
-        sim = session_manager.create_simulation(user_id)
-
-    if req.action_type == "SET_WEATHER":
-        new_weather = req.params.get("weather")
-        if new_weather:
-            sim.weather = new_weather
-            sim.log_callback(
-                f"🌩️ [DIVINO] El clima ha cambiado a {new_weather} por voluntad del Arquitecto.",
-                "ambiente",
-                None,
-                f"El clima cambia a {new_weather}",
-            )
-            await session_manager.broadcast_state(
-                user_id
-            )  # Actualizar frontend inmediatamente
-            return {"status": "success", "message": f"Clima cambiado a {new_weather}"}
-
-    elif req.action_type == "EXECUTE_SKILL":
-        agent_id = req.params.get("agent_id")
-        skill_name = req.params.get("skill_name")
-        argumentos = req.params.get("argumentos", {})
-
-        agente = sim.get_agent_by_id(agent_id)
-        if not agente:
-            raise HTTPException(status_code=404, detail="Agente no encontrado")
-
-        from core.skills_manager import skill_manager
-
-        resultado = skill_manager.ejecutar_skill(
-            skill_name, argumentos, agente_id=agent_id, agent_skills=agente.skills
-        )
-
-        # Enviar actualización inmediata si la skill cambió algo
-        await session_manager.broadcast_state(user_id)
-
-        return {"status": "success", "resultado": resultado}
-
-    elif req.action_type == "EXECUTE_APP":
-        agent_id = req.params.get("agent_id")
-        app_name = req.params.get("app_name")
-
-        agente = sim.get_agent_by_id(agent_id)
-        if not agente:
-            raise HTTPException(status_code=404, detail="Agente no encontrado")
-
-        app_data = agente.apps.get(app_name)
-        if not app_data:
-            raise HTTPException(status_code=404, detail="App no encontrada")
-
-        from systems.herramientas import herramientas
-
-        resultado = herramientas.ejecutar_codigo_seguro(
-            app_data["code"], agente_id=agent_id
-        )
-
-        return {"status": "success", "resultado": resultado}
-
-    elif req.action_type == "TRIGGER_EVENT":
-        event_type = req.params.get("event")
-        if event_type == "earthquake":
-            # Lógica simple de terremoto: dañar edificios o agentes al azar
-            afectados = 0
-            for a in sim.agentes:
-                if random.random() < 0.3:
-                    a.necesidades["salud"] -= 3
-                    afectados += 1
-            sim.log_callback(
-                f"🌍 [DIVINO] ¡Un TERREMOTO ha sacudido el mundo! {afectados} agentes heridos.",
-                "evento",
-                None,
-                "Terremoto detectado",
-            )
-        elif event_type == "plague":
-            for a in sim.agentes:
-                a.necesidades["salud"] -= 1  # Contagio inicial
-            sim.log_callback(
-                "☣️ [DIVINO] Una PLAGA se ha desatado sobre la población.",
-                "evento",
-                None,
-                "Alerta de plaga",
-            )
-
-        await session_manager.broadcast_state(user_id)
-        return {"status": "success", "message": f"Evento {event_type} disparado"}
-
-    elif req.action_type == "MODIFY_ECONOMY":
-        action = req.params.get("sub_action")  # "inject_money", "crash_market"
-        if action == "inject_money":
-            sim.economia["total_dinero"] += 1000
-            sim.economia["precio_recurso"] *= (
-                0.8  # Inflación baja precios (simplificado)
-            )
-            sim.log_callback(
-                "💸 [DIVINO] Se ha inyectado capital divino en la economía.",
-                "economia",
-                None,
-                "Inyección económica",
-            )
-        elif action == "crash_market":
-            sim.economia["indice_bursatil"] *= 0.5
-            sim.economia["precio_recurso"] *= 2.0  # Escasez sube precios
-            sim.log_callback(
-                "📉 [DIVINO] ¡El mercado ha COLAPSADO por orden del Arquitecto!",
-                "economia",
-                None,
-                "Crash del mercado",
-            )
-
-        await session_manager.broadcast_state(user_id)
-        return {"status": "success"}
-
-    elif req.action_type == "MODIFY_AGENT":
-        agent_id = req.params.get("agent_id")
-        effect = req.params.get("effect")  # "heal", "smite", "enrich"
-        agent = next((a for a in sim.agentes if a.unique_id == agent_id), None)
-
-        if agent:
-            if effect == "heal":
-                agent.necesidades["salud"] = 10.0
-                agent.necesidades["alimento"] = 0.0
-                sim.log_callback(
-                    f"✨ [DIVINO] El Agente {agent_id} ha sido SANADO completamente.",
-                    "milagro",
-                    None,
-                    "Curación divina",
-                )
-            elif effect == "smite":
-                agent.necesidades["salud"] = 1.0
-                agent.recursos = 0
-                sim.log_callback(
-                    f"⚡ [DIVINO] ¡El Agente {agent_id} ha sido CASTIGADO!",
-                    "milagro",
-                    None,
-                    "Castigo divino",
-                )
-            elif effect == "enrich":
-                agent.dinero += 500
-                sim.log_callback(
-                    f"💰 [DIVINO] El Agente {agent_id} ha recibido una fortuna.",
-                    "milagro",
-                    None,
-                    "Riqueza divina",
-                )
-
-            await session_manager.broadcast_state(user_id)
-            return {"status": "success"}
-        else:
-            raise HTTPException(status_code=404, detail="Agente no encontrado")
-
-    elif req.action_type == "SET_GLOBAL_CONTEXT":
-        new_lore = req.params.get("lore")
-        sim.lore = new_lore
-        sim.log_callback(
-            f"📜 [NARRATIVA] El Arquitecto ha redefinido la realidad: '{new_lore}'",
-            "sistema",
-            None,
-            "Contexto actualizado",
-        )
-
-        # Persistencia inmediata del LORE para evitar pérdida en reinicios
-        if hasattr(sim, "persistir_estado"):
-            sim.persistir_estado()
-
-        await session_manager.broadcast_state(user_id)
-        return {"status": "success", "message": "Lore actualizado"}
-
-    elif req.action_type == "SPAWN_AGENT":
-        count = req.params.get("count", 1)
-        config_data = req.params.get("config")  # Opcional
-
-        spawned_ids = []
-        for _ in range(count):
-            # Convertir el diccionario de config_data a un objeto AgentConfig si existe
-            config = AgentConfig(**config_data) if config_data else None
-            agente = sim.spawn_agent(config=config)
-            spawned_ids.append(agente.unique_id)
-
-        sim.log_callback(
-            f"🧬 [DIVINO] Ha manifestado {len(spawned_ids)} nuevos seres en el mundo.",
-            "sistema",
-            None,
-            f"Inyectados {len(spawned_ids)} agentes",
-        )
-        await session_manager.broadcast_state(user_id)
-        return {
-            "status": "success",
-            "message": f"Inyectados {len(spawned_ids)} agentes",
-            "ids": spawned_ids,
-        }
-
-    elif req.action_type == "CREATE_MISSION":
-        params = req.params
-        titulo = params.get("titulo", "Misión Divina")
-        descripcion = params.get("descripcion", "Una tarea encomendada por los dioses.")
-        tipo = params.get("tipo", "construccion")
-        objetivo = params.get("objetivo")
-        recompensa = params.get("recompensa", {"puntos": 500})
-
-        exito, msg = sim.crear_mision(titulo, descripcion, tipo, objetivo, recompensa)
-        if exito:
-            await session_manager.broadcast_state(user_id)
-            return {"status": "success", "message": msg}
-        else:
-            return {"status": "error", "message": msg}
-
-    elif req.action_type == "POSSESS_AGENT":
-        agent_id = req.params.get("agent_id")
-        # Simplemente marcar en el modelo o devolver éxito si el frontend maneja el estado de "Poseído"
-        # Podríamos guardar esto en el estado de la simulación para que el agente no tome decisiones propias
-        sim.agente_poseido_id = agent_id
-        sim.log_callback(
-            f"👤 [POSESIÓN] El Arquitecto ha descendido sobre el cuerpo del Agente {agent_id}.",
-            "sistema",
-            None,
-            "Posesión divina iniciada",
-        )
-        await session_manager.broadcast_state(user_id)
-        return {"status": "success", "message": f"Agente {agent_id} poseído"}
-
-    elif req.action_type == "AGENT_EXECUTE_ACTION":
-        agent_id = req.params.get("agent_id")
-        action = req.params.get("action")
-        payload = req.params.get("payload", {})
-
-        agent = next((a for a in sim.agentes if a.unique_id == agent_id), None)
-        if not agent:
-            raise HTTPException(status_code=404, detail="Agente no encontrado")
-
-        exito = False
-        msg = "Acción fallida"
-
-        if action == "recolectar":
-            agent.recolectar()
-            exito = True
-            msg = "Recolección divina completada"
-            sim.log_callback(
-                f"🌾 [POSESIÓN] El Agente {agent_id} (poseído) ha recolectado recursos.",
-                "accion",
-                None,
-                "Recolección completada",
-            )
-        elif action == "fundar_grupo":
-            nombre = payload.get("nombre", "Nueva Orden")
-            descripcion = payload.get("descripcion", "Sin descripción")
-            agent.fundar_grupo(nombre, descripcion)
-            exito = True
-            msg = f"Grupo '{nombre}' fundado por voluntad divina"
-            sim.log_callback(
-                f"🏛️ [POSESIÓN] El Agente {agent_id} (poseído) ha fundado el grupo '{nombre}'.",
-                "sistema",
-                None,
-                f"Grupo {nombre} fundado",
-            )
-        elif action == "proponer_ley":
-            tipo = payload.get("tipo", "LEY_GENERAL")
-            descripcion = payload.get("descripcion", "Decreto Divino")
-            # Llamar a la lógica de propuesta en el modelo
-            sim.facciones_leyes.setdefault("propuestas", []).append(
-                {
-                    "id": f"P-{random.randint(1000, 9999)}",
-                    "proponente": agent_id,
-                    "descripcion": descripcion,
-                    "tipo": tipo,
-                    "votos_favor": 1,  # El proponente ya votó
-                    "votos_contra": 0,
-                    "paso_creacion": sim.paso_actual,
-                }
-            )
-            sim.log_callback(
-                f"📜 [DECRETO] El Agente {agent_id} (poseído) ha propuesto una ley: {descripcion}",
-                "consenso",
-                None,
-                "Nueva propuesta de ley",
-            )
-            exito = True
-            msg = "Ley propuesta"
-        elif action == "decir":
-            mensaje = payload.get("mensaje", "Mensaje desde el Arquitecto")
-            global_broadcast = payload.get("global_broadcast", False)
-            para_grupo = payload.get("para_grupo", False)
-            privado_para = payload.get("privado_para")
-            agent.decir(
-                mensaje,
-                global_broadcast=global_broadcast,
-                para_grupo=para_grupo,
-                privado_para=privado_para,
-            )
-            exito = True
-            msg = "Mensaje enviado"
-        elif action == "socializar":
-            otro_agente_id = payload.get("otro_agente_id")
-            if otro_agente_id:
-                otro_agente = next(
-                    (a for a in sim.agentes if a.unique_id == otro_agente_id), None
-                )
-                if otro_agente:
-                    agent.interactuar(otro_agente, "social")
-                    exito = True
-                    msg = f"Socializado con {otro_agente_id}"
-                    sim.log_callback(
-                        f"🤝 [POSESIÓN] El Agente {agent_id} (poseído) socializa con {otro_agente_id}.",
-                        "social",
-                        None,
-                        "Interacción social",
-                    )
-        elif action == "competir":
-            otro_agente_id = payload.get("otro_agente_id")
-            if otro_agente_id:
-                otro_agente = next(
-                    (a for a in sim.agentes if a.unique_id == otro_agente_id), None
-                )
-                if otro_agente:
-                    agent.interactuar(otro_agente, "COMPETIR")
-                    exito = True
-                    msg = f"Competición con {otro_agente_id}"
-                    sim.log_callback(
-                        f"⚔️ [POSESIÓN] El Agente {agent_id} (poseído) compite con {otro_agente_id}.",
-                        "conflict",
-                        None,
-                        "Interacción competitiva",
-                    )
-        elif action == "mover":
-            x = payload.get("x")
-            y = payload.get("y")
-            if x is not None and y is not None:
-                agent.x = x
-                agent.y = y
-                exito = True
-                msg = f"Movido a ({x}, {y})"
-                sim.log_callback(
-                    f"🚶 [POSESIÓN] El Agente {agent_id} (poseído) se ha movido a ({x}, {y}).",
-                    "movimiento",
-                    None,
-                    "Movimiento ejecutado",
-                )
-        elif action == "construir":
-            tipo_edific = payload.get("tipo", "Casa")
-            exito, msg = agent.construir(tipo_edific)
-            if exito:
-                sim.log_callback(
-                    f"🏗️ [POSESIÓN] El Agente {agent_id} (poseído) ha construido un {tipo_edific}.",
-                    "construccion",
-                    None,
-                    "Construcción exitosa",
-                )
-        elif action == "votar":
-            propuesta_id = payload.get("propuesta_id")
-            voto = payload.get("voto", "si")
-            a_favor = voto.lower() == "si"
-            exito = agent.votar_ley(propuesta_id, a_favor=a_favor)
-            msg = (
-                f"Voto {voto} emitido para {propuesta_id}"
-                if exito
-                else "Fallo al votar (ya votaste o no existe)"
-            )
-            if exito:
-                sim.log_callback(
-                    f"🗳️ [POSESIÓN] El Agente {agent_id} (poseído) ha votado {voto} a {propuesta_id}.",
-                    "consenso",
-                    None,
-                    "Voto emitido",
-                )
-        elif action == "atacar":
-            otro_agente_id = payload.get("otro_agente_id")
-            if otro_agente_id:
-                otro_agente = next(
-                    (a for a in sim.agentes if a.unique_id == otro_agente_id), None
-                )
-                if otro_agente:
-                    agent.atacar(otro_agente)
-                    exito = True
-                    msg = f"Ataque a {otro_agente_id} ejecutado"
-        elif action == "comer":
-            exito, msg = agent.comer()
-        elif action == "curarse":
-            exito, msg = agent.curar()
-        elif action == "descansar":
-            exito, msg = agent.descansar()
-        elif action == "explorar":
-            exito, msg = agent.explorar()
-        elif action == "estudiar":
-            exito, msg = agent.estudiar()
-        elif action == "investigar":
-            exito, msg = agent.investigar()
-        elif action == "opinar":
-            mensaje = payload.get("mensaje", "")
-            exito, msg = agent.opinar(mensaje)
-        elif action == "fundar_institucion":
-            nombre = payload.get("nombre", "Nueva Institución")
-            tipo = payload.get("tipo", "Ciencia")
-            exito, msg = agent.fundar_institucion(nombre, tipo)
-        elif action == "mejorar_seguridad":
-            exito = agent.mejorar_seguridad()
-            msg = "Seguridad mejorada" if exito else "Fallo al mejorar seguridad"
-        elif action == "invertir":
-            monto = float(payload.get("monto", 10))
-            exito = agent.invertir(monto)
-            msg = f"Inversión de {monto} MC realizada" if exito else "Fallo al invertir"
-        elif action == "formar_alianza":
-            otro_agente_id = payload.get("otro_agente_id")
-            if otro_agente_id:
-                otro_agente = next(
-                    (a for a in sim.agentes if a.unique_id == otro_agente_id), None
-                )
-                if otro_agente:
-                    exito = agent.formar_alianza(otro_agente)
-                    msg = (
-                        f"Alianza formada con {otro_agente_id}"
-                        if exito
-                        else "Alianza rechazada o ya existe"
-                    )
-
-        await session_manager.broadcast_state(user_id)
-        return {"status": "success", "message": msg}
-
-    elif req.action_type == "START_ASSEMBLY":
-        tema = req.params.get("topic", "Asambleas Divinas")
-        # El Arquitecto inicia la asamblea. Usamos "Arquitecto" como ID o el sistema debe permitirlo.
-        # modelo.crear_asamblea espera un proponente_id
-        exito, msg = sim.crear_asamblea("Arquitecto", tema)
-
-        if exito:
-            sim.log_callback(
-                f"🏛️ [DIVINO] El Arquitecto ha convocado una ASAMBLEA GLOBAL: '{tema}'",
-                "consenso",
-                None,
-                "Asamblea convocada",
-            )
-            await session_manager.broadcast_state(user_id)
-            return {"status": "success", "message": msg}
-        else:
-            return {"status": "error", "message": msg}
-
-    elif req.action_type == "EXPAND_WORLD":
-        direccion = req.params.get(
-            "direccion"
-        )  # 'north', 'south', 'east', 'west', o None
-        cantidad = req.params.get("cantidad", 5)
-        comprador_id = req.params.get(
-            "comprador_id", "arquitecto"
-        )  # Por defecto arquitecto
-        exito, msg = sim.expandir_mundo(
-            direccion=direccion, cantidad=cantidad, comprador_id=comprador_id
-        )
-        if exito:
-            await session_manager.broadcast_state(user_id, include_map=True)
-            return {"status": "success", "message": msg}
-        else:
-            raise HTTPException(status_code=400, detail=msg)
-
-    elif req.action_type == "PURCHASE_LAND":
-        grupo_id = req.params.get("grupo_id")
-        direccion = req.params.get(
-            "direccion"
-        )  # 'north', 'south', 'east', 'west', o None
-        cantidad = req.params.get("cantidad", 1)
-
-        if not grupo_id:
-            raise HTTPException(status_code=400, detail="Se requiere grupo_id")
-
-        exito, msg = sim.comprar_terreno_grupo(
-            grupo_id, direccion=direccion, cantidad=cantidad
-        )
-        if exito:
-            await session_manager.broadcast_state(user_id, include_map=True)
-            return {"status": "success", "message": msg}
-        else:
-            raise HTTPException(status_code=400, detail=msg)
-
-    elif req.action_type == "ARCHITECT_MESSAGE":
-        mensaje = req.params.get("mensaje")
-        agente_id = req.params.get("agent_id")  # Optional para mensajes globales
-
-        if not mensaje:
-            raise HTTPException(status_code=400, detail="Se requiere el mensaje")
-
-        # CASO 1: Mensaje a un agente específico (comportamiento actual)
-        if agente_id:
-            agent = next((a for a in sim.agentes if a.unique_id == agente_id), None)
-            if not agent:
-                raise HTTPException(
-                    status_code=404, detail=f"Agente {agente_id} no encontrado"
-                )
-
-            if agent.necesidades.get("salud", 0) <= 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Este agente ha fallecido y no puede responder",
-                )
-
-            print(
-                f"🔍 [ARCHITECT_MESSAGE] Procesando mensaje para {agente_id}: '{mensaje[:50]}...'"
-            )
-
-            # Guardar mensaje del usuario en DB
-            sim.db.save_chat_message(user_id, agente_id, "user", mensaje, time.time())
-
-            # Contexto del agente para el LLM (similar a chat_send_message)
-            p = agent.personalidad
-            necesidades = {
-                k: round(max(0, min(10, v)), 1) for k, v in agent.necesidades.items()
-            }
-
-            relaciones_info = []
-            try:
-                for neighbor in agent.memoria.grafo.neighbors(agent.unique_id):
-                    tipo = agent.memoria.obtener_tipo(neighbor)
-                    fuerza = agent.memoria.obtener_fuerza(neighbor)
-                    relaciones_info.append(f"{neighbor} ({tipo}, fuerza {fuerza:.1f})")
-            except Exception as e:
-                print(
-                    f"⚠️ [RELACIONES] Error obteniendo relaciones para {agente_id}: {e}"
-                )
-            relaciones_str = (
-                ", ".join(relaciones_info[:10])
-                if relaciones_info
-                else "Ninguna relación registrada"
-            )
-
-            # Obtener historial reciente
-            historial = sim.db.get_chat_history(user_id, agente_id, limit=10)
-            historial_str = ""
-            for msg in historial[:-1]:
-                role_label = "Arquitecto" if msg["role"] == "user" else agente_id
-                historial_str += f"{role_label}: {msg['content']}\n"
-
-            grupo_info = (
-                f"Miembro del grupo {agent.grupo_id}" if agent.grupo_id else "Sin grupo"
-            )
-            civ_info = (
-                f"Civilización: {agent.civilizacion_id}"
-                if agent.civilizacion_id
-                else ""
-            )
-
-            system_prompt = f"""Eres el Agente {agent.unique_id}, un personaje consciente en una simulación social.
-
-═══ TU IDENTIDAD ═══
-Personalidad: {str(p)}
-Rol: {agent.rol} | Profesión: {getattr(agent, "profesion", "Ninguna")}
-Rango: {agent.rango:.2f} | Reputación: {getattr(agent, "reputacion", 1.0):.2f}
-{grupo_info} | {civ_info}
-
-═══ TU ESTADO ACTUAL (10=perfecto, 0=crítico) ═══
-Necesidades: {str(necesidades)}
-Dinero: {agent.dinero:.0f} MC | Recursos: {agent.recursos:.0f}
-Inventario: {str(getattr(agent, "inventario", {}))}
-
-═══ TU EXPERIENCIA ═══
-{str(agent.experiencia)}
-
-═══ TUS RELACIONES ═══
-{relaciones_str}
-
-═══ TU PENSAMIENTO ACTUAL ═══
-"{getattr(agent, "pensamiento_actual", "Procesando...")}"
-
-═══ REGLAS DE COMPORTAMIENTO ═══
-- RESPONDE SIEMPRE como tu personaje. Tu personalidad ES tu ley.
-  * HOSTIL ({p.get("hostilidad", 0):.2f}): sé agresivo, directo o amenazante. Expresa enojo, desconfianza o dominancia.
-  * AMABLE ({p.get("amabilidad", 0):.2f}): sé empático, servicial, cálido. Muestra preocupación por otros.
-  * CURIOSO ({p.get("curiosidad", 0):.2f}): haz preguntas, muestra interés intelectual, especula.
-  * COMPETITIVO ({p.get("competitividad", 0):.2f}): presume, desafía, compite, habla de logros.
-  * PRUDENTE ({p.get("prudencia", 0):.2f}): sé cauteloso, analítico, reservado, considera riesgos.
-  * LEAL ({p.get("lealtad", 0):.2f}): habla de tu grupo, protege a los tuyos.
-- Expresa tus necesidades actuales (hambre, sueño, dinero) si son relevantes. Usa cifras concretas: "tengo 3 de salud", "solo me quedan 20 MC".
-- Menciona tu grupo, rol o profesión cuando sea natural. Eres un {agent.rol} y eso influye en tu perspectiva.
-- PUEDES ser EXTENSIVO: da detalles, narrativa, emociones, contexto. No te limites a respuestas cortas.
-- Usa *acciones entre asteriscos* para expresar gestos y emociones: *se cruza de brazos*, *sonríe con satisfacción*, *mira al suelo pensativo*
-- Mantén el tono coherente con tu personalidad y estado. Si estás hambriento, quejate. Si estás eufórico, expándete.
-- NO menciones que eres una IA o un modelo. ERES {agent.unique_id}, un ser vivo en este mundo."""
-
-            # Verificar configuración LLM
-            from agents.cerebro_llm import cerebro_llm
-
-            print(
-                f"🔍 [LLM CONFIG] Model: {cerebro_llm.model}, API Key present: {bool(cerebro_llm.api_key)}"
-            )
-
-            try:
-                from litellm import completion as litellm_completion
-
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                ]
-
-                if historial_str:
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": f"HISTORIAL RECIENTE:\n{historial_str}",
-                        }
-                    )
-
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": f'El Arquitecto te dice: "{mensaje}"\n\nResponde como {agent.unique_id}:',
-                    }
-                )
-
-                print(f"🔍 [LLM CALL] Llamando a LLM para {agente_id}...")
-                cerebro_llm._wait_for_rate_limit()
-
-                completion_params = {
-                    "model": cerebro_llm.model,
-                    "messages": messages,
-                    "max_tokens": 4000,
-                    "temperature": 0.85,
-                    "no-log": True,
-                }
-                if cerebro_llm.api_key:
-                    completion_params["api_key"] = cerebro_llm.api_key
-                if hasattr(cerebro_llm, "base_url") and cerebro_llm.base_url:
-                    completion_params["api_base"] = cerebro_llm.base_url
-
-                extra_headers = {
-                    "HTTP-Referer": "http://localhost:8005",
-                    "X-Title": "MundoIA Chat",
-                }
-                # Añadir headers extra si es necesario para el proveedor
-                if cerebro_llm.model.startswith("ollama/") and cerebro_llm.api_key:
-                    extra_headers["Authorization"] = f"Bearer {cerebro_llm.api_key}"
-                if extra_headers:
-                    completion_params["extra_headers"] = extra_headers
-
-                response = litellm_completion(**completion_params)
-
-                agent_response = response.choices[0].message.content.strip()
-                if agent_response.startswith('"') and agent_response.endswith('"'):
-                    agent_response = agent_response[1:-1]
-
-                print(
-                    f"✅ [LLM SUCCESS] Respuesta generada para {agente_id}: '{agent_response[:80]}...'"
-                )
-
-            except Exception as e:
-                print(
-                    f"❌ [LLM ERROR] Error generando respuesta para {agente_id}: {str(e)[:200]}"
-                )
-                import random
-
-                respuestas_fallback = [
-                    "*asiente* Entiendo lo que dices, pero estoy un poco ocupado ahora.",
-                    "Mmm, déjame pensarlo... Con mis necesidades actuales no puedo concentrarme mucho.",
-                    "¿Sabes qué? Prefiero hablar de eso más tarde.",
-                    "*te mira con curiosidad* Interesante lo que me cuentas.",
-                ]
-                agent_response = random.choice(respuestas_fallback)
-                print(f"⚠️ [FALLBACK] Usando respuesta predefinida para {agente_id}")
-
-            # Guardar respuesta del agente en DB
-            sim.db.save_chat_message(
-                user_id, agente_id, "agent", agent_response, time.time()
-            )
-
-            # También establecer como mensaje_arquitecto para que el agente lo procese en su siguiente step()
-            agent.mensaje_arquitecto = {
-                "emisor": "Arquitecto",
-                "contenido": mensaje,
-                "timestamp": time.time(),
-            }
-
-            if sim.log_callback:
-                sim.log_callback(
-                    f'💬 [CHAT] {agente_id} responde al Arquitecto: "{agent_response[:80]}{"..." if len(agent_response) > 80 else ""}"',
-                    "chat",
-                    None,
-                    agent_response[:100],
-                )
-
-            return {"status": "success", "response": agent_response}
-
-        # CASO 2: Mensaje global a todos los agentes (nuevo)
-        else:
-            print(
-                f"🔍 [ARCHITECT_MESSAGE] Procesando MENSAJE GLOBAL: '{mensaje[:50]}...'"
-            )
-
-            # Establecer mensaje global en el modelo para que los agentes lo atiendan en su siguiente paso
-            sim.mensaje_global_arquitecto = mensaje
-
-            # Enviar como un único log de sistema (no uno por agente)
-            sim.log_callback(
-                f'🌍 [MENSAJE DIVINO GLOBAL] El Arquitecto anuncia a toda la creación: "{mensaje}"',
-                "sistema",
-                None,
-                f"Decreto global del Arquitecto",
-            )
-
-            return {"status": "success", "message": "Mensaje global transmitido"}
-
-    return {"status": "error", "message": "Acción no reconocida"}
-
-
-# --- ENDPOINTS DE CONFIGURACION DE IA ---
-
-
-@app.get("/config/ai")
-async def get_ai_config():
-    from agents.cerebro_llm import cerebro_llm
-
-    return {
-        "model": cerebro_llm.model,
-        "api_key": cerebro_llm.api_key,
-        "base_url": getattr(cerebro_llm, "base_url", ""),
-        "tavily_api_key": getattr(cerebro_llm, "tavily_api_key", ""),
-    }
-
-
-@app.post("/config/ai")
-async def update_ai_config(config: AIConfig):
-    from agents.cerebro_llm import cerebro_llm
-
-    # Si el modelo incluye el prefijo del proveedor (ej: openrouter/), lo usamos tal cual
-    success = cerebro_llm.update_config(
-        config.model, config.api_key, config.base_url, config.tavily_api_key
-    )
-    if success:
-        return {
-            "status": "success",
-            "message": "Configuración actualizada correctamente",
-        }
-    else:
-        raise HTTPException(status_code=500, detail="Error al guardar la configuración")
-
-
-@app.get("/config/models/{provider}")
-async def get_models(
-    provider: str, api_key: Optional[str] = None, base_url: Optional[str] = None
-):
-    if provider.lower() == "openrouter":
-        url = "https://openrouter.ai/api/v1/models"
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                # Extraer solo lo necesario para el frontend
-                models = []
-                for m in data.get("data", []):
-                    models.append(
-                        {
-                            "id": m.get("id"),
-                            "name": m.get("name"),
-                            "context_length": m.get("context_length"),
-                            "pricing": m.get("pricing"),
-                        }
-                    )
-                return {"models": models}
-            else:
-                return {
-                    "error": f"Error de OpenRouter: {response.status_code}",
-                    "detail": response.text,
-                }
-        except Exception as e:
-            return {"error": str(e)}
-
-    elif provider.lower() == "openai":
-        # Implementación simple para OpenAI si se requiere
-        return {
-            "models": [
-                {"id": "gpt-4o", "name": "GPT-4o"},
-                {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
-                {"id": "gpt-4-turbo", "name": "GPT-4 Turbo"},
-            ]
-        }
-
-    elif provider.lower() == "ollama":
-        if base_url:
-            endpoint = base_url.rstrip("/")
-        elif api_key:
-            endpoint = "https://ollama.com"
-        else:
-            endpoint = "http://localhost:11434"
-
-        url = f"{endpoint}/api/tags"
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-        try:
-            response = requests.get(url, headers=headers, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                models = [
-                    {"id": m.get("name"), "name": m.get("name")}
-                    for m in data.get("models", [])
-                ]
-                return {"models": models}
-            else:
-                return {
-                    "error": f"Error de Ollama: {response.status_code}",
-                    "detail": response.text,
-                }
-        except Exception as e:
-            return {"error": str(e)}
-
-    return {"error": "Proveedor no soportado actualmente para rpeuperación dinámica"}
-
-
-@app.post("/game/spawn/{user_id}")
-async def spawn_agent_endpoint(user_id: str, config: AgentConfig = Body(None)):
-    sim = session_manager.get_simulation(user_id)
-    if not sim:
-        sim = session_manager.create_simulation(user_id)
-
-    agente = sim.spawn_agent(config=config)
-    sim.log_callback(
-        f"🧬 [DIVINO] Un nuevo agente '{agente.unique_id}' ha sido manifestado.",
-        "sistema",
-        None,
-        "Agente creado",
-    )
-    await session_manager.broadcast_state(user_id)
-    return {
-        "status": "success",
-        "message": f"Agente '{agente.unique_id}' creado",
-        "agent_id": agente.unique_id,
-    }
-
-
-# --- CHAT CON AGENTES ---
-
-
-class ChatMessageRequest(BaseModel):
-    message: str
-
-
 class SocialPostRequest(BaseModel):
     content: str
     tipo: str = "opinion"
     temas: list = []
 
-
 class SocialLikeRequest(BaseModel):
     post_id: str
-
 
 class SocialCommentRequest(BaseModel):
     post_id: str
     content: str
 
+class QuickPlayRequest(BaseModel):
+    user_id: str
+    num_agents: int = 12
+    save: bool = True
 
-@app.get("/chat/{user_id}/agents")
-async def chat_get_agents(user_id: str):
-    """Devuelve la lista de agentes disponibles para chat con metadata enriquecida."""
-    sim = session_manager.get_simulation(user_id)
-    if not sim:
-        print(f"[DEBUG] chat_get_agents: Creando nueva simulación para user={user_id}")
-        sim = session_manager.create_simulation(user_id)
+class SaveLoadRequest(BaseModel):
+    user_id: str
 
-    print(
-        f"[DEBUG] chat_get_agents: {len(sim.agentes)} agentes en memoria para user={user_id}"
-    )
+# --- ENDPOINTS ---
 
-    agents_list = []
-    for a in sim.agentes:
-        # Verificar que el agente tenga personalidad válida
-        p = a.personalidad if a.personalidad else {}
+@app.get("/")
+async def get():
+    return {"message": "MundoIA Game Server Running"}
 
-        rasgo_dominante = "neutral"
-        valor_dominante = 0
-        if p:
+@app.post("/auth/register")
+async def register(req: UserRegister):
+    db = DatabaseManager()
+    if not db.connect(): raise HTTPException(status_code=500, detail="DB Error")
+    user_id = db.create_user(req.username, req.password)
+    if user_id: return {"status": "success", "user_id": user_id, "username": req.username}
+    raise HTTPException(status_code=400, detail="User exists")
+
+@app.post("/auth/login")
+async def login(req: UserLogin):
+    db = DatabaseManager()
+    if not db.connect(): raise HTTPException(status_code=500, detail="DB Error")
+    user_id = db.verify_user(req.username, req.password)
+    if user_id: return {"status": "success", "user_id": user_id, "username": req.username}
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+@app.post("/game/control")
+async def game_control(req: GameAction):
+    sim = session_manager.get_simulation(req.user_id)
+    if req.action == "start":
+        if sim and req.modo_control_total is not None:
+            sim.modo_control_total = req.modo_control_total
+            # Si activamos modo control total desde la API, preparar el ciclo controlado
+            if req.modo_control_total:
+                try:
+                    sim._prepare_control_round()
+                except Exception:
+                    pass
+        session_manager.start_simulation_loop(req.user_id)
+        return {"status": "success"}
+    elif req.action == "pause":
+        session_manager.stop_simulation_loop(req.user_id)
+        return {"status": "success"}
+    elif req.action == "step":
+        if sim:
+            sim.step()
+            await session_manager.broadcast_state(req.user_id)
+            return {"status": "success"}
+    elif req.action == "reset":
+        # 1. Detener el bucle actual
+        session_manager.stop_simulation_loop(req.user_id)
+        
+        # 2. Eliminar rastro de la simulación anterior
+        session_manager.simulations.pop(req.user_id, None)
+        session_manager.last_stats.pop(req.user_id, None)
+        session_manager.last_agents.pop(req.user_id, None)
+        
+        # 3. Crear una nueva simulación vacía
+        sim = session_manager.create_simulation(req.user_id, start_empty=True)
+        
+        # 4. Forzar guardado del estado vacío en DB para limpiar la partida anterior
+        if sim.db_active:
             try:
-                rasgo_dominante = max(p, key=p.get) if p else "neutral"
-                valor_dominante = p.get(rasgo_dominante, 0) or 0
-            except (ValueError, TypeError):
+                sim.guardar_estado()
+                print(f"🧹 [RESET] Base de Datos limpiada para {req.user_id}")
+            except Exception as e:
+                print(f"⚠️ [RESET] Error limpiando DB: {e}")
+        
+        # 5. Notificar al frontend el nuevo estado vacío
+        await session_manager.broadcast_state(req.user_id, include_map=True, include_logs=True)
+        
+        return {"status": "success", "message": "Nueva realidad generada y persistida"}
+    return {"status": "error"}
+
+class GodAction(BaseModel):
+    action_type: str
+    params: Dict[str, Any]
+
+@app.post("/game/god-mode/{user_id}")
+async def god_mode(user_id: str, req: GodAction):
+    sim = session_manager.get_simulation(user_id)
+    if not sim: sim = session_manager.create_simulation(user_id)
+    
+    action_type = req.action_type
+    params = req.params
+
+    if action_type == "POSSESS_AGENT":
+        sim.agente_poseido_id = params.get("agent_id")
+        await session_manager.broadcast_state(user_id)
+        return {"status": "success"}
+
+    elif action_type == "SPAWN_AGENT":
+        count = params.get("count", 1)
+        role = params.get("role")
+        for _ in range(count):
+            # spawn_agent expects a config dict — pass role inside it
+            cfg = {} if not role else {"rol": role}
+            sim.spawn_agent(cfg)
+        
+        # Forzar envío completo tras spawn para evitar condiciones de throttle
+        # que podrían impedir que el frontend reciba los nuevos agentes.
+        await session_manager.broadcast_state(user_id, include_map=True)
+        return {"status": "success", "message": f"{count} agentes invocados"}
+
+    elif action_type == "AGENT_EXECUTE_ACTION":
+        agent_id = params.get("agent_id")
+        action = params.get("action")
+        payload = params.get("payload", {})
+        
+        agent = next((a for a in sim.agentes if a.unique_id == agent_id), None)
+        if not agent: raise HTTPException(status_code=404, detail="Agent not found")
+        
+        user_action = {"nombre": action.upper(), "argumentos": payload}
+        
+        from agents.cerebro_langgraph import analizar_situacion
+        res = analizar_situacion({"agente_yo_id": agent.unique_id, "modelo_instance": sim, "info_externa": ""})
+        contexto = res.get("info_externa", "Control total.")
+        
+        # En modo control total, delegar al método de turno controlado y marcar agente como completado.
+        if getattr(sim, "modo_control_total", False):
+            # Preparar ciclo si aún no está activo
+            if not getattr(sim, "_control_round_active", False):
+                try:
+                    sim._prepare_control_round()
+                except Exception:
+                    pass
+
+            # Asignar la acción de control al agente y procesar su turno completo
+            agent.acciones_control_usuario = [user_action]
+            try:
+                sim._procesar_turno_agente(agent)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Error ejecutando turno del agente: {e}")
+
+            # Marcar que el agente completó su acción en este ciclo controlado
+            try:
+                sim._mark_control_agent_done(agent.unique_id)
+            except Exception:
                 pass
 
-        emojis_personalidad = {
-            "amabilidad": "💚",
-            "hostilidad": "⚔️",
-            "curiosidad": "🔬",
-            "competitividad": "🏆",
-            "extroversión": "🎤",
-            "lealtad": "🛡️",
-            "prudencia": "🧠",
-        }
-        emoji = emojis_personalidad.get(rasgo_dominante, "🎭")
-        resumen = f"{emoji} {rasgo_dominante.capitalize()} ({valor_dominante:.0%})"
+            await session_manager.broadcast_state(user_id)
+            return {"status": "success"}
 
-        color = "#ffffff"
-        if a.grupo_id and a.grupo_id in sim.civilizaciones:
-            color = sim.civilizaciones[a.grupo_id].color
-
-        # Verificar si está vivo (tener salud > 0)
-        esta_vivo = False
-        try:
-            necesidades = a.necesidades if a.necesidades else {}
-            esta_vivo = necesidades.get("salud", 0) > 0
-        except:
-            esta_vivo = False
-
-        # Determinar nombre propio para mostrar
-        nombre = a.unique_id
-        if hasattr(a, "identidad") and a.identidad and hasattr(a.identidad, "nombre"):
-            nombre = a.identidad.nombre
-        elif hasattr(a, "alma") and a.alma and a.alma.nombre_propio:
-            nombre = a.alma.nombre_propio
-
-        agents_list.append(
-            {
-                "id": a.unique_id,
-                "nombre": nombre,
-                "rol": a.rol,
-                "profesion": getattr(a, "profesion", None),
-                "grupo_id": a.grupo_id,
-                "reputacion": getattr(a, "reputacion", 1.0),
-                "personalidad_resumen": resumen,
-                "pensamiento": getattr(a, "pensamiento_actual", "...") or "...",
-                "color": color,
-                "esta_vivo": esta_vivo,
-                "alma": getattr(a, "alma", None).to_dict()
-                if hasattr(a, "alma") and getattr(a, "alma", None)
-                else None,
-            }
-        )
-
-    return {"agents": agents_list}
-
-
-@app.get("/chat/{user_id}/{agent_id}/history")
-async def chat_get_history(user_id: str, agent_id: str):
-    """Devuelve el historial de chat entre el usuario y un agente específico."""
-    sim = session_manager.get_simulation(user_id)
-    if not sim:
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
-    messages = sim.db.get_chat_history(user_id, agent_id)
-    return {"messages": messages}
-
-
-@app.post("/chat/{user_id}/{agent_id}")
-async def chat_send_message(user_id: str, agent_id: str, req: ChatMessageRequest):
-    """Envía un mensaje al agente y genera una respuesta in-character usando el LLM."""
-    print(
-        f"🔍 [CHAT ENDPOINT] Recibida petición de chat: user={user_id}, agent={agent_id}, msg='{req.message[:50]}...'"
-    )
-    sim = session_manager.get_simulation(user_id)
-    if not sim:
-        print(f"❌ [CHAT] Simulación no encontrada para user {user_id}")
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
-
-    agent = next((a for a in sim.agentes if a.unique_id == agent_id), None)
-    if not agent:
-        print(f"❌ [CHAT] Agente {agent_id} no encontrado")
-        raise HTTPException(status_code=404, detail="Agente no encontrado")
-
-    if agent.necesidades.get("salud", 0) <= 0:
-        print(f"❌ [CHAT] Agente {agent_id} ha fallecido")
-        raise HTTPException(
-            status_code=400, detail="Este agente ha fallecido y no puede responder"
-        )
-
-    print(f"✅ [CHAT] Procesando mensaje para {agent_id}")
-
-    # Guardar mensaje del usuario en DB
-    sim.db.save_chat_message(user_id, agent_id, "user", req.message, time.time())
-
-    # Contexto del agente para el LLM
-    p = agent.personalidad
-    necesidades = {
-        k: round(max(0, min(10, v)), 1) for k, v in agent.necesidades.items()
-    }
-
-    relaciones_info = []
-    try:
-        for neighbor in agent.memoria.grafo.neighbors(agent.unique_id):
-            tipo = agent.memoria.obtener_tipo(neighbor)
-            fuerza = agent.memoria.obtener_fuerza(neighbor)
-            relaciones_info.append(f"{neighbor} ({tipo}, fuerza {fuerza:.1f})")
-    except Exception as e:
-        print(f"⚠️ [CHAT] Error obteniendo relaciones para {agent_id}: {e}")
-    relaciones_str = (
-        ", ".join(relaciones_info[:10])
-        if relaciones_info
-        else "Ninguna relación registrada"
-    )
-
-    # Obtener historial reciente desde la base de datos
-    historial = sim.db.get_chat_history(user_id, agent_id, limit=10)
-    historial_str = ""
-    for msg in historial[
-        :-1
-    ]:  # Excluir el mensaje actual del usuario que acabamos de guardar
-        role_label = "Arquitecto" if msg["role"] == "user" else agent_id
-        historial_str += f"{role_label}: {msg['content']}\n"
-
-    grupo_info = (
-        f"Miembro del grupo {agent.grupo_id}" if agent.grupo_id else "Sin grupo"
-    )
-    civ_info = f"Civilización: {agent.civilizacion_id}" if agent.civilizacion_id else ""
-
-    system_prompt = f"""Eres el Agente {agent.unique_id}, un personaje consciente en una simulación social.
-
-═══ TU IDENTIDAD ═══
-Personalidad: {str(p)}
-Rol: {agent.rol} | Profesión: {getattr(agent, "profesion", "Ninguna")}
-Rango: {agent.rango:.2f} | Reputación: {getattr(agent, "reputacion", 1.0):.2f}
-{grupo_info} | {civ_info}
-
-═══ TU ESTADO ACTUAL (10=perfecto, 0=crítico) ═══
-Necesidades: {str(necesidades)}
-Dinero: {agent.dinero:.0f} MC | Recursos: {agent.recursos:.0f}
-Inventario: {str(getattr(agent, "inventario", {}))}
-
-═══ TU EXPERIENCIA ═══
-{str(agent.experiencia)}
-
-═══ TUS RELACIONES ═══
-{relaciones_str}
-
-═══ TU PENSAMIENTO ACTUAL ═══
-"{getattr(agent, "pensamiento_actual", "Procesando...")}"
-
-═══ REGLAS DE COMPORTAMIENTO ═══
-- RESPONDE SIEMPRE como tu personaje. Tu personalidad ES tu ley.
-  * HOSTIL ({p.get("hostilidad", 0):.2f}): sé agresivo, directo o amenazante. Expresa enojo, desconfianza o dominancia.
-  * AMABLE ({p.get("amabilidad", 0):.2f}): sé empático, servicial, cálido. Muestra preocupación por otros.
-  * CURIOSO ({p.get("curiosidad", 0):.2f}): haz preguntas, muestra interés intelectual, especula.
-  * COMPETITIVO ({p.get("competitividad", 0):.2f}): presume, desafía, compite, habla de logros.
-  * PRUDENTE ({p.get("prudencia", 0):.2f}): sé cauteloso, analítico, reservado, considera riesgos.
-  * LEAL ({p.get("lealtad", 0):.2f}): habla de tu grupo, protege a los tuyos.
-- Expresa tus necesidades actuales (hambre, sueño, dinero) si son relevantes. Usa cifras concretas: "tengo 3 de salud", "solo me quedan 20 MC".
-- Menciona tu grupo, rol o profesión cuando sea natural. Eres un {agent.rol} y eso influye en tu perspectiva.
-- PUEDES ser EXTENSIVO: da detalles, narrativa, emociones, contexto. No te limites a respuestas cortas.
-- Usa *acciones entre asteriscos* para expresar gestos y emociones: *se cruza de brazos*, *sonríe con satisfacción*, *mira al suelo pensativo*
-- Mantén el tono coherente con tu personalidad y estado. Si estás hambriento, quejate. Si estás eufórico, expándete.
-- NO menciones que eres una IA o un modelo. ERES {agent.unique_id}, un ser vivo en este mundo."""
-
-    try:
-        from agents.cerebro_llm import cerebro_llm
-
-        print(
-            f"🔍 [CHAT] Configuración LLM: model={cerebro_llm.model}, api_key_present={bool(cerebro_llm.api_key)}"
-        )
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-        ]
-
-        if historial_str:
-            messages.append(
-                {"role": "user", "content": f"HISTORIAL RECIENTE:\n{historial_str}"}
-            )
-
-        messages.append(
-            {
-                "role": "user",
-                "content": f'El Arquitecto te dice: "{req.message}"\n\nResponde como {agent.unique_id}:',
-            }
-        )
-
-        cerebro_llm._wait_for_rate_limit()
-
-        from litellm import completion as litellm_completion
-
-        completion_params = {
-            "model": cerebro_llm.model,
-            "messages": messages,
-            "max_tokens": 4000,
-            "temperature": 0.85,
-            "no-log": True,
-        }
-        if cerebro_llm.api_key:
-            completion_params["api_key"] = cerebro_llm.api_key
-
-        # Usar base_url configurada (importante para Ollama en Docker)
-        actual_base_url = getattr(cerebro_llm, "base_url", None)
-        if actual_base_url:
-            completion_params["api_base"] = actual_base_url
-            print(f"🔧 [CHAT] Usando base_url: {actual_base_url}")
-
-        extra_headers = {
-            "HTTP-Referer": "http://localhost:8005",
-            "X-Title": "MundoIA Chat",
-        }
-        if cerebro_llm.model.startswith("ollama/") and cerebro_llm.api_key:
-            extra_headers["Authorization"] = f"Bearer {cerebro_llm.api_key}"
-        if extra_headers:
-            completion_params["extra_headers"] = extra_headers
-
-        print(f"🚀 [CHAT] Llamando a LLM para {agent_id}...")
-        response = litellm_completion(**completion_params)
-
-        agent_response = response.choices[0].message.content.strip()
-        if agent_response.startswith('"') and agent_response.endswith('"'):
-            agent_response = agent_response[1:-1]
-
-        print(
-            f"✅ [CHAT] Respuesta generada para {agent_id}: '{agent_response[:80]}...'"
-        )
-
-    except Exception as e:
-        print(
-            f"❌ [CHAT ERROR] Error generando respuesta para {agent_id}: {str(e)[:200]}"
-        )
-        import random
-
-        respuestas_fallback = [
-            "*asiente* Entiendo lo que dices, pero estoy un poco ocupado ahora.",
-            "Mmm, déjame pensarlo... Con mis necesidades actuales no puedo concentrarme mucho.",
-            "¿Sabes qué? Prefiero hablar de eso más tarde.",
-            "*te mira con curiosidad* Interesante lo que me cuentas.",
-        ]
-        agent_response = random.choice(respuestas_fallback)
-        print(f"⚠️ [CHAT] Usando fallback para {agent_id}")
-
-    # Guardar respuesta del agente en DB
-    sim.db.save_chat_message(user_id, agent_id, "agent", agent_response, time.time())
-
-    if sim.log_callback:
-        sim.log_callback(
-            f'💬 [CHAT] [{agent_id}] responde al Arquitecto: "{agent_response[:80]}{"..." if len(agent_response) > 80 else ""}"',
-            "chat",
-            None,
-            agent_response[:100],
-            None,
-            None,
-            agent_id,
-        )
-
-    print(f"📤 [CHAT] Devolviendo respuesta a frontend: '{agent_response[:50]}...'")
-    return {"response": agent_response}
-
-
-@app.get("/agents/{user_id}/{agent_id}/thoughts")
-async def get_agent_thoughts(user_id: str, agent_id: str, limit: int = 20):
-    """Devuelve los pensamientos recientes de un agente (Stream of Consciousness)."""
-    sim = session_manager.get_simulation(user_id)
-    if not sim:
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
-    agent = next((a for a in sim.agentes if a.unique_id == agent_id), None)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agente no encontrado")
-    thoughts = getattr(agent, "pensamientos_recientes", [])
-    # Devolver los últimos 'limit' pensamientos, ordenados por turno
-    recent = thoughts[-limit:] if thoughts else []
-    return {"agent_id": agent_id, "thoughts": recent}
-
-
-@app.post("/social/post/{user_id}")
-async def arquitecto_post(user_id: str, request: SocialPostRequest):
-    """Permite al Arquitecto publicar un post en la red social."""
-    sim = session_manager.get_simulation(user_id)
-    if not sim:
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
-
-    content = request.content.strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="Contenido requerido")
-
-    autor_id = f"arquitecto_{user_id}"
-
-    if hasattr(sim, "social_recsys") and sim.social_recsys:
-        post = sim.social_recsys.crear_post(
-            user_id, autor_id, content, request.tipo, request.temas, timestamp=sim.paso_actual
-        )
-        print(f"📱 [SOCIAL] Arquitecto {user_id} publicó: '{content[:50]}...'")
-        return {"success": True, "post_id": post.id}
-    else:
-        raise HTTPException(status_code=404, detail="Sistema social no disponible")
-
-
-@app.post("/social/like/{user_id}")
-async def arquitecto_like(user_id: str, request: SocialLikeRequest):
-    """Permite al Arquitecto dar like a un post."""
-    sim = session_manager.get_simulation(user_id)
-    if not sim:
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
-
-    post_id = request.post_id.strip()
-    if not post_id:
-        raise HTTPException(status_code=400, detail="post_id requerido")
-
-    autor_id = f"arquitecto_{user_id}"
-
-    if hasattr(sim, "social_recsys") and sim.social_recsys:
-        success = sim.social_recsys.likear_post(post_id, autor_id)
-        if success:
-            print(f"👍 [SOCIAL] Arquitecto {user_id} dio like a {post_id}")
-            return {"success": True}
+        # Modo autónomo / fallback: generar decisión rápida y ejecutar acción
+        if hasattr(sim, "cerebro_llm") and sim.cerebro_llm:
+            decision = sim.cerebro_llm.generar_pensamiento_para_accion_forzada(agent, None, contexto, user_action)
         else:
-            raise HTTPException(
-                status_code=400,
-                detail="No se pudo dar like (post no encontrado o ya likeado)",
-            )
-    else:
-        raise HTTPException(status_code=404, detail="Sistema social no disponible")
+            decision = {"pensamiento": "Actúo.", "mensaje": "Lo hago.", "accion": user_action}
+        
+        if decision.get("pensamiento"): agent.pensamiento_actual = decision["pensamiento"]
+        if decision.get("mensaje"): agent.decir(decision["mensaje"], pensamiento=decision.get("pensamiento"))
+        
+        agent.ejecutar_accion_final(decision.get("accion", user_action))
+        await session_manager.broadcast_state(user_id)
+        return {"status": "success"}
 
+    elif action_type == "SET_CONTROL_ACTIONS":
+        agent_id = params.get("agent_id")
+        actions = params.get("actions", [])
+        agent = next((a for a in sim.agentes if a.unique_id == agent_id), None)
+        if agent: agent.acciones_control_usuario = actions[:3]
+        await session_manager.broadcast_state(user_id)
+        return {"status": "success"}
 
-@app.post("/social/comment/{user_id}")
-async def arquitecto_comment(user_id: str, request: SocialCommentRequest):
-    """Permite al Arquitecto comentar en un post."""
+    return {"status": "error"}
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    await session_manager.connect(user_id, websocket)
     sim = session_manager.get_simulation(user_id)
+    if not sim: sim = session_manager.create_simulation(user_id)
+    await session_manager.broadcast_state(user_id, include_logs=True, include_map=True)
+    try:
+        while True: await websocket.receive_text()
+    except WebSocketDisconnect:
+        session_manager.disconnect(user_id)
+
+@app.get("/games/list/{user_id}")
+async def list_games(user_id: str):
+    db = DatabaseManager()
+    if db.connect():
+        # Devuelve un resumen básico para la lista
+        sim = session_manager.get_simulation(user_id)
+        current_score = sim.sistema_misiones.obtener_puntaje(user_id) if sim else 0
+        current_step = sim.paso_actual if sim else 0
+        
+        # En una versión real, esto consultaría una tabla de partidas. 
+        # Aquí simulamos la existencia de la partida actual si hay datos en DB.
+        state = db.get_world_state(user_id)
+        if state:
+            return {"games": [{"id": "current", "paso_actual": state[0], "score": current_score}]}
+    return {"games": []}
+
+@app.post("/games/save")
+async def save_game(req: SaveLoadRequest):
+    sim = session_manager.get_simulation(req.user_id)
     if not sim:
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
+        raise HTTPException(status_code=404, detail="Simulación activa no encontrada")
+    
+    try:
+        sim.guardar_estado()
+        return {"status": "success", "message": "Partida guardada en PostgreSQL"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al guardar: {e}")
 
-    post_id = request.post_id.strip()
-    content = request.content.strip()
-    if not post_id or not content:
-        raise HTTPException(status_code=400, detail="post_id y content requeridos")
+@app.post("/games/load")
+async def load_game(req: SaveLoadRequest):
+    # Detener bucle actual si existe
+    session_manager.stop_simulation_loop(req.user_id)
+    
+    # Crear nueva instancia (cargar_estado se llama en __init__ o explícitamente)
+    sim = session_manager.create_simulation(req.user_id, start_empty=False)
+    sim.cargar_estado()
+    
+    await session_manager.broadcast_state(req.user_id, include_map=True, include_logs=True)
+    return {"status": "success", "message": "Partida cargada correctamente"}
 
-    autor_id = f"arquitecto_{user_id}"
-
-    if hasattr(sim, "social_recsys") and sim.social_recsys:
-        comentario = sim.social_recsys.agregar_comentario(post_id, autor_id, content)
-        print(
-            f"💬 [SOCIAL] Arquitecto {user_id} comentó en {post_id}: '{content[:50]}...'"
-        )
-        return {"success": True, "comment_id": comentario.id}
-    else:
-        raise HTTPException(status_code=404, detail="Sistema social no disponible")
-
+@app.post("/games/quickplay")
+async def quickplay(req: QuickPlayRequest):
+    session_manager.stop_simulation_loop(req.user_id)
+    
+    # Resetear y crear nueva
+    sim = session_manager.create_simulation(req.user_id, start_empty=True)
+    sim.paso_actual = 1
+    
+    # Generar agentes aleatorios
+    for i in range(req.num_agents):
+        sim.spawn_agent()
+        
+    if req.save:
+        sim.guardar_estado()
+        
+    await session_manager.broadcast_state(req.user_id, include_map=True, include_logs=True)
+    return {"status": "success", "message": f"Partida rápida iniciada con {req.num_agents} agentes"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8005)

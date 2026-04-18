@@ -1088,12 +1088,25 @@ REGLAS:
                 "temperature": 0.7,
                 "no-log": True,
             }
+            # Timeout configurable (defaults to 90s) to avoid bloqueos indefinidos
+            timeout_s = float(os.getenv("MUNDOIA_LLM_TIMEOUT_SECONDS", "90"))
+            completion_params["timeout"] = timeout_s
+
             if self.api_key:
                 completion_params["api_key"] = self.api_key
-            
+
+            # Soporte para base_url (ej. Ollama local/cloud)
             actual_base_url = getattr(self, "base_url", "")
             if actual_base_url:
                 completion_params["api_base"] = actual_base_url
+
+            # Añadir headers extra para Ollama si requiere API key
+            if self.model.startswith("ollama/") and self.api_key:
+                if "extra_headers" not in completion_params:
+                    completion_params["extra_headers"] = {}
+                completion_params["extra_headers"]["Authorization"] = (
+                    f"Bearer {self.api_key}"
+                )
 
             response = completion(**completion_params)
             content = response.choices[0].message.content.strip()

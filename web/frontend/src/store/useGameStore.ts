@@ -29,8 +29,8 @@ interface GameState {
     ranking: any[];
     instituciones: Record<string, any>;
     agentePoseidoId: string | null;
-    socialFeed: any[];  // === RED SOCIAL OASIS ===
     socialMode: 'twitter' | 'reddit';
+    modoControlTotal: boolean;
     setSocialMode: (mode: 'twitter' | 'reddit') => void;
     toggleThoughts: () => void;
     selectAgent: (agentId: string | null) => void;
@@ -60,6 +60,7 @@ interface PersistedState {
     lore: string;
     apiHost: string;
     socialMode: 'twitter' | 'reddit';
+    modoControlTotal: boolean;
 }
 
 const customStorage: PersistStorage<GameState> = {
@@ -81,7 +82,8 @@ const customStorage: PersistStorage<GameState> = {
                     mapa: value.state.mapa,
                     lore: value.state.lore,
                     apiHost: value.state.apiHost,
-                    socialMode: value.state.socialMode || 'twitter'
+                    socialMode: value.state.socialMode || 'twitter',
+                    modoControlTotal: value.state.modoControlTotal || false
                 },
                 version: value.version
             };
@@ -121,8 +123,13 @@ const useGameStore = create(
             ranking: [],
             instituciones: {},
             agentePoseidoId: null,
+            // Flag temporal para indicar que la operación (new/load/quick) ya se ejecutó
+            // desde la pantalla de inicio y por lo tanto el modal de operación
+            // en /game debe evitar volver a preguntar.
+            startupOperationDone: false,
             socialFeed: [],  // === RED SOCIAL OASIS ===
             socialMode: 'twitter',
+            modoControlTotal: false,
             setSocialMode: (mode) => set({ socialMode: mode }),
             socket: null,
             bubbleCleanupInterval: null,

@@ -3663,6 +3663,22 @@ class Agente:
                 except Exception as e:
                     pass
 
+    def actualizar_necesidades(self):
+        """Mantenimiento básico de necesidades físicas sin toma de decisiones."""
+        # Decremento natural
+        self.necesidades["alimento"] = max(0.0, self.necesidades["alimento"] - 0.05)
+        self.necesidades["salud"] = max(0.0, self.necesidades["salud"] - 0.02)
+        self.necesidades["descanso"] = max(0.0, self.necesidades["descanso"] - 0.04)
+        
+        # Salud se recupera si está descansado y alimentado
+        if self.necesidades["alimento"] > 8.0 and self.necesidades["descanso"] > 8.0:
+            self.necesidades["salud"] = min(10.0, self.necesidades["salud"] + 0.05)
+            
+        # Morir si salud es 0
+        if self.necesidades["salud"] <= 0 and self.esta_vivo:
+            self.esta_vivo = False
+            self.modelo.log(f"💀 El agente {self.unique_id} ha muerto por descuido vital.", "sistema")
+
     def realizar_turno(self):
         """Método principal de turno para el agente - delega al modelo para la lógica completa."""
         # Delegar toda la lógica compleja al modelo, pero desde el contexto del agente
@@ -3831,6 +3847,7 @@ class ModeloRelacional:
         self.db_active = True
         self.db = DatabaseManager()
         self.cerebro_llm = cerebro_llm  # Instancia global de CerebroLLM
+        self.modo_control_total = False  # Si es True, el usuario decide quién y qué hace cada turno
         if self.db:
             if self.db.connect():
                 if self.user_id:
@@ -3845,6 +3862,10 @@ class ModeloRelacional:
 
         self.time_engine = None
         self.social_recsys = None
+
+        # Control por agente (modo Arquitecto)
+        self._control_pending_agents = set()
+        self._control_round_active = False
 
         # Intentar cargar la simulación de la base de datos
         self.cargar_estado()
@@ -3894,208 +3915,336 @@ class ModeloRelacional:
         Este método garantiza que si la IA no propone alguno de esos pasos, se
         generan fallback razonables basados en necesidades y el estado del agente.
         """
-        if not agente.esta_vivo:
-            return
+        with self.lock:
+            if not agente.esta_vivo:
+                return
 
-        # 1. ACTUALIZAR METABOLISMO
-        agente.necesidades["alimento"] = max(0, agente.necesidades["alimento"] - 0.15)
-        agente.necesidades["descanso"] = max(0, agente.necesidades["descanso"] - 0.10)
-        agente.necesidades["social"] = max(0, agente.necesidades["social"] - 0.08)
+            # 1. ACTUALIZAR METABOLISMO
+            agente.necesidades["alimento"] = max(0, agente.necesidades["alimento"] - 0.15)
+            agente.necesidades["descanso"] = max(0, agente.necesidades["descanso"] - 0.10)
+            agente.necesidades["social"] = max(0, agente.necesidades["social"] - 0.08)
 
-        # Auto-alimentación si tiene hambre y comida
-        if (
-            agente.necesidades["alimento"] < 4.0
-            and agente.inventario.get("comida", 0) > 0
-        ):
-            agente.comer()
+            # Auto-alimentación si tiene hambre y comida
+            if (
+                agente.necesidades["alimento"] < 4.0
+                and agente.inventario.get("comida", 0) > 0
+            ):
+                agente.comer()
 
-        # 2. CONTROL DE USUARIO (Plan de turno forzado)
-        if getattr(agente, "acciones_control_usuario", []):
-            acciones_plan = agente.acciones_control_usuario
-            agente.acciones_control_usuario = []  # Limpiar para evitar bucles
-            
-            self.log(f"🎮 [CONTROL] Ejecutando plan de {len(acciones_plan)} acciones para {agente.unique_id}", categoria="sistema")
-            
-            for i, user_action in enumerate(acciones_plan):
-                try:
-                    # Obtener contexto para el LLM (usando lógica del cerebro si está disponible)
-                    contexto_str = "Situación normal de supervivencia."
-                    if hasattr(agente, "cerebro") and hasattr(agente.cerebro, "agent_id"):
-                        from agents.cerebro_langgraph import analizar_situacion
-                        state_mini = {
-                            "agente_yo_id": agente.unique_id,
-                            "modelo_instance": self,
-                            "info_externa": ""
-                        }
-                        res_analisis = analizar_situacion(state_mini)
-                        contexto_str = res_analisis.get("info_externa", contexto_str)
+            # 2. CONTROL DE USUARIO (Plan de turno forzado)
+            if getattr(agente, "acciones_control_usuario", []):
+                acciones_plan = agente.acciones_control_usuario
+                agente.acciones_control_usuario = []  # Limpiar para evitar bucles
 
-                    # Generar narrativa para esta acción específica
-                    if self.cerebro_llm and getattr(self.cerebro_llm, "model", None):
-                        decision = self.cerebro_llm.generar_pensamiento_para_accion_forzada(
-                            agente, None, contexto_str, user_action
-                        )
-                    else:
-                        decision = {
-                            "pensamiento": "Siento un impulso irresistible de actuar.",
-                            "mensaje": "Cumpliré con mi destino.",
-                            "accion": user_action
-                        }
-                    
-                    pensamiento = decision.get("pensamiento", "")
-                    mensaje = decision.get("mensaje", "")
-                    accion_dict = decision.get("accion", user_action)
-                    
-                    # 1. Actualizar estado cognitivo
-                    if pensamiento:
-                        agente.pensamiento_actual = pensamiento
-                    
-                    # 2. Comunicación
-                    if mensaje:
-                        agente.decir(mensaje, pensamiento=pensamiento)
-                    
-                    # 3. Ejecución física
-                    agente.ejecutar_accion_final(accion_dict)
-                    
-                    # Notificar éxito de la acción parcial
-                    if self.realtime_event_callback:
-                        self.realtime_event_callback("action_event", {
-                            "agent_id": agente.unique_id,
-                            "step": self.paso_actual,
-                            "status": "completed",
-                            "action_name": accion_dict.get("nombre", user_action.get("nombre", "CONTROL")),
-                            "sub_step": i + 1
-                        })
-                        
-                except Exception as e:
-                    self.log(f"❌ [CONTROL ERROR] Fallo en acción {i+1}: {e}", categoria="error")
-            
-            return  # Terminar turno controlado aquí
+                self.log(f"🎮 [CONTROL] Ejecutando plan de {len(acciones_plan)} acciones para {agente.unique_id}", categoria="sistema")
 
-        # 3. CEREBRO: LANGGRAPH / LLM / BDI
-        # Llamar al cerebro avanzado para decidir pensamiento, mensaje y acción
-        decision = agente.cerebro.pensar(agente)
+                for i, user_action in enumerate(acciones_plan):
+                    try:
+                        # Obtener contexto para el LLM (usando lógica del cerebro si está disponible)
+                        contexto_str = "Situación normal de supervivencia."
+                        if hasattr(agente, "cerebro") and hasattr(agente.cerebro, "agent_id"):
+                            from agents.cerebro_langgraph import analizar_situacion
+                            state_mini = {
+                                "agente_yo_id": agente.unique_id,
+                                "modelo_instance": self,
+                                "info_externa": ""
+                            }
+                            res_analisis = analizar_situacion(state_mini)
+                            contexto_str = res_analisis.get("info_externa", contexto_str)
 
-        # El cerebro avanzado devuelve:
-        # (decision_str, mensaje, pensamiento, privado, es_grupal, es_global, planes, accion_dict, destinatario_id)
-        (
-            _,
-            mensaje,
-            pensamiento,
-            privado,
-            es_grupal,
-            es_global,
-            _,
-            accion_dict,
-            destinatario_id,
-        ) = decision
+                        # Generar narrativa para esta acción específica
+                        if self.cerebro_llm and getattr(self.cerebro_llm, "model", None):
+                            decision = self.cerebro_llm.generar_pensamiento_para_accion_forzada(
+                                agente, None, contexto_str, user_action
+                            )
+                        else:
+                            decision = {
+                                "pensamiento": "Siento un impulso irresistible de actuar.",
+                                "mensaje": "Cumpliré con mi destino.",
+                                "accion": user_action
+                            }
 
-        # 3. COMUNICACIÓN Y PENSAMIENTO (OBLIGATORIO)
-        if pensamiento:
-            agente.pensamiento_actual = pensamiento
+                        pensamiento = decision.get("pensamiento", "")
+                        mensaje = decision.get("mensaje", "")
+                        accion_dict = decision.get("accion", user_action)
 
-        if mensaje:
-            agente.decir(
+                        # 1. Actualizar estado cognitivo
+                        if pensamiento:
+                            agente.pensamiento_actual = pensamiento
+
+                        # 2. Comunicación
+                        if mensaje:
+                            agente.decir(mensaje, pensamiento=pensamiento)
+
+                        # 3. Ejecución física
+                        agente.ejecutar_accion_final(accion_dict)
+
+                        # Notificar éxito de la acción parcial
+                        if self.realtime_event_callback:
+                            self.realtime_event_callback("action_event", {
+                                "agent_id": agente.unique_id,
+                                "step": self.paso_actual,
+                                "status": "completed",
+                                "action_name": accion_dict.get("nombre", user_action.get("nombre", "CONTROL")),
+                                "sub_step": i + 1
+                            })
+
+                    except Exception as e:
+                        self.log(f"❌ [CONTROL ERROR] Fallo en acción {i+1}: {e}", categoria="error")
+
+                return  # Terminar turno controlado aquí
+
+            # 3. CEREBRO: LANGGRAPH / LLM / BDI
+            # Llamar al cerebro avanzado para decidir pensamiento, mensaje y acción
+            decision = agente.cerebro.pensar(agente)
+
+            # El cerebro avanzado devuelve:
+            # (decision_str, mensaje, pensamiento, privado, es_grupal, es_global, planes, accion_dict, destinatario_id)
+            (
+                _,
                 mensaje,
-                pensamiento=pensamiento,
-                privado_para=destinatario_id if privado else None,
-                para_grupo=es_grupal,
-                global_broadcast=es_global,
-            )
-        else:
-            # Fallback: forzar un mensaje breve que indique intención/estado
-            action_hint = None
-            if accion_dict:
-                action_hint = accion_dict.get("nombre") or accion_dict.get("tipo")
-            if not action_hint:
-                try:
-                    action_hint = agente._evaluar_tipo_accion_necesidades()
-                except Exception:
-                    action_hint = "ACTIVIDAD"
-            fallback_msg = (
-                f"{agente.identidad.nombre if getattr(agente, 'identidad', None) else agente.unique_id}: "
-                f"Realizando: {action_hint} (turno {self.paso_actual})"
-            )
-            agente.decir(fallback_msg, pensamiento=pensamiento)
+                pensamiento,
+                privado,
+                es_grupal,
+                es_global,
+                _,
+                accion_dict,
+                destinatario_id,
+            ) = decision
 
-        # 4. EJECUCIÓN FÍSICA (OBLIGATORIO)
-        # Si la IA no sugiere una acción física, generar un fallback basado en necesidades
-        if not accion_dict:
-            try:
-                tipo_eval = agente._evaluar_tipo_accion_necesidades()
-            except Exception:
-                tipo_eval = "FREE_CHOICE"
+            # 3. COMUNICACIÓN Y PENSAMIENTO (OBLIGATORIO)
+            if pensamiento:
+                agente.pensamiento_actual = pensamiento
 
-            if tipo_eval == "SURVIVAL":
-                if agente.inventario.get("comida", 0) > 0:
-                    accion_dict = {"tipo": "comer", "nombre": "COMER", "parametros": {}, "argumentos": {}}
-                else:
-                    accion_dict = {"tipo": "recolectar", "nombre": "RECOLECTAR", "parametros": {}, "argumentos": {}}
-
-            elif tipo_eval == "SOCIAL_REQUIRED":
-                # Priorizar interacción cara a cara para satisfacer necesidad social
-                cercanos = [a for a in self.agentes if a.unique_id != agente.unique_id and abs(a.x - agente.x) <= 2 and abs(a.y - agente.y) <= 2]
-                if cercanos:
-                    target = random.choice(cercanos)
-                    accion_dict = {"tipo": "socializar", "nombre": "SOCIALIZAR", "parametros": {"mensaje": "Hola"}, "argumentos": {}, "objetivo": target.unique_id}
-                else:
-                    accion_dict = {"tipo": "recolectar", "nombre": "RECOLECTAR", "parametros": {}, "argumentos": {}}
-
-            elif tipo_eval == "INTELLECTUAL":
-                accion_dict = {"tipo": "investigar", "nombre": "INVESTIGAR", "parametros": {}, "argumentos": {}}
-
-            else:  # FREE_CHOICE
-                accion_dict = {"tipo": "explorar", "nombre": "EXPLORAR", "parametros": {}, "argumentos": {}}
-
-        # Ejecutar la acción física y notificar callbacks
-        if accion_dict:
-            action_name = accion_dict.get("nombre") or accion_dict.get("tipo") or "ACCION"
-            if self.realtime_event_callback:
-                try:
-                    self.realtime_event_callback(
-                        "action_event",
-                        {
-                            "agent_id": agente.unique_id,
-                            "step": self.paso_actual,
-                            "status": "start",
-                            "action_name": action_name,
-                        },
-                    )
-                except Exception:
-                    pass
-
-            try:
-                print(f"🔍 [DEBUG] Ejecutando accion {action_name} para {agente.unique_id}")
-                agente.ejecutar_accion_final(accion_dict)
-                print(f"✅ [DEBUG] Accion {action_name} finalizada para {agente.unique_id}")
-            except Exception as e:
-                # Registrar pero no abortar el turno
-                self.log(f"❌ Error ejecutando acción {action_name} para {agente.unique_id}: {e}", categoria="error")
-
-            if self.realtime_event_callback:
-                try:
-                    self.realtime_event_callback(
-                        "action_event",
-                        {
-                            "agent_id": agente.unique_id,
-                            "step": self.paso_actual,
-                            "status": "done",
-                            "action_name": action_name,
-                        },
-                    )
-                except Exception:
-                    pass
-
-        # 5. ACCIÓN SOCIAL (OBLIGATORIA)
-        # Forzar al menos una acción social por turno (post/like/comment/follow)
-        try:
-            if hasattr(agente, "social_force_action"):
-                agente.social_force_action(self.paso_actual)
+            if mensaje:
+                agente.decir(
+                    mensaje,
+                    pensamiento=pensamiento,
+                    privado_para=destinatario_id if privado else None,
+                    para_grupo=es_grupal,
+                    global_broadcast=es_global,
+                )
             else:
-                # Fallback al comportamiento automático existente
-                agente._ejecutar_accion_social_automatica(self.paso_actual)
-        except Exception as e:
-            self.log(f"⚠️ Error en acción social forzada de {agente.unique_id}: {e}", categoria="sistema")
+                # Fallback: forzar un mensaje breve que indique intención/estado
+                action_hint = None
+                if accion_dict:
+                    action_hint = accion_dict.get("nombre") or accion_dict.get("tipo")
+                if not action_hint:
+                    try:
+                        action_hint = agente._evaluar_tipo_accion_necesidades()
+                    except Exception:
+                        action_hint = "ACTIVIDAD"
+                fallback_msg = (
+                    f"{agente.identidad.nombre if getattr(agente, 'identidad', None) else agente.unique_id}: "
+                    f"Realizando: {action_hint} (turno {self.paso_actual})"
+                )
+                agente.decir(fallback_msg, pensamiento=pensamiento)
+
+            # 4. EJECUCIÓN FÍSICA (OBLIGATORIO)
+            # Si la IA no sugiere una acción física, generar un fallback basado en necesidades
+            if not accion_dict:
+                try:
+                    tipo_eval = agente._evaluar_tipo_accion_necesidades()
+                except Exception:
+                    tipo_eval = "FREE_CHOICE"
+
+                if tipo_eval == "SURVIVAL":
+                    if agente.inventario.get("comida", 0) > 0:
+                        accion_dict = {"tipo": "comer", "nombre": "COMER", "parametros": {}, "argumentos": {}}
+                    else:
+                        accion_dict = {"tipo": "recolectar", "nombre": "RECOLECTAR", "parametros": {}, "argumentos": {}}
+
+                elif tipo_eval == "SOCIAL_REQUIRED":
+                    # Priorizar interacción cara a cara para satisfacer necesidad social
+                    cercanos = [a for a in self.agentes if a.unique_id != agente.unique_id and abs(a.x - agente.x) <= 2 and abs(a.y - agente.y) <= 2]
+                    if cercanos:
+                        target = random.choice(cercanos)
+                        accion_dict = {"tipo": "socializar", "nombre": "SOCIALIZAR", "parametros": {"mensaje": "Hola"}, "argumentos": {}, "objetivo": target.unique_id}
+                    else:
+                        accion_dict = {"tipo": "recolectar", "nombre": "RECOLECTAR", "parametros": {}, "argumentos": {}}
+
+                elif tipo_eval == "INTELLECTUAL":
+                    accion_dict = {"tipo": "investigar", "nombre": "INVESTIGAR", "parametros": {}, "argumentos": {}}
+
+                else:  # FREE_CHOICE
+                    accion_dict = {"tipo": "explorar", "nombre": "EXPLORAR", "parametros": {}, "argumentos": {}}
+
+            # Ejecutar la acción física y notificar callbacks
+            if accion_dict:
+                action_name = accion_dict.get("nombre") or accion_dict.get("tipo") or "ACCION"
+                if self.realtime_event_callback:
+                    try:
+                        self.realtime_event_callback(
+                            "action_event",
+                            {
+                                "agent_id": agente.unique_id,
+                                "step": self.paso_actual,
+                                "status": "start",
+                                "action_name": action_name,
+                            },
+                        )
+                    except Exception:
+                        pass
+
+                try:
+                    print(f"🔍 [DEBUG] Ejecutando accion {action_name} para {agente.unique_id}")
+                    agente.ejecutar_accion_final(accion_dict)
+                    print(f"✅ [DEBUG] Accion {action_name} finalizada para {agente.unique_id}")
+                except Exception as e:
+                    # Registrar pero no abortar el turno
+                    self.log(f"❌ Error ejecutando acción {action_name} para {agente.unique_id}: {e}", categoria="error")
+
+                if self.realtime_event_callback:
+                    try:
+                        self.realtime_event_callback(
+                            "action_event",
+                            {
+                                "agent_id": agente.unique_id,
+                                "step": self.paso_actual,
+                                "status": "done",
+                                "action_name": action_name,
+                            },
+                        )
+                    except Exception:
+                        pass
+
+            # 5. ACCIÓN SOCIAL (OBLIGATORIA)
+            # Forzar al menos una acción social por turno (post/like/comment/follow)
+            try:
+                if hasattr(agente, "social_force_action"):
+                    agente.social_force_action(self.paso_actual)
+                else:
+                    # Fallback al comportamiento automático existente
+                    agente._ejecutar_accion_social_automatica(self.paso_actual)
+            except Exception as e:
+                self.log(f"⚠️ Error en acción social forzada de {agente.unique_id}: {e}", categoria="sistema")
+
+    def _prepare_control_round(self):
+        """Inicializa un ciclo controlado por el Arquitecto: incrementa paso y marca agentes pendientes."""
+        with self.lock:
+            if getattr(self, "_control_round_active", False):
+                return
+
+            agentes_vivos = [a for a in self.agentes if a.esta_vivo]
+            agentes_activos = agentes_vivos
+
+            # Incrementar paso y tareas previas al turno
+            self.paso_actual += 1
+            self.grupos_creados_este_paso = 0
+            self._control_pending_agents = set(a.unique_id for a in agentes_activos)
+            self._control_round_active = True
+
+            # Pre-turn tasks
+            self._procesar_economia()
+            self.weather_timer += 1
+            if self.weather_timer >= self.weather_duration:
+                self._cambiar_clima()
+            self._procesar_misiones_activas()
+            self._actualizar_instituciones()
+            self._procesar_asambleas()
+            self._generar_eventos_aleatorios()
+
+            hora = (
+                self.time_engine.get_hora_simulada(self.paso_actual)
+                if getattr(self, "time_engine", None)
+                else (12 + (self.paso_actual // 5)) % 24
+            )
+            self.log(
+                f"⏰ [TIME ENGINE][CONTROL] Paso {self.paso_actual}: {len(agentes_activos)}/{len(agentes_vivos)} agentes pendientes de acción. Hora simulada: {hora}:00",
+                categoria="sistema",
+            )
+
+            # Notificar al frontend que comenzó un nuevo ciclo controlado
+            if self.state_change_callback:
+                try:
+                    self.state_change_callback()
+                except Exception:
+                    pass
+
+    def _mark_control_agent_done(self, agent_id):
+        """Marca que un agente completó su acción en el ciclo controlado.
+
+        Si todos los agentes pendientes completaron su acción, finaliza el ciclo.
+        """
+        with self.lock:
+            pending = getattr(self, "_control_pending_agents", set()) or set()
+            if agent_id in pending:
+                pending.discard(agent_id)
+                self.log(
+                    f"🎮 [CONTROL] Agente {agent_id} completó su acción (restan {len(pending)})",
+                    categoria="sistema",
+                )
+            else:
+                self.log(
+                    f"⚠️ [CONTROL] Agente {agent_id} reportado como completado pero no estaba pendiente.",
+                    categoria="sistema",
+                )
+            self._control_pending_agents = pending
+
+            if not pending:
+                # Todos completaron: finalizar el ciclo controlado
+                self._complete_control_round()
+
+    def _complete_control_round(self):
+        """Ejecuta la lógica posterior al ciclo controlado (formación de grupos, economía, guardado, misiones)."""
+        with self.lock:
+            # Notificar cambios de estado
+            if self.state_change_callback and (
+                self.paso_actual == 1 or self.paso_actual % 2 == 0
+            ):
+                try:
+                    self.state_change_callback()
+                except Exception:
+                    pass
+
+            # Lógica de formación de grupos al final del turno
+            if self.paso_actual % 5 == 0:
+                self.log(
+                    "📢 [SISTEMA] Evaluando formación de grupos sociales...",
+                    categoria="sistema",
+                )
+                self.formar_grupos()
+                self.asignar_roles_consenso()
+                self.evaluar_evolucion_civilizaciones()
+
+            # Economía global (registro)
+            self.actualizar_economia()
+
+            # Guardado periódico
+            if (
+                self.db_active
+                and self.user_id
+                and self.paso_actual % self.autosave_interval == 0
+            ):
+                try:
+                    self.guardar_estado()
+                except Exception:
+                    pass
+
+            # Verificar misiones
+            self.misiones_completadas_este_turno = self.sistema_misiones.verificar_misiones(
+                self, self.user_id or "default"
+            )
+            if self.misiones_completadas_este_turno:
+                for mision_completada in self.misiones_completadas_este_turno:
+                    self.log(
+                        f"🎉 ¡MISIÓN COMPLETADA! {mision_completada['titulo']}",
+                        categoria="mision_completada",
+                    )
+
+            # Limpiar mensaje global del arquitecto
+            self.mensaje_global_arquitecto = None
+
+            # Reset control flags
+            self._control_round_active = False
+            self._control_pending_agents = set()
+
+            # Notificar estado final del turno
+            if self.state_change_callback:
+                try:
+                    self.state_change_callback()
+                except Exception:
+                    pass
 
     def _procesar_economia(self):
         """Ajusta las variables macroeconómicas del mundo en cada paso."""
@@ -4389,14 +4538,23 @@ class ModeloRelacional:
         )
         # === FIN OASIS ===
 
-        for agente in agentes_activos:
-            if getattr(self, "_force_stop", False):
-                break
-            agente.realizar_turno()
+        # 2. Paso de los agentes
+        if getattr(self, "modo_control_total", False):
+            # En modo Control Total, los agentes no actúan por sí solos.
+            # Solo procesamos mantenimiento vital básico.
+            for agente in self.agentes:
+                if agente.esta_vivo:
+                    agente.actualizar_necesidades()
+        else:
+            # Modo autónomo normal
+            for agente in agentes_activos:
+                if getattr(self, "_force_stop", False):
+                    break
+                agente.realizar_turno()
 
-            # Pausa de lectura entre agentes
-            if hasattr(self, "ritmo") and self.ritmo > 0 and len(agentes_vivos) > 1:
-                time.sleep(self.ritmo)
+                # Pausa de lectura entre agentes
+                if hasattr(self, "ritmo") and self.ritmo > 0 and len(agentes_vivos) > 1:
+                    time.sleep(self.ritmo)
 
         # Notificar cambios de estado de forma throttled, no por cada agente
         if self.state_change_callback and (
@@ -4776,6 +4934,13 @@ class ModeloRelacional:
             agente.identidad.nombre = agente.alma.nombre_propio
         else:
             agente.alma.nombre_propio = agente.identidad.nombre
+
+        # Aplicar rol/profesión si se pasó en la configuración (compatibilidad 'rol'/'role')
+        if isinstance(config, dict):
+            if "rol" in config and config.get("rol"):
+                agente.rol = config.get("rol")
+            elif "role" in config and config.get("role"):
+                agente.rol = config.get("role")
 
         self.agentes.append(agente)
         self.log(
@@ -5490,7 +5655,7 @@ class ModeloRelacional:
                         )
 
                         # IMPORTANTE: Reinicializar WorldSystem con el tamaño correcto del mapa guardado
-                        if mapa_ancho != self.mapa_size:
+                        if self.world is None or mapa_ancho != self.mapa_size:
                             self.world = WorldSystem(size=mapa_ancho, seed=self.seed)
                             self.world.mapa = []  # Limpiar mapa generado automáticamente
                             self.mapa_size = mapa_ancho
@@ -5561,7 +5726,7 @@ class ModeloRelacional:
                                 f"🔄 [DEBUG] Restaurando mapa desde backup: {mapa_ancho}x{mapa_alto}",
                                 categoria="sistema",
                             )
-                            if mapa_ancho != self.mapa_size:
+                            if self.world is None or mapa_ancho != self.mapa_size:
                                 self.world = WorldSystem(size=mapa_ancho, seed=self.seed)
                                 self.world.mapa = []
                                 self.mapa_size = mapa_ancho
