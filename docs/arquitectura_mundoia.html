@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Arquitectura MundoIA - Detalle Técnico</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #e9e9e9; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: auto; background: #16213e; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h1 { color: #4ecca3; text-align: center; }
+        .mermaid { background: white; padding: 20px; border-radius: 10px; margin: 20px 0; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
+        .card { background: #0f3460; padding: 15px; border-radius: 8px; border-left: 4px solid #4ecca3; }
+        .card h3 { margin-top: 0; color: #4ecca3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Diagrama de Arquitectura MundoIA</h1>
+        <div class="mermaid">
+        graph TB
+            subgraph "Capa de Presentación"
+                UI[Web Interface - React/Next.js]
+                TUI[Terminal UI - KogniTerm]
+                MOB[Mobile App]
+            end
+
+            subgraph "Capa de Comunicación (api/)"
+                WS[WebSocket Server]
+                REST[FastAPI REST Endpoints]
+                SM[Session Manager]
+            end
+
+            subgraph "Núcleo de Simulación (core/)"
+                MR[Modelo Relacional]
+                WORLD[Sistema de Mundo/Mapa]
+                ECON[Sistema Económico]
+                POL[Leyes y Asambleas]
+                MR --> WORLD
+                MR --> ECON
+                MR --> POL
+            end
+
+            subgraph "Cerebro del Agente (agents/)"
+                LG[LangGraph Cognitive Flow]
+                BDI[BDI System: Beliefs, Desires, Intentions]
+                ALMA[Sistema de Alma y Evolución]
+                LG <--> BDI
+                LG --> ALMA
+            end
+
+            subgraph "Sistemas de Memoria (systems/)"
+                MP[Memoria Persistente Tripartita]
+                MG[Memoria Gráfica Social]
+                MP --- EP[Episódica]
+                MP --- SEM[Semántica]
+                MP --- PROC[Procedimental]
+            end
+
+            subgraph "Infraestructura y Datos"
+                DB[(PostgreSQL + JSONB)]
+                VDB[(Vector DB - ChromaDB)]
+                DB --- VDB
+            end
+
+            %% Conexiones
+            UI & TUI & MOB <--> WS
+            WS <--> SM
+            SM <--> MR
+            MR <--> LG
+            LG <--> MP
+            LG <--> MG
+            MR <--> DB
+            MP <--> DB
+            MP <--> VDB
+        </div>
+
+        <div class="info-grid">
+            <div class="card">
+                <h3>🧠 Ciclo Cognitivo</h3>
+                <p>Orquestado por <b>LangGraph</b>. Divide el pensamiento en nodos: Analizar -> Actuar -> Ejecutar/Comunicar. Permite estados de pensamiento asíncronos y persistentes.</p>
+            </div>
+            <div class="card">
+                <h3>💾 Memoria Tripartita</h3>
+                <p><b>Episódica:</b> Eventos puntuales.<br><b>Semántica:</b> Conocimiento del mundo.<br><b>Procedimental:</b> Maestría en habilidades técnicas.</p>
+            </div>
+            <div class="card">
+                <h3>⚖️ Sistema BDI</h3>
+                <p>Maneja la lógica interna: <i>Beliefs</i> (lo que sabe), <i>Desires</i> (lo que necesita) e <i>Intentions</i> (su plan de acción inmediato).</p>
+            </div>
+            <div class="card">
+                <h3>🌍 Modelo Relacional</h3>
+                <p>El "Dios" de la simulación. Garantiza que las leyes físicas y económicas se apliquen por igual a todos los agentes y persiste el estado global.</p>
+            </div>
+        </div>
+    </div>
+    <script>mermaid.initialize({startOnLoad:true, theme:'neutral'});</script>
+</body>
+</html>

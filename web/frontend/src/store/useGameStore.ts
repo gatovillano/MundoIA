@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, PersistStorage } from 'zustand/middleware';
 import { Agent } from '../types/agent'; // Importar la interfaz Agent
-import { getHttpUrl, getWsUrl } from '@/utils/apiConfig';
+import { getHttpUrl, getWsUrl, getApiBase } from '@/utils/apiConfig';
 
 // ... (interfaces existentes)
 
@@ -25,14 +25,25 @@ interface GameState {
     userScore: number;
     recentCompletedMissions: any[];
     showThoughts: boolean;
+    showBubbles: boolean;
+    // Buffers temporales para streams LLM por agente (no siempre visibles)
+    llmBuffers: Record<string, string>;
+    // Controla si se muestran actualizaciones incrementales (streams) en la UI
+    enableStreaming: boolean;
+    // Toggle para activar/desactivar streaming en tiempo real
+    toggleStreaming: () => void;
+    toggleBubbles: () => void;
+    toggleThoughts: () => void;
     historia: { historiador_id: string | null, entradas: any[], num_entradas: number };
     ranking: any[];
     instituciones: Record<string, any>;
     agentePoseidoId: string | null;
     socialMode: 'twitter' | 'reddit';
     modoControlTotal: boolean;
+    startupOperationDone: boolean;
+    socialFeed: any[];
     setSocialMode: (mode: 'twitter' | 'reddit') => void;
-    toggleThoughts: () => void;
+    setModoControlTotal: (mode: boolean) => void;
     selectAgent: (agentId: string | null) => void;
     poseerAgente: (agentId: string) => Promise<boolean>;
     liberarAgente: () => Promise<boolean>;
@@ -41,26 +52,36 @@ interface GameState {
     socket: WebSocket | null;
     bubbleCleanupInterval: ReturnType<typeof setInterval> | null;
     userId: string | null;
+    gameId: string | null;
     isAuthenticated: boolean;
     username: string | null;
     login: (userId: string, username: string) => void;
+    setGameId: (gameId: string | null) => void;
     logout: () => void;
     connect: () => void;
     disconnect: () => void;
     apiHost: string;
     setApiHost: (host: string) => void;
+    reconnect: () => void;
+    reconnecting: boolean;
+    reconnectAttempts: number;
+    reconnectTimer: number | null;
     _handleSessionExpiredResponse: (response: Response) => Promise<boolean>;
 }
 
 interface PersistedState {
     isAuthenticated: boolean;
     userId: string | null;
+    gameId: string | null;
     username: string | null;
     mapa: any[][];
     lore: string;
+    logs?: any[];
     apiHost: string;
     socialMode: 'twitter' | 'reddit';
     modoControlTotal: boolean;
+    startupOperationDone: boolean;
+    showBubbles: boolean;
 }
 
 const customStorage: PersistStorage<GameState> = {
@@ -78,12 +99,17 @@ const customStorage: PersistStorage<GameState> = {
                 state: {
                     isAuthenticated: value.state.isAuthenticated,
                     userId: value.state.userId,
+                    gameId: value.state.gameId,
                     username: value.state.username,
                     mapa: value.state.mapa,
                     lore: value.state.lore,
+                    // Persistir solo los últimos 1000 logs para evitar crecer indefinidamente
+                    logs: Array.isArray(value.state.logs) ? value.state.logs.slice(-1000) : [],
                     apiHost: value.state.apiHost,
                     socialMode: value.state.socialMode || 'twitter',
-                    modoControlTotal: value.state.modoControlTotal || false
+                    modoControlTotal: value.state.modoControlTotal || false,
+                    startupOperationDone: value.state.startupOperationDone || false,
+                    showBubbles: value.state.showBubbles !== undefined ? value.state.showBubbles : true
                 },
                 version: value.version
             };
@@ -119,6 +145,9 @@ const useGameStore = create(
             userScore: 0,
             recentCompletedMissions: [],
             showThoughts: true,
+            showBubbles: true,
+            llmBuffers: {},
+            enableStreaming: true,
             historia: { historiador_id: null, entradas: [], num_entradas: 0 },
             ranking: [],
             instituciones: {},
@@ -131,12 +160,17 @@ const useGameStore = create(
             socialMode: 'twitter',
             modoControlTotal: false,
             setSocialMode: (mode) => set({ socialMode: mode }),
+            setModoControlTotal: (mode) => set({ modoControlTotal: mode }),
             socket: null,
             bubbleCleanupInterval: null,
+            reconnecting: false,
+            reconnectAttempts: 0,
+            reconnectTimer: null,
             userId: null,
+    gameId: null,
             isAuthenticated: false,
             username: null,
-             apiHost: process.env.NEXT_PUBLIC_API_HOST || 'localhost:8005',
+            apiHost: getApiBase(),
 
             setApiHost: (host) => {
                 set({ apiHost: host });
@@ -149,6 +183,7 @@ const useGameStore = create(
 
 
             login: (userId, username) => set({ isAuthenticated: true, userId, username }),
+            setGameId: (gameId) => set({ gameId }),
             logout: () => {
                 get().disconnect();
                 set({ isAuthenticated: false, userId: null, username: null });
@@ -179,6 +214,8 @@ const useGameStore = create(
             },
 
             toggleThoughts: () => set((state) => ({ showThoughts: !state.showThoughts })),
+            toggleStreaming: () => set((state) => ({ enableStreaming: !state.enableStreaming })),
+            toggleBubbles: () => set((state) => ({ showBubbles: !state.showBubbles })),
 
             selectAgent: (agentId) => set({ selectedAgentId: agentId }),
 
@@ -195,10 +232,10 @@ const useGameStore = create(
             },
 
             connect: () => {
-                const { userId, socket } = get();
-                if (!userId || socket) return;
+                const { userId, gameId, socket } = get();
+                if (!userId || !gameId || socket) return;
 
-                const wsUrl = getWsUrl(`/ws/${userId}`);
+                const wsUrl = getWsUrl(`/ws/${gameId}`);
                 console.log(`🔌 Intentando conectar a WebSocket en: ${wsUrl}`);
                 const newSocket = new WebSocket(wsUrl);
 
@@ -218,7 +255,8 @@ const useGameStore = create(
                     }
 
                     if (data.type === 'clear_logs') {
-                        set({ logs: [], speechBubbles: {} });
+                        // No limpiar logs entre pasos – la terminal es persistente
+                        // Solo se limpia en world_reset (nueva partida)
                         return;
                     }
 
@@ -234,6 +272,8 @@ const useGameStore = create(
                             propuestas: [],
                             relacionesGrupos: {},
                             relationships: [],
+                            // Limpiar feed social para evitar mostrar posts de partidas anteriores
+                            socialFeed: [],
                             instituciones: {},
                             misiones: { misiones_activas: [], misiones_completadas: [] },
                             historia: { historiador_id: null, entradas: [], num_entradas: 0 },
@@ -245,23 +285,43 @@ const useGameStore = create(
                         return;
                     }
                     if (data.type === 'initial_state' || data.type === 'stats') {
-                        const updates: any = {
-                            step: data.step,
-                            economy: data.economy,
-                            weather: data.weather,
-                            civilizaciones: data.civilizaciones || {},
-                            gruposDinamicos: data.grupos_dinamicos || {},
-                            propuestas: data.propuestas || [],
-                            relacionesGrupos: data.relaciones_grupos || {},
-                            misiones: data.misiones || { misiones_activas: [], misiones_completadas: [] },
-                            userScore: data.user_score || 0,
-                            recentCompletedMissions: data.recent_completed_missions || [],
-                            historia: data.historia || { historiador_id: null, entradas: [], num_entradas: 0 },
-                            ranking: data.ranking || [],
-                            instituciones: data.instituciones || {},
-                            agentePoseidoId: data.agente_poseido_id || null,
-                            socialFeed: data.socialFeed || [],  // === RED SOCIAL OASIS ===
+                        // Normalizar y ordenar socialFeed (asegurar timestamps numéricos en segundos)
+                        const normalizeFeed = (feed: any[]) => {
+                            if (!Array.isArray(feed)) return [];
+                            return (feed || []).map(p => {
+                                const raw = p?.timestamp;
+                                let ts = 0;
+                                if (typeof raw === 'string') {
+                                    const parsed = Date.parse(raw);
+                                    ts = isNaN(parsed) ? 0 : parsed / 1000;
+                                } else if (typeof raw === 'number') {
+                                    ts = Number(raw);
+                                    // Si parece estar en ms ( > 1e12 ), convertir a segundos
+                                    if (ts > 1e12) ts = ts / 1000;
+                                } else {
+                                    ts = 0;
+                                }
+                                return { ...p, timestamp: ts };
+                            }).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
                         };
+
+                        const updates: any = {
+                                step: data.step,
+                                economy: data.economy,
+                                weather: data.weather,
+                                civilizaciones: data.civilizaciones || {},
+                                gruposDinamicos: data.grupos_dinamicos || {},
+                                propuestas: data.propuestas || [],
+                                relacionesGrupos: data.relaciones_grupos || {},
+                                misiones: data.misiones || { misiones_activas: [], misiones_completadas: [] },
+                                userScore: data.user_score || 0,
+                                recentCompletedMissions: data.recent_completed_missions || [],
+                                historia: data.historia || { historiador_id: null, entradas: [], num_entradas: 0 },
+                                ranking: data.ranking || [],
+                                instituciones: data.instituciones || {},
+                                agentePoseidoId: data.agente_poseido_id || null,
+                                socialFeed: normalizeFeed(data.socialFeed),  // === RED SOCIAL OASIS ===
+                            };
 
                         if (data.mapa) {
                             updates.mapa = data.mapa;
@@ -271,9 +331,9 @@ const useGameStore = create(
                             updates.lore = data.lore || "";
                         }
 
-                        // Solo actualizar logs si vienen en el mensaje (usualmente solo en initial_state)
+                        // Acumular logs sin reemplazar – la terminal es persistente en toda la partida
                         if (data.logs && data.logs.length > 0) {
-                            updates.logs = data.logs.map((l: any) => ({
+                            const incoming = data.logs.map((l: any) => ({
                                 step: l.step || l.paso || 0,
                                 message: l.message || l.mensaje || "",
                                 category: l.category || l.categoria || "info",
@@ -281,12 +341,71 @@ const useGameStore = create(
                                 thought: l.thought || l.pensamiento,
                                 timestamp: l.timestamp || Date.now()
                             }));
+                            // Fusionar evitando duplicados (mismo step + message)
+                            const existingKeys = new Set(
+                                (get().logs || []).map((l: any) => `${l.step}|${l.message}`)
+                            );
+                            const newLogs = incoming.filter(
+                                (l: any) => !existingKeys.has(`${l.step}|${l.message}`)
+                            );
+                            if (newLogs.length > 0) {
+                                updates.logs = [...(get().logs || []), ...newLogs].slice(-2000);
+                            }
                         }
 
                         set(updates);
                     }
 
                     if (data.type === 'stats_delta') {
+                        // Preprocesar delta para normalizar socialFeed si existe
+                        const deltaToApply: any = { ...(data.delta || {}) };
+                        if (deltaToApply.socialFeed && Array.isArray(deltaToApply.socialFeed)) {
+                            deltaToApply.socialFeed = (deltaToApply.socialFeed || []).map((p: any) => {
+                                const raw = p?.timestamp;
+                                let ts = 0;
+                                if (typeof raw === 'string') {
+                                    const parsed = Date.parse(raw);
+                                    ts = isNaN(parsed) ? 0 : parsed / 1000;
+                                } else if (typeof raw === 'number') {
+                                    ts = Number(raw);
+                                    if (ts > 1e12) ts = ts / 1000;
+                                } else {
+                                    ts = 0;
+                                }
+                                return { ...p, timestamp: ts };
+                            }).sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+                        }
+
+                        // Evitar que un delta con `logs: []` borre los logs del cliente.
+                        // Si vienen logs no vacíos, normalizarlos y fusionarlos evitando duplicados.
+                        if (Array.isArray(deltaToApply.logs)) {
+                            if (deltaToApply.logs.length === 0) {
+                                // No aplicar reemplazo vacío
+                                delete deltaToApply.logs;
+                            } else {
+                                const incoming = (deltaToApply.logs || []).map((l: any) => ({
+                                    step: l.step || l.paso || 0,
+                                    message: l.message || l.mensaje || "",
+                                    category: l.category || l.categoria || "info",
+                                    private_for: l.private_for || l.privado_para,
+                                    thought: l.thought || l.pensamiento,
+                                    timestamp: l.timestamp || Date.now()
+                                }));
+
+                                const existingKeys = new Set(
+                                    (get().logs || []).map((l: any) => `${l.step}|${l.message}`)
+                                );
+
+                                const newLogs = incoming.filter((l: any) => !existingKeys.has(`${l.step}|${l.message}`));
+
+                                if (newLogs.length > 0) {
+                                    deltaToApply.logs = [...(get().logs || []), ...newLogs].slice(-2000);
+                                } else {
+                                    delete deltaToApply.logs;
+                                }
+                            }
+                        }
+
                         set((state) => {
                             const newStats: any = { step: data.step };
 
@@ -302,11 +421,10 @@ const useGameStore = create(
                                 return result;
                             };
 
-                            const mergedDelta = mergeRecursive(state, data.delta);
+                            const mergedDelta = mergeRecursive(state, deltaToApply);
                             return { ...mergedDelta, step: data.step };
                         });
                     }
-
                     if (data.type === 'agent_update') {
                         set({ agents: data.agents });
                     }
@@ -355,32 +473,54 @@ const useGameStore = create(
                     }
 
                     if (data.type === 'relationships') {
-                        set({ relationships: data.data });
+                        try {
+                            console.debug && console.debug(`[WS] relationships received: ${Array.isArray(data.data) ? data.data.length : 'N/A'}`);
+                        } catch (e) {}
+                        set({ relationships: data.data || [] });
                     }
 
                     if (data.type === 'llm_stream') {
+                        // El backend emite chunks con { agent_id, chunk, reset, done }.
+                        // Si `enableStreaming` está desactivado, ignoramos los chunks
+                        // intermedios y solo mostramos el texto cuando `done` === true.
+                        const streamingEnabled = get().enableStreaming;
                         set((state) => {
-                            const agentId = data.agent_id;
+                            const agentId = String(data.agent_id);
                             const chunk = String(data.chunk || '');
                             if (!agentId) return state;
 
-                            const prev = data.reset ? '' : (state.speechBubbles[agentId]?.text || '');
-                            const nextText = (prev + chunk).slice(-1200);
+                            const prevBuf = data.reset ? '' : (state.llmBuffers?.[agentId] || '');
+                            const newBuf = (prevBuf + chunk).slice(-1200);
+
+                            const newBuffers = { ...(state.llmBuffers || {}), [agentId]: newBuf };
+
+                            // Decidir si actualizamos las burbujas visibles
+                            let newSpeech = { ...state.speechBubbles };
+                            if (streamingEnabled || data.done) {
+                                newSpeech[agentId] = { text: newBuf, timestamp: Date.now() };
+                            }
+
+                            // Si el stream finalizó, limpiamos el buffer
+                            if (data.done) {
+                                delete newBuffers[agentId];
+                            }
 
                             return {
-                                speechBubbles: {
-                                    ...state.speechBubbles,
-                                    [agentId]: {
-                                        text: nextText,
-                                        timestamp: Date.now(),
-                                    },
-                                },
+                                llmBuffers: newBuffers,
+                                speechBubbles: newSpeech,
                             };
                         });
                         return;
                     }
 
                     if (data.type === 'action_event') {
+                        // Evitar mostrar logs intermedios de acciones cuando el usuario
+                        // ha desactivado el streaming. Solo mostrar el evento final.
+                        const streamingEnabled = get().enableStreaming;
+                        const status = String(data.status || '').toLowerCase();
+                        const isFinal = ['done', 'completed', 'finished', 'completed'].includes(status);
+                        if (!streamingEnabled && !isFinal) return;
+
                         set((state) => ({
                             logs: [
                                 ...state.logs,
@@ -396,17 +536,62 @@ const useGameStore = create(
                     }
 
                     if (data.type === 'social_event') {
+                        // Construir autor/contenido a partir de distintos posibles campos
+                        const authorName = data.agent_name || (data.post && (data.post.autor || data.post.autor_id)) || data.agent_id || '';
+                        const contentText = data.content || (data.post && (data.post.contenido || data.post.content)) || '';
+
                         set((state) => ({
                             logs: [
                                 ...state.logs,
                                 {
                                     step: data.step || state.step || 0,
-                                    message: `📱 [${data.agent_name || data.agent_id}] ${String(data.content || '').slice(0, 160)}`,
+                                    message: `📱 [${authorName || 'social'}] ${String(contentText || '').slice(0, 160)}`,
                                     category: 'social',
                                     timestamp: Date.now(),
                                 },
                             ].slice(-1000),
                         }));
+
+                        // Si viene el objeto `post`, insertarlo directamente en el socialFeed local
+                        try {
+                            const postObj = data.post || null;
+                            if (postObj) {
+                                // Normalizar timestamp a segundos
+                                let ts: number = (postObj.timestamp as any) || Date.now() / 1000;
+                                if (typeof ts === 'string') {
+                                    const parsed = Date.parse(ts);
+                                    ts = isNaN(parsed) ? 0 : parsed / 1000;
+                                } else if (typeof ts === 'number' && ts > 1e12) {
+                                    ts = ts / 1000;
+                                }
+                                const normalizedPost = { ...postObj, timestamp: Number(ts) };
+
+                                set((state) => {
+                                    const existing = state.socialFeed || [];
+                                    const existingIndex = existing.findIndex((p: any) => p.id === normalizedPost.id);
+                                    let newFeed;
+                                    if (existingIndex >= 0) {
+                                        // Actualizar post existente
+                                        const updated = { ...existing[existingIndex], ...normalizedPost };
+                                        newFeed = [...existing.slice(0, existingIndex), updated, ...existing.slice(existingIndex + 1)];
+                                    } else {
+                                        // Añadir nuevo post al inicio
+                                        newFeed = [normalizedPost, ...existing];
+                                    }
+                                    newFeed = newFeed.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+                                    return { socialFeed: newFeed.slice(0, 1000) } as any;
+                                });
+                            } else if (data.action === 'new_post' || data.event === 'post_created') {
+                                // Compatibilidad antigua: solicitar refresh si no recibimos el post completo
+                                const uid = get().gameId || get().userId;
+                                if (uid) {
+                                    fetch(getHttpUrl(`/games/refresh/${uid}`), { method: 'POST' }).catch((err) => console.warn('Refresh failed', err));
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('Error handling social_event payload', e);
+                        }
+
                         return;
                     }
 
@@ -514,25 +699,50 @@ const useGameStore = create(
             },
 
             disconnect: () => {
-                const { socket, bubbleCleanupInterval } = get();
+                const { socket, bubbleCleanupInterval, reconnectTimer } = get();
                 if (bubbleCleanupInterval) {
                     clearInterval(bubbleCleanupInterval);
+                }
+                if (reconnectTimer) {
+                    try { clearTimeout(reconnectTimer as any); } catch (e) {}
                 }
                 if (socket) {
                     socket.close();
                 }
-                set({ socket: null, isConnected: false, bubbleCleanupInterval: null });
+                set({ socket: null, isConnected: false, bubbleCleanupInterval: null, reconnecting: false, reconnectAttempts: 0, reconnectTimer: null });
+            },
+
+            reconnect: () => {
+                const uid = get().gameId || get().userId;
+                if (!uid) return;
+
+                // Cancelar temporizador previo
+                const prev = get().reconnectTimer;
+                if (prev) {
+                    try { clearTimeout(prev as any); } catch (e) {}
+                    set({ reconnectTimer: null });
+                }
+
+                // Reiniciar contador y marcar reconexión en curso
+                set({ reconnectAttempts: 0, reconnecting: true });
+
+                // Intento inmediato suave
+                const t = window.setTimeout(() => {
+                    set({ reconnectTimer: null });
+                    try { get().connect(); } catch (e) { console.warn('Error initiating reconnect', e); }
+                }, 300);
+                set({ reconnectTimer: t });
             },
 
             sendArchitectMessage: async (message, agentId) => {
-                const { userId } = get();
-                if (!userId) {
-                    console.error("❌ sendArchitectMessage: No userId found in store");
-                    throw new Error("No userId found");
+                const uid = get().gameId || get().userId;
+                if (!uid) {
+                    console.error("❌ sendArchitectMessage: No gameId/userId found in store");
+                    throw new Error("No user/game id found");
                 }
 
                 try {
-                    const url = getHttpUrl(`/game/god-mode/${userId}`);
+                    const url = getHttpUrl(`/game/god-mode/${uid}`);
                     const response = await fetch(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -561,11 +771,11 @@ const useGameStore = create(
             },
 
             sendGodAction: async (type, params) => {
-                const { userId } = get();
-                if (!userId) return false;
+                const uid = get().gameId || get().userId;
+                if (!uid) return false;
 
                 try {
-                    const response = await fetch(getHttpUrl(`/game/god-mode/${userId}`), {
+                    const response = await fetch(getHttpUrl(`/game/god-mode/${uid}`), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

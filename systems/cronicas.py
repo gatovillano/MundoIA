@@ -210,7 +210,7 @@ class SistemaCronicas:
         return resonantes[:max_resultados]
 
     def calcular_resonancia(self, cronica: Cronica, agentes_cercanos: int = 0,
-                            agente_es_lider: bool = False) -> float:
+                            agente_es_vocero: bool = False) -> float:
         """
         Calcula la resonancia de una crónica.
         Factores: contenido, autor, contexto, timing.
@@ -234,7 +234,7 @@ class SistemaCronicas:
         influencia = self.influencias.get(cronica.autor_id)
         if influencia:
             resonancia += min(0.3, influencia.karma / 200.0)
-            if agente_es_lider:
+            if agente_es_vocero:
                 resonancia += 0.15
 
         # Agentes cercanos (más audiencia = más resonancia potencial)

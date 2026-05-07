@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, Scale, Flag, Brain, X, TrendingUp, Shield, Handshake } from 'lucide-react';
 import useGameStore from '../store/useGameStore';
+import { getAgentName } from '@/utils/nameUtils';
 
 interface FactionsPanelProps {
     isOpen: boolean;
@@ -70,6 +71,11 @@ export default function FactionsPanel({ isOpen, onClose }: FactionsPanelProps) {
                                                             Dinámico
                                                         </span>
                                                     )}
+                                                    {(faction.tipo === 'PUEBLO' || faction.tipo === 'CIUDAD') && (
+                                                        <span className="px-2 py-0.5 text-[8px] font-bold bg-blue-500/20 text-blue-300 rounded border border-blue-500/30 uppercase tracking-widest">
+                                                            {faction.tipo}
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 {faction.descripcion && (
                                                     <p className="text-[10px] text-gray-400 italic mb-1 line-clamp-2 max-w-[200px]">
@@ -115,52 +121,66 @@ export default function FactionsPanel({ isOpen, onClose }: FactionsPanelProps) {
                         {(!propuestas || propuestas.length === 0) ? (
                             <EmptyState icon={Scale} message="Sin actividad legislativa." />
                         ) : (
-                            propuestas.map((prop: any) => (
-                                <motion.div
-                                    key={prop.id}
-                                    initial={{ opacity: 0, x: 20 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    className="glass-card p-5 rounded-2xl border border-white/5 space-y-4 group"
-                                >
-                                    <div className="flex justify-between items-start">
-                                        <div className="flex items-center gap-2">
-                                            <div className="p-1.5 rounded bg-[#7c4dff]/20 text-[#7c4dff]">
-                                                <Scale className="w-3.5 h-3.5" />
-                                            </div>
-                                            <span className="text-[10px] font-bold text-[#7c4dff] uppercase tracking-widest">{prop.tipo === 'asamblea' ? 'ASAMBLEA' : (prop.tipo || 'LEY')}</span>
-                                        </div>
-                                        <StatusBadge status={prop.estado || 'pendiente'} />
-                                    </div>
+                            propuestas.map((prop: any) => {
+                                const isAsamblea = prop && (prop.tipo === 'asamblea' || prop.tipo === 'asambleas' || prop.votos_si !== undefined || prop.votos_no !== undefined);
+                                const siCount = (prop && typeof prop.votos_si === 'number')
+                                    ? prop.votos_si
+                                    : (prop && prop.votos)
+                                        ? Object.values(prop.votos || {}).filter((v: any) => v === 'si' || v === 'yes' || v === true).length
+                                        : 0;
+                                const noCount = (prop && typeof prop.votos_no === 'number')
+                                    ? prop.votos_no
+                                    : (prop && prop.votos)
+                                        ? Object.values(prop.votos || {}).filter((v: any) => v === 'no' || v === false).length
+                                        : 0;
 
-                                    <div className="space-y-2">
-                                        <h4 className="text-sm font-bold text-white leading-tight font-outfit">
-                                            {prop.tipo === 'asamblea' ? `Debate: ${prop.texto}` : (prop.titulo || "Propuesta de Ley")}
-                                        </h4>
-                                        <p className="text-[11px] text-gray-400 leading-relaxed font-mono pl-4 border-l border-white/10 italic">
-                                            {prop.tipo === 'asamblea' ? prop.texto : (prop.contenido || prop.texto)}
-                                        </p>
-                                    </div>
+                                return (
+                                    <motion.div
+                                        key={prop.id}
+                                        initial={{ opacity: 0, x: 20 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        className="glass-card p-5 rounded-2xl border border-white/5 space-y-4 group"
+                                    >
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex items-center gap-2">
+                                                <div className="p-1.5 rounded bg-[#7c4dff]/20 text-[#7c4dff]">
+                                                    <Scale className="w-3.5 h-3.5" />
+                                                </div>
+                                                <span className="text-[10px] font-bold text-[#7c4dff] uppercase tracking-widest">{isAsamblea ? 'ASAMBLEA' : (prop.tipo || 'LEY')}</span>
+                                            </div>
+                                            <StatusBadge status={prop.estado || 'pendiente'} />
+                                        </div>
 
-                                    <div className="pt-4 border-t border-white/5 flex justify-between items-end">
-                                        <div className="flex items-center gap-2">
-                                            <Brain className="w-3.5 h-3.5 text-gray-500" />
-                                            <span className="text-xs text-gray-400 font-mono">Proponente: {prop.proponente_id || 'MundoIA'}</span>
+                                        <div className="space-y-2">
+                                            <h4 className="text-sm font-bold text-white leading-tight font-outfit">
+                                                {isAsamblea ? `Debate: ${prop.texto || prop.tema || ''}` : (prop.titulo || "Propuesta de Ley")}
+                                            </h4>
+                                            <p className="text-[11px] text-gray-400 leading-relaxed font-mono pl-4 border-l border-white/10 italic">
+                                                {isAsamblea ? (prop.texto || prop.tema || '') : (prop.contenido || prop.texto || '')}
+                                            </p>
                                         </div>
-                                        {/* Votos */}
-                                        <div className="flex items-center gap-3">
-                                            <div className="flex items-center gap-1.5 text-[#00e676] text-xs font-mono">
-                                                <span>SI</span>
-                                                <span className="font-bold">{prop.tipo === 'asamblea' ? prop.votos_si : Object.values(prop.votos || {}).filter(v => v === 'si' || v === 'yes' || v === true).length}</span>
+
+                                        <div className="pt-4 border-t border-white/5 flex justify-between items-end">
+                                            <div className="flex items-center gap-2">
+                                                <Brain className="w-3.5 h-3.5 text-gray-500" />
+                                                <span className="text-xs text-gray-400 font-mono">Proponente: {getAgentName(prop.proponente_id, agents)}</span>
                                             </div>
-                                            <div className="w-px h-3 bg-white/20" />
-                                            <div className="flex items-center gap-1.5 text-[#ff1744] text-xs font-mono">
-                                                <span>NO</span>
-                                                <span className="font-bold">{prop.tipo === 'asamblea' ? prop.votos_no : Object.values(prop.votos || {}).filter(v => v === 'no' || v === false).length}</span>
+                                            {/* Votos */}
+                                            <div className="flex items-center gap-3">
+                                                <div className="flex items-center gap-1.5 text-[#00e676] text-xs font-mono">
+                                                    <span>SI</span>
+                                                    <span className="font-bold">{siCount}</span>
+                                                </div>
+                                                <div className="w-px h-3 bg-white/20" />
+                                                <div className="flex items-center gap-1.5 text-[#ff1744] text-xs font-mono">
+                                                    <span>NO</span>
+                                                    <span className="font-bold">{noCount}</span>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                </motion.div>
-                            ))
+                                    </motion.div>
+                                );
+                            })
                         )}
                     </div>
                 )}
@@ -227,9 +247,9 @@ export default function FactionsPanel({ isOpen, onClose }: FactionsPanelProps) {
                                             </div>
                                             <div className="flex flex-col">
                                                 <div className="flex items-center gap-2 text-sm font-bold text-white">
-                                                    <span>Agente {rel.source}</span>
+                                                    <span>{getAgentName(rel.source, agents)}</span>
                                                     <span className="text-gray-500 text-xs">↔</span>
-                                                    <span>Agente {rel.target}</span>
+                                                    <span>{getAgentName(rel.target, agents)}</span>
                                                 </div>
                                                 <span className="text-[10px] text-gray-400 uppercase tracking-widest mt-0.5">Alianza Estratégica</span>
                                             </div>

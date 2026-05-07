@@ -2,7 +2,8 @@
 
 import useGameStore from "@/store/useGameStore";
 import { getHttpUrl } from "@/utils/apiConfig";
-import { X, Shield, Heart, Zap, Users, Wallet, Brain, MessageSquare, Send, Moon, Music, ListTodo, Code, Terminal, Ghost, Clock, Swords, Handshake, Globe, Lock, Eye, Target, Compass, Trophy, Play, ChevronRight } from "lucide-react";
+import { replaceIdsWithNames } from "@/utils/nameUtils";
+import { X, Shield, Heart, Zap, Users, Wallet, Brain, MessageSquare, Send, Moon, Music, ListTodo, Code, Terminal, Ghost, Clock, Swords, Handshake, Globe, Lock, Eye, Target, Compass, Trophy, Play, ChevronRight, Microscope } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useMemo } from "react";
 import { Agent, Plan } from "@/types/agent";
@@ -123,7 +124,9 @@ function HistoryCard({ entry, agentId }: { entry: HistoryEntry; agentId: string 
         let msg = entry.message;
         const colonIdx = msg.indexOf(']: "');
         if (colonIdx !== -1) { msg = msg.substring(colonIdx + 4); if (msg.endsWith('"')) msg = msg.slice(0, -1); }
-        return msg;
+        
+        const agents = useGameStore.getState().agents;
+        return replaceIdsWithNames(msg, agents);
     }, [entry.message]);
 
     const meta = useMemo(() => {
@@ -319,14 +322,6 @@ export default function AgentSidebar() {
                                                 <h2 className="text-2xl font-bold text-white tracking-tight mb-1 uppercase">
                                                     {agent.identidad?.nombre || agent.alma?.nombre_propio || "AGENTE"}
                                                 </h2>
-                                                <button 
-                                                    onClick={() => setIsControlling(true)}
-                                                    className="p-1.5 bg-indigo-500/20 hover:bg-indigo-500 text-indigo-400 hover:text-white rounded-lg transition-all border border-indigo-500/30 flex items-center gap-1 group shadow-lg shadow-indigo-500/10"
-                                                    title="Cambiar a Modo Control Total"
-                                                >
-                                                    <Zap className="w-3.5 h-3.5 group-hover:animate-pulse" />
-                                                    <span className="text-[9px] font-black uppercase tracking-tighter pr-1">Control</span>
-                                                </button>
                                             </div>
                                             <div className="flex flex-wrap gap-2">
                                                 <Badge text={agent.profesion || "CIUDADANO"} color="bg-[#7c4dff]/20 text-[#7c4dff] border-[#7c4dff]/30" />
@@ -339,10 +334,13 @@ export default function AgentSidebar() {
                                     </div>
 
                                     {/* Tabs */}
-                                    <div className="flex gap-1 mt-4 bg-black/30 rounded-lg p-1">
+                                    <div 
+                                        className="flex gap-1 mt-4 bg-black/30 rounded-lg p-1 overflow-x-auto no-scrollbar"
+                                        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                                    >
                                         <button
                                             onClick={() => setActiveTab('perfil')}
-                                            className={`flex-1 py-2 px-3 rounded-md text-xs font-bold uppercase tracking-wider transition-all ${
+                                            className={`flex-1 min-w-max py-2 px-2.5 rounded-md text-[10px] font-black uppercase tracking-wider transition-all ${
                                                 activeTab === 'perfil'
                                                     ? 'bg-[#7c4dff]/20 text-[#7c4dff] border border-[#7c4dff]/30'
                                                     : 'text-gray-500 hover:text-gray-300'
@@ -351,8 +349,19 @@ export default function AgentSidebar() {
                                             Perfil
                                         </button>
                                         <button
+                                            onClick={() => setActiveTab('alma')}
+                                            className={`flex-1 min-w-max py-2 px-2.5 rounded-md text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                                                activeTab === 'alma'
+                                                    ? 'bg-[#7c4dff]/20 text-[#7c4dff] border border-[#7c4dff]/30'
+                                                    : 'text-gray-500 hover:text-gray-300'
+                                            }`}
+                                        >
+                                            <Heart className="w-3 h-3" />
+                                            Alma
+                                        </button>
+                                        <button
                                             onClick={() => setActiveTab('historial')}
-                                            className={`flex-1 py-2 px-3 rounded-md text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                                            className={`flex-1 min-w-max py-2 px-2.5 rounded-md text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
                                                 activeTab === 'historial'
                                                     ? 'bg-[#7c4dff]/20 text-[#7c4dff] border border-[#7c4dff]/30'
                                                     : 'text-gray-500 hover:text-gray-300'
@@ -367,19 +376,8 @@ export default function AgentSidebar() {
                                             )}
                                         </button>
                                         <button
-                                            onClick={() => setActiveTab('alma')}
-                                            className={`flex-1 py-2 px-3 rounded-md text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
-                                                activeTab === 'alma'
-                                                    ? 'bg-[#7c4dff]/20 text-[#7c4dff] border border-[#7c4dff]/30'
-                                                    : 'text-gray-500 hover:text-gray-300'
-                                            }`}
-                                        >
-                                            <Heart className="w-3 h-3" />
-                                            Alma
-                                        </button>
-                                        <button
                                             onClick={() => setActiveTab('creaciones')}
-                                            className={`flex-1 py-2 px-3 rounded-md text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                                            className={`flex-1 min-w-max py-2 px-2.5 rounded-md text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
                                                 activeTab === 'creaciones'
                                                     ? 'bg-[#7c4dff]/20 text-[#7c4dff] border border-[#7c4dff]/30'
                                                     : 'text-gray-500 hover:text-gray-300'
@@ -451,6 +449,8 @@ function PerfilTab({
     onStartControl: () => void;
 }) {
     const [chatMessages, setChatMessages] = useState<Array<{role: 'user' | 'agent', content: string}>>([]);
+    const [beliefsCollapsed, setBeliefsCollapsed] = useState(false);
+    const [desiresCollapsed, setDesiresCollapsed] = useState(false);
 
     const handleSend = async () => {
         if (!directMessage.trim()) return;
@@ -482,10 +482,11 @@ function PerfilTab({
 
     return (
         <div className="p-6 space-y-8">
-            {/* Botón de Posesión - Prioritario */}
+            {/* 1. CONTROL DE ENTIDAD - Herramientas del Arquitecto (al inicio) */}
             <section className="space-y-4">
                 <SectionTitle title="Control de Entidad" />
                 <div className="grid grid-cols-1 gap-3">
+                    {/* Botón Poseer */}
                     <div className="relative group overflow-hidden rounded-2xl">
                         <div className={`absolute -inset-[1px] bg-gradient-to-r ${agentePoseidoId === agent.id ? 'from-red-500 to-orange-500' : 'from-yellow-500 to-orange-500'} opacity-30 group-hover:opacity-100 transition-opacity blur-[2px]`} />
                         <button
@@ -513,91 +514,33 @@ function PerfilTab({
                             </div>
                         </button>
                     </div>
-                </div>
-            </section>
 
-            <section className="space-y-4">
-                <SectionTitle title="Métricas Principales" />
-                <div className="grid grid-cols-2 gap-3">
-                    <StatCard icon={Heart} label="Salud" value={agent?.necesidades?.salud} color="text-[#ff1744]" />
-                    <StatCard icon={Zap} label="Recursos" value={agent?.resources} color="text-[#ffd600]" />
-                    <StatCard icon={Brain} label="Aprendizaje" value={(agent?.skill_factor || 0) * 100} unit="%" color="text-[#7c4dff]" />
-                    <StatCard icon={Wallet} label="MundoCoins" value={agent?.money} unit="MC" color="text-[#ffd600]" />
-                </div>
-            </section>
-
-            <section className="space-y-4">
-                <SectionTitle title="Necesidades Vitales" />
-                <div className="glass-card p-5 rounded-xl space-y-4">
-                    <ProgressBar icon={Shield} label="Seguridad" value={agent?.necesidades?.seguridad} color="bg-[#2979ff]" />
-                    <ProgressBar icon={Users} label="Social" value={agent?.necesidades?.social} color="bg-[#00e676]" />
-                    <ProgressBar icon={Zap} label="Alimento" value={agent?.necesidades?.alimento} color="bg-[#ffa000]" />
-                    <ProgressBar icon={Moon} label="Descanso" value={agent?.necesidades?.descanso} color="bg-[#7c4dff]" />
-                    <ProgressBar icon={Music} label="Ocio" value={agent?.necesidades?.entretenimiento} color="bg-[#ec4899]" />
-                </div>
-            </section>
-
-            {/* CAPITAL SOCIAL */}
-            <section className="space-y-4">
-                <SectionTitle title="Capital Social" />
-                <div className="glass-card p-5 rounded-xl space-y-4">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-[#00e5ff]/20 text-[#00e5ff]">
-                                <Globe className="w-5 h-5" />
+                    {/* Botón Control Total */}
+                    <div className="relative group overflow-hidden rounded-2xl">
+                        <div className="absolute -inset-[1px] bg-gradient-to-r from-indigo-500 to-purple-500 opacity-30 group-hover:opacity-100 transition-opacity blur-[2px]" />
+                        <button
+                            onClick={onStartControl}
+                            className="relative w-full py-4 px-6 flex items-center justify-between transition-all bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400"
+                        >
+                            <div className="flex items-center gap-4">
+                                <div className="p-3 rounded-xl bg-indigo-500/20">
+                                    <Zap className="w-6 h-6 group-hover:animate-pulse" />
+                                </div>
+                                <div className="text-left">
+                                    <h4 className="text-sm font-black uppercase tracking-widest leading-none mb-1">
+                                        Panel de Control
+                                    </h4>
+                                    <p className="text-[10px] opacity-60 font-medium">
+                                        Acceder al centro de comando del agente
+                                    </p>
+                                </div>
                             </div>
-                            <div>
-                                <span className="text-xs font-bold text-white uppercase">Influencia</span>
-                                <div className="text-[10px] text-gray-500">{agent?.social_metrics?.nivel_influencia || "Desconocido"}</div>
-                            </div>
-                        </div>
-                        <div className="text-right">
-                            <span className="text-2xl font-bold text-[#00e5ff]">{agent?.social_metrics?.capital_social?.toFixed(0) || "10"}</span>
-                            <span className="text-xs text-gray-500">/100</span>
-                        </div>
-                    </div>
-                    <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden">
-                        <div 
-                            className="h-full bg-gradient-to-r from-[#00e5ff] to-[#7c4dff] transition-all duration-500"
-                            style={{ width: `${Math.min(100, agent?.social_metrics?.capital_social || 10)}%` }}
-                        />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 text-[10px]">
-                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
-                            <Users className="w-3 h-3 text-[#00e676]" />
-                            <span className="text-gray-400">Seguidores:</span>
-                            <span className="text-white font-bold">{agent?.social_metrics?.seguidores || 0}</span>
-                        </div>
-                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
-                            <Users className="w-3 h-3 text-gray-400" />
-                            <span className="text-gray-400">Siguiendo:</span>
-                            <span className="text-white font-bold">{agent?.social_metrics?.siguiendo || 0}</span>
-                        </div>
-                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
-                            <MessageSquare className="w-3 h-3 text-[#ffa000]" />
-                            <span className="text-gray-400">Posts:</span>
-                            <span className="text-white font-bold">{agent?.social_metrics?.posts_publicados || 0}</span>
-                        </div>
-                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
-                            <Heart className="w-3 h-3 text-[#ec4899]" />
-                            <span className="text-gray-400">Likes:</span>
-                            <span className="text-white font-bold">{agent?.social_metrics?.likes_recibidos || 0}</span>
-                        </div>
+                        </button>
                     </div>
                 </div>
             </section>
 
-            {/* NECESIDADES INTELECTUALES */}
-            <section className="space-y-4">
-                <SectionTitle title="Necesidades Intelectuales" />
-                <div className="glass-card p-5 rounded-xl space-y-3">
-                    <ProgressBar icon={Compass} label="Curiosidad" value={agent?.necesidades_intelectuales?.curiosidad ?? 6} color="bg-[#7c4dff]" />
-                    <ProgressBar icon={MessageSquare} label="Expresión" value={agent?.necesidades_intelectuales?.expresion ?? 6} color="bg-[#00e5ff]" />
-                    <ProgressBar icon={Trophy} label="Debate" value={agent?.necesidades_intelectuales?.debate ?? 5} color="bg-[#ffa000]" />
-                    <ProgressBar icon={Brain} label="Aprendizaje" value={agent?.necesidades_intelectuales?.aprendizaje ?? 6} color="bg-[#00e676]" />
-                </div>
-            </section>
-
+            {/* 2. CÓRTEX NEURAL - Lo que está pasando por su cabeza ahora mismo */}
             <section className="space-y-4">
                 <SectionTitle title="Córtex Neural" />
                 <div className="relative p-6 rounded-2xl bg-gradient-to-br from-[#7c4dff]/10 to-transparent border border-[#7c4dff]/20 overflow-hidden group">
@@ -615,87 +558,15 @@ function PerfilTab({
                 </div>
             </section>
 
-            {agent?.planes && agent.planes.length > 0 && (
-                <section className="space-y-4">
-                    <SectionTitle title="Planes (Motor)" />
-                    <div className="glass-card p-5 rounded-xl space-y-3">
-                        {agent.planes.map((plan: Plan, index) => (
-                            <div key={index} className="flex items-start gap-3">
-                                <ListTodo className="w-4 h-4 text-[#00e676] mt-1 flex-shrink-0" />
-                                <p className="text-sm text-gray-300 leading-snug">{plan.objetivo}</p>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-            )}
-
-            {/* SECCIÓN BDI */}
+            {/* 2. PLANES E INTENCIONES - ¿Qué está intentando hacer? */}
             <section className="space-y-6">
-                <SectionTitle title="Sistema de Razonamiento BDI" />
+                <SectionTitle title="Objetivos e Intenciones" />
                 
-                {/* Creencias (Beliefs) */}
-                <div className="space-y-3">
-                    <div className="flex items-center gap-2 px-1">
-                        <Eye className="w-4 h-4 text-cyan-400" />
-                        <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">Sistema de Creencias</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2">
-                        {agent.creencias && Object.values(agent.creencias).length > 0 ? (
-                            Object.values(agent.creencias).map((c: any, i) => (
-                                <div key={i} className="bg-white/[0.02] border border-white/5 rounded-lg p-2.5 flex items-center justify-between group hover:bg-white/5 transition-colors">
-                                    <div className="flex flex-col">
-                                        <span className="text-[11px] text-gray-300 font-medium capitalize">{c.proposicion.replace(/_/g, ' ')}</span>
-                                        <span className="text-[9px] text-gray-500 uppercase tracking-tighter">Fuente: {c.fuente}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <div className="text-right">
-                                            <div className="text-[11px] font-mono font-bold text-cyan-400">{(c.probabilidad * 100).toFixed(0)}%</div>
-                                        </div>
-                                        <div className="w-12 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                                            <div className="h-full bg-cyan-500/50" style={{ width: `${c.probabilidad * 100}%` }} />
-                                        </div>
-                                    </div>
-                                </div>
-                            ))
-                        ) : (
-                            <p className="text-[10px] text-gray-600 italic px-2">Sin creencias formadas...</p>
-                        )}
-                    </div>
-                </div>
-
-                {/* Deseos (Desires) */}
-                <div className="space-y-3">
-                    <div className="flex items-center gap-2 px-1">
-                        <Target className="w-4 h-4 text-rose-400" />
-                        <span className="text-[10px] font-bold text-rose-400 uppercase tracking-widest">Matriz de Deseos</span>
-                    </div>
-                    <div className="glass-card p-4 rounded-xl space-y-3">
-                        {agent.deseos?.deseos && Object.values(agent.deseos.deseos).map((d: any, i) => (
-                            <div key={i} className="space-y-1.5 bg-white/5 p-2 rounded-lg border border-white/[0.05]">
-                                <div className="flex justify-between text-[10px] items-center mb-1">
-                                    <span className="text-gray-300 capitalize font-black tracking-wider">{d.tipo.replace(/_/g, ' ')}</span>
-                                    <span className="text-rose-400 font-mono">{(d.intensidad * 100).toFixed(0)}%</span>
-                                </div>
-                                <p className="text-[10px] text-rose-200/80 italic mb-1.5 border-l-2 border-rose-500/50 pl-2 leading-tight">
-                                    {getDesireDescription(d.tipo, d.intensidad)}
-                                </p>
-                                <div className="h-1 w-full bg-black/50 rounded-full overflow-hidden">
-                                    <motion.div 
-                                        initial={{ width: 0 }} 
-                                        animate={{ width: `${d.intensidad * 100}%` }} 
-                                        className="h-full bg-gradient-to-r from-rose-600 to-rose-400" 
-                                    />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Intenciones Actuales (Intentions) */}
+                {/* Intenciones Actuales (BDI) */}
                 <div className="space-y-3">
                     <div className="flex items-center gap-2 px-1">
                         <Compass className="w-4 h-4 text-emerald-400" />
-                        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Plan de Intención</span>
+                        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Plan de Intención (BDI)</span>
                     </div>
                     {agent.intenciones?.plan_actual ? (
                         <div className="relative p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 overflow-hidden">
@@ -735,11 +606,281 @@ function PerfilTab({
                         </div>
                     )}
                 </div>
+
+                {/* Planes (Motor) */}
+                {agent?.planes && agent.planes.length > 0 && (
+                    <div className="glass-card p-5 rounded-xl space-y-3">
+                        <div className="flex items-center gap-2 mb-1">
+                            <ListTodo className="w-4 h-4 text-[#00e676]" />
+                            <span className="text-[10px] font-bold text-[#00e676] uppercase tracking-widest">Planes del Motor</span>
+                        </div>
+                        {agent.planes.map((plan: Plan, index) => (
+                            <div key={index} className="flex items-start gap-3">
+                                <ChevronRight className="w-3 h-3 text-gray-500 mt-1 flex-shrink-0" />
+                                <p className="text-sm text-gray-300 leading-snug">{plan.objetivo}</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </section>
 
+            {/* 3. ESTADO FÍSICO Y RECURSOS */}
             <section className="space-y-4">
-                <SectionTitle title="Conversación Directa" />
-                <div className="glass-card p-4 rounded-xl border border-[#7c4dff]/30 bg-[#7c4dff]/5">
+                <SectionTitle title="Métricas y Necesidades" />
+                <div className="grid grid-cols-2 gap-3">
+                    <StatCard icon={Heart} label="Salud" value={agent?.necesidades?.salud} color="text-[#ff1744]" />
+                    <StatCard icon={Zap} label="Recursos" value={agent?.resources} color="text-[#ffd600]" />
+                    <StatCard icon={Brain} label="Aprendizaje" value={(agent?.skill_factor || 0) * 100} unit="%" color="text-[#7c4dff]" />
+                    <StatCard icon={Wallet} label="MundoCoins" value={agent?.money} unit="MC" color="text-[#ffd600]" />
+                </div>
+                <div className="glass-card p-5 rounded-xl space-y-4">
+                    <ProgressBar icon={Heart} label="Salud" value={agent?.necesidades?.salud} color="bg-[#ff1744]" />
+                    <ProgressBar icon={Shield} label="Seguridad" value={agent?.necesidades?.seguridad} color="bg-[#2979ff]" />
+                    <ProgressBar icon={Users} label="Social" value={agent?.necesidades?.social} color="bg-[#00e676]" />
+                    <ProgressBar icon={Zap} label="Alimento" value={agent?.necesidades?.alimento} color="bg-[#ffa000]" />
+                    <ProgressBar icon={Moon} label="Descanso" value={agent?.necesidades?.descanso} color="bg-[#7c4dff]" />
+                    <ProgressBar icon={Music} label="Ocio" value={agent?.necesidades?.entretenimiento} color="bg-[#ec4899]" />
+                </div>
+            </section>
+
+            {/* 4. INVENTARIO DE RECURSOS */}
+            {agent?.inventario && Object.keys(agent.inventario).length > 0 && (
+                <section className="space-y-4">
+                    <SectionTitle title="Inventario de Recursos" />
+                    <div className="grid grid-cols-2 gap-3">
+                        {Object.entries(agent.inventario).map(([item, count]) => (
+                            <div key={item} className="glass-card p-3 rounded-xl flex items-center justify-between border border-white/5 bg-white/[0.02]">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 rounded-lg bg-white/5 text-gray-400 capitalize text-[10px] font-bold">
+                                        {item.substring(0, 3)}
+                                    </div>
+                                    <span className="text-xs text-gray-300 capitalize">{item}</span>
+                                </div>
+                                <span className="text-sm font-mono font-bold text-[#00e676]">{count}</span>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
+
+            {/* 5. MATRIZ FUNCIONAL (Personalidad y Skills) */}
+            <section className="space-y-6">
+                <SectionTitle title="Matriz Funcional" />
+                
+                {/* Personalidad */}
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 px-1">
+                        <Ghost className="w-4 h-4 text-[#00e676]" />
+                        <span className="text-[10px] font-bold text-[#00e676] uppercase tracking-widest">Rasgos de Personalidad</span>
+                    </div>
+                    <div className="glass-card p-5 rounded-xl space-y-4">
+                        {Object.entries(agent?.personalidad || {}).map(([trait, value]) => (
+                            <div key={trait} className="space-y-1.5">
+                                <div className="flex justify-between text-[10px] items-center">
+                                    <span className="text-gray-400 capitalize font-bold tracking-wider">{trait}</span>
+                                    <span className="text-[#00e676] font-mono">{(value as number * 100).toFixed(0)}%</span>
+                                </div>
+                                <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                                    <motion.div
+                                        initial={{ width: 0 }}
+                                        animate={{ width: `${(value as number) * 100}%` }}
+                                        className="h-full bg-gradient-to-r from-[#7c4dff] to-[#00e676]"
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Habilidades */}
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 px-1">
+                        <Zap className="w-4 h-4 text-[#ff9100]" />
+                        <span className="text-[10px] font-bold text-[#ff9100] uppercase tracking-widest">Habilidades y Experiencia</span>
+                    </div>
+                    <div className="glass-card p-5 rounded-xl space-y-4">
+                        {Object.entries(agent?.experiencia || {}).map(([skill, value]) => (
+                            <div key={skill} className="space-y-1.5">
+                                <div className="flex justify-between text-[10px] items-center">
+                                    <span className="text-gray-400 capitalize font-bold tracking-wider">{skill}</span>
+                                    <span className="text-[#ff9100] font-mono">Nivel {value as number}</span>
+                                </div>
+                                <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                                    <motion.div
+                                        initial={{ width: 0 }}
+                                        animate={{ width: `${((value as number) / 20) * 100}%` }}
+                                        className="h-full bg-gradient-to-r from-[#ffea00] to-[#ff9100]"
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </section>
+
+            {/* 6. CONTEXTO SOCIAL Y ESTRUCTURA */}
+            <section className="space-y-6">
+                <SectionTitle title="Sociedad y Estructura" />
+                
+                {/* Capital Social */}
+                <div className="glass-card p-5 rounded-xl space-y-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-[#00e5ff]/20 text-[#00e5ff]">
+                                <Globe className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <span className="text-xs font-bold text-white uppercase">Influencia Social</span>
+                                <div className="text-[10px] text-gray-500">{agent?.social_metrics?.nivel_influencia || "Desconocido"}</div>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                            <span className="text-2xl font-bold text-[#00e5ff]">{agent?.social_metrics?.capital_social?.toFixed(0) || "10"}</span>
+                            <span className="text-xs text-gray-500">/100</span>
+                        </div>
+                    </div>
+                    <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden">
+                        <div 
+                            className="h-full bg-gradient-to-r from-[#00e5ff] to-[#7c4dff] transition-all duration-500"
+                            style={{ width: `${Math.min(100, agent?.social_metrics?.capital_social || 10)}%` }}
+                        />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-[10px]">
+                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
+                            <Users className="w-3 h-3 text-[#00e676]" />
+                            <span className="text-gray-400">Seguidores:</span>
+                            <span className="text-white font-bold">{agent?.social_metrics?.seguidores || 0}</span>
+                        </div>
+                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
+                            <Users className="w-3 h-3 text-gray-400" />
+                            <span className="text-gray-400">Siguiendo:</span>
+                            <span className="text-white font-bold">{agent?.social_metrics?.siguiendo || 0}</span>
+                        </div>
+                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
+                            <MessageSquare className="w-3 h-3 text-[#ffa000]" />
+                            <span className="text-gray-400">Posts:</span>
+                            <span className="text-white font-bold">{agent?.social_metrics?.posts_publicados || 0}</span>
+                        </div>
+                        <div className="bg-white/[0.03] rounded-lg p-2 flex items-center gap-2">
+                            <Heart className="w-3 h-3 text-[#ec4899]" />
+                            <span className="text-gray-400">Likes:</span>
+                            <span className="text-white font-bold">{agent?.social_metrics?.likes_recibidos || 0}</span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Estructura */}
+                <div className="grid grid-cols-2 gap-3">
+                    <InfoBlock label="Grupo" value={agent?.grupo_id || "Neutral"} />
+                    <InfoBlock label="Profesión" value={agent?.profesion || "Ciudadano"} />
+                    <InfoBlock label="Rol" value={agent?.rol || "Miembro"} />
+                    <InfoBlock label="Reputación" value={`${((agent?.reputacion || 0) * 100).toFixed(0)}%`} />
+                </div>
+            </section>
+
+            {/* 7. PSIQUE PROFUNDA (BDI) */}
+            <section className="space-y-6">
+                <SectionTitle title="Psicología Profunda (BDI)" />
+                
+                {/* Necesidades Intelectuales */}
+                <div className="glass-card p-5 rounded-xl space-y-3">
+                    <div className="flex items-center gap-2 mb-1">
+                        <Microscope className="w-4 h-4 text-[#7c4dff]" />
+                        <span className="text-[10px] font-bold text-[#7c4dff] uppercase tracking-widest">Inquietudes Intelectuales</span>
+                    </div>
+                    <ProgressBar icon={Compass} label="Curiosidad" value={agent?.necesidades_intelectuales?.curiosidad ?? 6} color="bg-[#7c4dff]" />
+                    <ProgressBar icon={MessageSquare} label="Expresión" value={agent?.necesidades_intelectuales?.expresion ?? 6} color="bg-[#00e5ff]" />
+                    <ProgressBar icon={Trophy} label="Debate" value={agent?.necesidades_intelectuales?.debate ?? 5} color="bg-[#ffa000]" />
+                    <ProgressBar icon={Brain} label="Aprendizaje" value={agent?.necesidades_intelectuales?.aprendizaje ?? 6} color="bg-[#00e676]" />
+                </div>
+                
+                {/* Creencias (Beliefs) */}
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 px-1">
+                        <Eye className="w-4 h-4 text-cyan-400" />
+                        <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">Sistema de Creencias</span>
+                        <button
+                            onClick={() => setBeliefsCollapsed(!beliefsCollapsed)}
+                            className="ml-auto p-1.5 rounded-full hover:bg-white/5 transition-transform"
+                        >
+                            <ChevronRight className={`w-4 h-4 text-gray-300 ${beliefsCollapsed ? 'rotate-0' : 'rotate-90'} transition-transform`} />
+                        </button>
+                    </div>
+
+                    {!beliefsCollapsed ? (
+                        <div className="grid grid-cols-1 gap-2">
+                            {agent.creencias && Object.values(agent.creencias).length > 0 ? (
+                                Object.values(agent.creencias).map((c: any, i) => (
+                                    <div key={i} className="bg-white/[0.02] border border-white/5 rounded-lg p-2.5 flex items-center justify-between group hover:bg-white/5 transition-colors">
+                                        <div className="flex flex-col">
+                                            <span className="text-[11px] text-gray-300 font-medium capitalize">{(c.proposicion || "").replace(/_/g, ' ')}</span>
+                                            <span className="text-[9px] text-gray-500 uppercase tracking-tighter">Fuente: {c.fuente}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <div className="text-[11px] font-mono font-bold text-cyan-400">{(c.probabilidad * 100).toFixed(0)}%</div>
+                                            <div className="w-12 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                                <div className="h-full bg-cyan-500/50" style={{ width: `${c.probabilidad * 100}%` }} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <p className="text-[10px] text-gray-600 italic px-2">Sin creencias formadas...</p>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="px-2">
+                            <p className="text-[10px] text-gray-500 italic">Creencias ocultas ({Object.values(agent.creencias || {}).length})</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Deseos (Desires) */}
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 px-1">
+                        <Target className="w-4 h-4 text-rose-400" />
+                        <span className="text-[10px] font-bold text-rose-400 uppercase tracking-widest">Matriz de Deseos</span>
+                        <button
+                            onClick={() => setDesiresCollapsed(!desiresCollapsed)}
+                            className="ml-auto p-1.5 rounded-full hover:bg-white/5 transition-transform"
+                        >
+                            <ChevronRight className={`w-4 h-4 text-gray-300 ${desiresCollapsed ? 'rotate-0' : 'rotate-90'} transition-transform`} />
+                        </button>
+                    </div>
+
+                    {!desiresCollapsed ? (
+                        <div className="glass-card p-4 rounded-xl space-y-3">
+                            {agent.deseos?.deseos && Object.values(agent.deseos.deseos).map((d: any, i) => (
+                                <div key={i} className="space-y-1.5 bg-white/5 p-2 rounded-lg border border-white/[0.05]">
+                                    <div className="flex justify-between text-[10px] items-center mb-1">
+                                        <span className="text-gray-300 capitalize font-black tracking-wider">{(d.tipo || "").replace(/_/g, ' ')}</span>
+                                        <span className="text-rose-400 font-mono">{(d.intensidad * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <p className="text-[10px] text-rose-200/80 italic mb-1.5 border-l-2 border-rose-500/50 pl-2 leading-tight">
+                                        {getDesireDescription(d.tipo, d.intensidad)}
+                                    </p>
+                                    <div className="h-1 w-full bg-black/50 rounded-full overflow-hidden">
+                                        <motion.div 
+                                            initial={{ width: 0 }} 
+                                            animate={{ width: `${d.intensidad * 100}%` }} 
+                                            className="h-full bg-gradient-to-r from-rose-600 to-rose-400" 
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="px-2">
+                            <p className="text-[10px] text-gray-500 italic">Deseos ocultos ({Object.values(agent.deseos?.deseos || {}).length})</p>
+                        </div>
+                    )}
+                </div>
+            </section>
+
+            {/* 8. CONVERSACIÓN DIRECTA */}
+            <section className="space-y-4">
+                <SectionTitle title="Canal de Consciencia Directo" />
+                <div className="glass-card p-4 rounded-xl border border-indigo-500/30 bg-indigo-500/5">
                     {/* Chat Messages */}
                     <div className="mb-4 h-64 overflow-y-auto custom-scrollbar space-y-3 pr-1">
                         {chatMessages.length === 0 ? (
@@ -799,116 +940,11 @@ function PerfilTab({
                 </div>
             </section>
 
-            <section className="space-y-4">
-                <SectionTitle title="Datos Estructurales" />
-                <div className="grid grid-cols-2 gap-3">
-                    <InfoBlock label="Grupo" value={agent?.grupo_id || "Neutral"} />
-                    <InfoBlock label="Profesión" value={agent?.profesion || "Ciudadano"} />
-                    <InfoBlock label="Rol" value={agent?.rol || "Miembro"} />
-                    <InfoBlock label="Reputación" value={`${((agent?.reputacion || 0) * 100).toFixed(0)}%`} />
-                </div>
-            </section>
 
-            <section className="space-y-4">
-                <SectionTitle title="Matriz de Personalidad" />
-                <div className="glass-card p-5 rounded-xl space-y-4">
-                    {Object.entries(agent?.personalidad || {}).map(([trait, value]) => (
-                        <div key={trait} className="space-y-1.5">
-                            <div className="flex justify-between text-xs items-center">
-                                <span className="text-gray-400 capitalize font-medium">{trait}</span>
-                                <span className="text-[#00e676] font-mono">{(value as number * 100).toFixed(0)}%</span>
-                            </div>
-                            <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                                <motion.div
-                                    initial={{ width: 0 }}
-                                    animate={{ width: `${(value as number) * 100}%` }}
-                                    transition={{ duration: 1, ease: "circOut" }}
-                                    className="h-full bg-gradient-to-r from-[#7c4dff] to-[#00e676]"
-                                />
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </section>
-
-            <section className="space-y-4">
-                <SectionTitle title="Habilidades y Experiencia" />
-                <div className="glass-card p-5 rounded-xl space-y-4">
-                    {Object.entries(agent?.experiencia || {}).map(([skill, value]) => (
-                        <div key={skill} className="space-y-1.5">
-                            <div className="flex justify-between text-xs items-center">
-                                <span className="text-gray-400 capitalize font-medium">{skill}</span>
-                                <span className="text-[#ff9100] font-mono">Nivel {value as number}</span>
-                            </div>
-                            <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                                <motion.div
-                                    initial={{ width: 0 }}
-                                    animate={{ width: `${((value as number) / 20) * 100}%` }}
-                                    transition={{ duration: 1, ease: "circOut" }}
-                                    className="h-full bg-gradient-to-r from-[#ffea00] to-[#ff9100]"
-                                />
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </section>
-
-            {agent?.inventario && Object.keys(agent.inventario).length > 0 && (
-                <section className="space-y-4">
-                    <SectionTitle title="Inventario de Recursos" />
-                    <div className="grid grid-cols-2 gap-3">
-                        {Object.entries(agent.inventario).map(([item, count]) => (
-                            <div key={item} className="glass-card p-3 rounded-xl flex items-center justify-between border border-white/5 bg-white/[0.02]">
-                                <div className="flex items-center gap-2">
-                                    <div className="p-1.5 rounded-lg bg-white/5 text-gray-400 capitalize text-[10px] font-bold">
-                                        {item.substring(0, 3)}
-                                    </div>
-                                    <span className="text-xs text-gray-300 capitalize">{item}</span>
-                                </div>
-                                <span className="text-sm font-mono font-bold text-[#00e676]">{count}</span>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-            )}
-
-            {agent?.skills && Object.keys(agent.skills).length > 0 && (
-                <section className="space-y-4">
-                    <SectionTitle title="Módulos de Habilidad Creados" />
-                    <div className="space-y-4">
-                        {Object.entries(agent.skills).map(([skillName, skillData]) => (
-                            <div key={skillName} className="relative group">
-                                <div className="absolute -inset-[1px] bg-gradient-to-r from-[#7c4dff] to-[#00e676] rounded-xl opacity-20 group-hover:opacity-100 transition-opacity blur-[2px]" />
-                                <div className="relative glass-card p-5 rounded-xl bg-[#0a0b10] border border-white/5 overflow-hidden">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div className="flex items-center gap-2">
-                                            <div className="p-2 rounded-lg bg-[#7c4dff]/20 text-[#7c4dff]">
-                                                <Code className="w-4 h-4" />
-                                            </div>
-                                            <span className="text-xs font-bold text-white uppercase tracking-wider font-mono">{skillData.name}</span>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[9px] text-gray-500 font-mono">v{skillData.version || "1.0.0"}</span>
-                                            <div className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-pulse" />
-                                        </div>
-                                    </div>
-                                    <p className="text-xs text-gray-400 mb-4 leading-relaxed line-clamp-2 italic">{skillData.description}</p>
-                                    <div className="rounded-lg bg-black/60 border border-white/5 p-3 font-mono text-[9px] text-[#00e676]/70 group-hover:text-[#00e676] transition-colors overflow-x-auto custom-scrollbar">
-                                        <div className="flex items-center gap-2 mb-2 pb-2 border-b border-white/5 opacity-50">
-                                            <Terminal className="w-3 h-3" />
-                                            <span className="text-[8px] uppercase tracking-tighter">python_module.py</span>
-                                        </div>
-                                        <pre className="whitespace-pre"><code>{skillData.code}</code></pre>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-             )}
+            {/* Las habilidades creadas se muestran en la pestaña "Apps" → "Skills" */}
          </div>
      );
- }
+}
 
 // --- Alma Tab ---
 function AlmaTab({ agent }: { agent: Agent }) {
@@ -1035,6 +1071,18 @@ function AlmaTab({ agent }: { agent: Agent }) {
                     )}
                 </div>
             </section>
+
+            {/* Reflexiones Recientes */}
+            {alma.reflexiones && alma.reflexiones.length > 0 && (
+                <section className="space-y-3">
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-3">Reflexiones Recientes</h3>
+                    <div className="glass-card p-3 rounded-lg border border-white/5 bg-white/[0.02]">
+                        {alma.reflexiones.slice(-3).reverse().map((r: any, i: number) => (
+                            <p key={i} className="text-[10px] text-gray-300 italic mb-1">• {r.descripcion || r.leccion || r.texto || String(r)}</p>
+                        ))}
+                    </div>
+                </section>
+            )}
 
             {/* Filosofía y Relación con el Arquitecto */}
             <section className="space-y-3">

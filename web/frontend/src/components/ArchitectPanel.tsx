@@ -5,7 +5,7 @@ import {
     CloudRain, Sun, CloudLightning, Zap, TrendingUp, TrendingDown,
     Skull, Heart, X, Coins, BookOpen, Users, Flag, Send, MessageSquare,
     Globe, Radio, MapPlus, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Wallet,
-    RefreshCw, CheckCircle2, AlertCircle
+    RefreshCw, CheckCircle2, AlertCircle, Clock, FastForward, Gauge
 } from "lucide-react";
 import { motion } from "framer-motion";
 import useGameStore from "@/store/useGameStore";
@@ -158,6 +158,29 @@ export default function ArchitectPanel({ userId, onClose }: ArchitectPanelProps)
         }
     };
 
+    const handleSetSpeed = async (ritmo: number) => {
+        setStatus({ type: 'loading', msg: 'Ajustando Tiempo...' });
+        try {
+            const response = await fetch(getHttpUrl(`/game/speed`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: userId,
+                    ritmo: ritmo
+                })
+            });
+
+            if (response.ok) {
+                setStatus({ type: 'success', msg: 'Relatividad Ajustada' });
+                setTimeout(() => setStatus({ type: 'idle', msg: '' }), 3000);
+            } else {
+                setStatus({ type: 'error', msg: 'Error al cambiar velocidad' });
+            }
+        } catch (error) {
+            setStatus({ type: 'error', msg: 'Fallo en el control temporal' });
+        }
+    };
+
     return (
         <div className="flex flex-col h-full space-y-8 pb-8">
             {/* Mensajería Divina */}
@@ -175,7 +198,7 @@ export default function ArchitectPanel({ userId, onClose }: ArchitectPanelProps)
                             disabled={!selectedAgentId}
                             className={`flex-1 py-2 text-[9px] font-bold uppercase rounded-lg transition-all ${!isGlobalMessage ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'text-gray-500'} disabled:opacity-20`}
                         >
-                            Privado {selectedAgent && `(${selectedAgent.name})`}
+                            Privado {selectedAgent && `(${selectedAgent?.identidad?.nombre})`}
                         </button>
                     </div>
 
@@ -183,7 +206,7 @@ export default function ArchitectPanel({ userId, onClose }: ArchitectPanelProps)
                         <textarea
                             value={globalMessage}
                             onChange={(e) => setGlobalMessage(e.target.value)}
-                            placeholder={isGlobalMessage ? "Escribe un mensaje para todos los agentes..." : `Mensaje privado para ${selectedAgent?.name}...`}
+                            placeholder={isGlobalMessage ? "Escribe un mensaje para todos los agentes..." : `Mensaje privado para ${selectedAgent?.identidad?.nombre}...`}
                             className="w-full bg-black/60 border border-white/10 rounded-2xl p-4 text-xs text-white placeholder:text-gray-700 focus:border-indigo-500/40 focus:outline-none transition-all resize-none h-24 font-mono"
                         />
                         <button
@@ -223,6 +246,36 @@ export default function ArchitectPanel({ userId, onClose }: ArchitectPanelProps)
                         label="Desatar Plaga"
                         onClick={() => sendGodAction('TRIGGER_EVENT', { event: 'plague' })}
                         color="hover:text-red-500"
+                    />
+                </div>
+            </Section>
+
+            {/* Control Temporal */}
+            <Section title="Dilatación Temporal" icon={Clock}>
+                <div className="grid grid-cols-4 gap-2">
+                    <ActionButton
+                        icon={Zap}
+                        label="Máximo"
+                        onClick={() => handleSetSpeed(0.0)}
+                        color="hover:text-cyan-400"
+                    />
+                    <ActionButton
+                        icon={FastForward}
+                        label="Rápido"
+                        onClick={() => handleSetSpeed(0.1)}
+                        color="hover:text-indigo-400"
+                    />
+                    <ActionButton
+                        icon={Gauge}
+                        label="Normal"
+                        onClick={() => handleSetSpeed(0.5)}
+                        color="hover:text-green-400"
+                    />
+                    <ActionButton
+                        icon={Clock}
+                        label="Lento"
+                        onClick={() => handleSetSpeed(1.5)}
+                        color="hover:text-orange-400"
                     />
                 </div>
             </Section>

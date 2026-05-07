@@ -97,5 +97,89 @@ export default function SoundManager() {
         }
     }, [logs]);
 
-    return null;
+    // --- Playlist de música de fondo (reproducción secuencial) ---
+    const PLAYLIST = [
+        '/background-music.mp3',
+        '/village-theme.mp3',
+        '/menu-theme.mp3',
+    ];
+
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const musicStartedRef = useRef(false);
+    const currentTrackRef = useRef(0);
+
+    // Carga y configura una pista de la playlist
+    const loadTrack = (index: number) => {
+        if (!audioRef.current) return;
+        const track = PLAYLIST[index % PLAYLIST.length];
+        audioRef.current.src = track;
+        audioRef.current.load();
+        audioRef.current.volume = 0.15;
+    };
+
+    // Avanza a la siguiente pista al terminar la actual
+    const handleEnded = () => {
+        currentTrackRef.current = (currentTrackRef.current + 1) % PLAYLIST.length;
+        loadTrack(currentTrackRef.current);
+        audioRef.current?.play().catch(() => {});
+    };
+
+    // Inicializar audio de fondo con la primera pista
+    useEffect(() => {
+        if (!audioRef.current) {
+            const audio = new Audio();
+            audio.preload = 'auto';
+            audio.volume = 0.15;
+            audio.addEventListener('ended', handleEnded);
+            audioRef.current = audio;
+            loadTrack(0);
+        }
+        return () => {
+            if (audioRef.current) {
+                audioRef.current.removeEventListener('ended', handleEnded);
+                audioRef.current.pause();
+                audioRef.current.src = '';
+                audioRef.current = null;
+                musicStartedRef.current = false;
+            }
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Reproducir cuando hay conexión, reintentar si falla por política de autoplay
+    useEffect(() => {
+        if (!audioRef.current) return;
+
+        const tryPlay = () => {
+            if (audioRef.current && !musicStartedRef.current) {
+                audioRef.current.play().then(() => {
+                    musicStartedRef.current = true;
+                }).catch(e => {
+                    console.log("Background music autoplay blocked, will retry on user interaction:", e);
+                    const handleInteraction = () => {
+                        if (audioRef.current) {
+                            audioRef.current.play().then(() => {
+                                musicStartedRef.current = true;
+                            }).catch(() => {});
+                        }
+                        document.removeEventListener('click', handleInteraction);
+                        document.removeEventListener('keydown', handleInteraction);
+                    };
+                    document.addEventListener('click', handleInteraction, { once: true });
+                    document.addEventListener('keydown', handleInteraction, { once: true });
+                });
+            }
+        };
+
+        if (isConnected) {
+            tryPlay();
+        } else {
+            if (audioRef.current) {
+                audioRef.current.pause();
+                musicStartedRef.current = false;
+            }
+        }
+    }, [isConnected]);
+
+
 }

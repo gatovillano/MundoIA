@@ -2,12 +2,23 @@ import random
 import math
 import time
 import threading
-import matplotlib
+try:
+    import matplotlib
+    matplotlib.use("Agg")  # Backend para entornos sin interfaz gráfica
+    import matplotlib.pyplot as plt
+except Exception:
+    matplotlib = None
+    plt = None
 
-matplotlib.use("Agg")  # Backend para entornos sin interfaz gráfica
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
+try:
+    import pandas as pd
+except Exception:
+    pd = None
+
+try:
+    import numpy as np
+except Exception:
+    np = None
 from systems.memoria import MemoriaGrafica
 from agents.cerebro_langgraph import CerebroAvanzado
 from agents.cerebro_llm import cerebro_llm
@@ -20,6 +31,8 @@ import bcrypt
 import uuid
 import psycopg2
 from typing import List, Dict, Any, Optional
+from types import SimpleNamespace
+from collections import defaultdict
 from datetime import datetime, date
 from psycopg2.extras import Json as _Json
 
@@ -27,11 +40,13 @@ from systems.herramientas import herramientas
 from agents.alma import generar_alma_inicial
 from agents.identity_system import generar_identidad_inicial, SistemaIdentidades
 from systems.cronicas import SistemaCronicas, TipoCronica
+from systems.eventos_emergentes import SistemaEventosEmergentes
 from core.skills_manager import skill_manager
 from core.skill_factory import SkillFactory
 from systems.sistema_misiones import SistemaMisiones
 from core.world_system import WorldSystem, WorldTile, TerrainType
 from systems.historia import LibretaHistoria
+from core.entities.faction import Civilizacion
 
 # Alias para compatibilidad con el sistema de mundo
 Tile = WorldTile
@@ -47,6 +62,7 @@ class WeatherType:
 
 # Inicializar SkillFactory global
 skill_factory = SkillFactory(skill_manager)
+from core.entities.agent import Agente
 from systems.sistema_misiones import SistemaMisiones, Mision
 from core.action_validator import validar_accion, obtener_accion_fallback
 from systems.optimizador import DecisionOptimizer
@@ -92,6 +108,8 @@ def synchronized(func):
 
 
 class DatabaseManager:
+    _initialized = False
+
     def __init__(self):
         self.conn_params = {
             "host": os.getenv("DB_HOST", "localhost"),
@@ -116,147 +134,107 @@ class DatabaseManager:
             return False
 
     def initialize_db(self):
-        """Inicializa las tablas de la base de datos usando schema.sql y create_users_table.sql"""
+        """Inicializa las tablas de la base de datos usando restore_schema.sql"""
         if not self.conn:
             return False
+        
+        if DatabaseManager._initialized:
+            return True
+
         try:
-            for schema_file in ["schema.sql", "create_users_table.sql"]:
-                schema_path = os.path.join(
-                    os.path.dirname(os.path.dirname(__file__)), "data", schema_file
-                )
-                if os.path.exists(schema_path):
-                    with open(schema_path, "r") as f:
-                        schema_sql = f.read()
+            # El directorio base es el que contiene MundoIA
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            schema_path = os.path.join(base_dir, "scripts", "restore_schema.sql")
+            
+            if os.path.exists(schema_path):
+                with open(schema_path, "r") as f:
+                    schema_sql = f.read()
 
-                    logger.info(f"📜 Intentando ejecutar esquema desde: {schema_path}")
-                    with self.conn.cursor() as cur:
-                        cur.execute(schema_sql)
-                        # Migraciones BDI
-                        cur.execute(
-                            "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS beliefs JSONB DEFAULT '[]';"
-                        )
-                        cur.execute(
-                            "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS desires JSONB DEFAULT '[]';"
-                        )
-                        cur.execute(
-                            "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS intentions JSONB DEFAULT '[]';"
-                        )
-                    logger.info(f"✅ Esquema {schema_file} verificado/inicializado.")
-                else:
-                    logger.warning(
-                        f"⚠️ No se encontró {schema_file} en {os.path.dirname(__file__)}"
-                    )
+                logger.info(f"📜 Ejecutando esquema desde: {schema_path}")
+                with self.conn.cursor() as cur:
+                    cur.execute(schema_sql)
+                logger.info("✅ Esquema verificado/inicializado.")
+            else:
+                logger.warning(f"⚠️ No se encontró restore_schema.sql en {schema_path}")
 
-            # Migración automática: Añadir columna memoria_mensajes si no existe
+            # Migraciones automáticas adicionales para asegurar que todas las columnas existan
             try:
                 with self.conn.cursor() as cur:
-                    cur.execute(
-                        "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS memoria_mensajes JSONB DEFAULT '[]';"
-                    )
-                    cur.execute(
-                        "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS skills JSONB DEFAULT '{}';"
-                    )
-                    cur.execute(
-                        "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS skill_factor FLOAT DEFAULT 0.3;"
-                    )
-                    cur.execute(
-                        "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS memoria_persistente_data JSONB DEFAULT '{}';"
-                    )
-                    cur.execute(
-                        "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS alma JSONB DEFAULT '{}';"
-                    )
-                    cur.execute(
-                        "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS identidad JSONB DEFAULT '{}';"
-                    )
-                    cur.execute(
-                        "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS heartbeat_config JSONB DEFAULT '{}';"
-                    )
-                    cur.execute(
-                        "ALTER TABLE agentes ADD COLUMN IF NOT EXISTS apps JSONB DEFAULT '{}';"
-                    )
-                    # Migración para logs
-                    cur.execute(
-                        "ALTER TABLE logs_simulacion ADD COLUMN IF NOT EXISTS subtitulos TEXT;"
-                    )
-                    cur.execute(
-                        "ALTER TABLE logs_simulacion ADD COLUMN IF NOT EXISTS tts_text TEXT;"
-                    )
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS alma JSONB DEFAULT '{}';")
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS identidad JSONB DEFAULT '{}';")
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS apps JSONB DEFAULT '{}';")
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS beliefs JSONB DEFAULT '[]';")
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS desires JSONB DEFAULT '[]';")
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS intentions JSONB DEFAULT '[]';")
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS memoria_mensajes JSONB DEFAULT '[]';")
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS skills JSONB DEFAULT '{}';")
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS skill_factor FLOAT DEFAULT 0.3;")
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS memoria_persistente_data JSONB DEFAULT '{}';")
+                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS heartbeat_config JSONB DEFAULT '{}';")
+                    
+                    # Aumentar tamaño de user_id para soportar slots largos
+                    tables_to_alter = [
+                        "agentes", "civilizaciones", "memorias", "chat_mensajes", 
+                        "logs_simulacion", "propuestas", "misiones", "estado_mundo", 
+                        "instituciones", "puntajes_usuarios", "posts_sociales", "eventos_globales"
+                    ]
+                    for table in tables_to_alter:
+                        try:
+                            cur.execute(f"ALTER TABLE {table} ALTER COLUMN user_id TYPE VARCHAR(100);")
+                        except Exception:
+                            pass
+                    
+                    # También en la tabla usuarios por si acaso
+                    try:
+                        cur.execute("ALTER TABLE usuarios ALTER COLUMN id TYPE VARCHAR(100);")
+                    except Exception:
+                        pass
+                    
+                    # Migraciones para logs y estado_mundo
+                    cur.execute("ALTER TABLE logs_simulacion ADD COLUMN IF NOT EXISTS subtitulos TEXT;")
+                    cur.execute("ALTER TABLE logs_simulacion ADD COLUMN IF NOT EXISTS tts_text TEXT;")
+                    cur.execute("ALTER TABLE estado_mundo ADD COLUMN IF NOT EXISTS social_feed JSONB DEFAULT '{}';")
 
-                    # Migración para estado_mundo - agregar columna social_feed
-                    cur.execute(
-                        "ALTER TABLE estado_mundo ADD COLUMN IF NOT EXISTS social_feed JSONB DEFAULT '{}';"
-                    )
+                    # Añadir columna puntos a instituciones si no existe (migración ligera)
+                    cur.execute("ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS puntos numeric DEFAULT 0;")
 
-                    # --- MIGRACIÓN CRÍTICA: CLAVES PRIMARIAS COMPUESTAS (Para evitar filtraciones entre usuarios) ---
-                    # 1. Agentes
-                    cur.execute("""
-                       DO $$ BEGIN
-                           IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agentes_pkey' AND contype = 'p') THEN
-                               -- Verificar si ya es compuesta (id, user_id)
-                               IF NOT EXISTS (
-                                   SELECT 1 FROM information_schema.key_column_usage 
-                                   WHERE table_name = 'agentes' AND constraint_name = 'agentes_pkey' AND column_name = 'user_id'
-                               ) THEN
-                                   -- LIMPIEZA PREVIA: Borrar huérfanos que impedirían la FK compuesta
-                                   DELETE FROM memorias m 
-                                   WHERE NOT EXISTS (SELECT 1 FROM agentes a WHERE a.id = m.agente_fuente AND a.user_id = m.user_id)
-                                   OR NOT EXISTS (SELECT 1 FROM agentes a WHERE a.id = m.agente_objetivo AND a.user_id = m.user_id);
-                                   
-                                   DELETE FROM chat_mensajes c
-                                   WHERE NOT EXISTS (SELECT 1 FROM agentes a WHERE a.id = c.agent_id AND a.user_id = c.user_id);
+                    # Migración Lider -> Vocero
+                    try:
+                        # Si existe lider_id pero no vocero_id, renombrar
+                        cur.execute("""
+                            DO $$ 
+                            BEGIN 
+                                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='instituciones' AND column_name='lider_id') 
+                                AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='instituciones' AND column_name='vocero_id') THEN
+                                    ALTER TABLE instituciones RENAME COLUMN lider_id TO vocero_id;
+                                END IF;
+                            END $$;
+                        """)
+                        # Asegurar que vocero_id existe
+                        cur.execute("ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS vocero_id VARCHAR(50);")
+                    except Exception as e:
+                        logger.warning(f"Error migrando lider_id a vocero_id: {e}")
 
-                                   ALTER TABLE memorias DROP CONSTRAINT IF EXISTS memorias_agente_fuente_fkey;
-                                   ALTER TABLE memorias DROP CONSTRAINT IF EXISTS memorias_agente_objetivo_fkey;
-                                   ALTER TABLE chat_mensajes DROP CONSTRAINT IF EXISTS chat_mensajes_agent_id_fkey;
-                                   
-                                   ALTER TABLE agentes DROP CONSTRAINT agentes_pkey;
-                                   ALTER TABLE agentes ADD PRIMARY KEY (id, user_id);
-                                   
-                                   -- Re-enlazar con FK compuestas
-                                   ALTER TABLE memorias ADD FOREIGN KEY (agente_fuente, user_id) REFERENCES agentes(id, user_id);
-                                   ALTER TABLE memorias ADD FOREIGN KEY (agente_objetivo, user_id) REFERENCES agentes(id, user_id);
-                                   ALTER TABLE chat_mensajes ADD FOREIGN KEY (agent_id, user_id) REFERENCES agentes(id, user_id);
-                               END IF;
-                           END IF;
-                       END $$;
-                   """)
-
-                    # 2. Civilizaciones
-                    cur.execute("""
-                       DO $$ BEGIN
-                           IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'civilizaciones_pkey' AND contype = 'p') THEN
-                               IF NOT EXISTS (
-                                   SELECT 1 FROM information_schema.key_column_usage 
-                                   WHERE table_name = 'civilizaciones' AND constraint_name = 'civilizaciones_pkey' AND column_name = 'user_id'
-                               ) THEN
-                                   ALTER TABLE civilizaciones DROP CONSTRAINT civilizaciones_pkey;
-                                   ALTER TABLE civilizaciones ADD PRIMARY KEY (id, user_id);
-                               END IF;
-                           END IF;
-                       END $$;
-                   """)
-
-                    # 3. Instituciones
-                    cur.execute("""
-                       CREATE TABLE IF NOT EXISTS instituciones (
-                           id VARCHAR(100),
-                           user_id VARCHAR(50) REFERENCES usuarios(id),
-                           nombre VARCHAR(100) NOT NULL,
-                           tipo VARCHAR(50),
-                           fundador_id VARCHAR(50),
-                           lider_id VARCHAR(50),
-                           miembros JSONB DEFAULT '[]',
-                           x INTEGER,
-                           y INTEGER,
-                           recursos FLOAT DEFAULT 0.0,
-                           nivel INTEGER DEFAULT 1,
-                           descripcion TEXT,
-                           timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                           PRIMARY KEY (id, user_id)
-                       );
-                   """)
+                    # FIX: Asegurar que propuestas.id tenga un default si no es SERIAL (evita error null value)
+                    try:
+                        cur.execute("""
+                            DO $$ 
+                            BEGIN 
+                                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='propuestas') THEN
+                                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                                   WHERE table_name='propuestas' AND column_name='id' 
+                                                   AND column_default IS NOT NULL) THEN
+                                        CREATE SEQUENCE IF NOT EXISTS propuestas_id_seq;
+                                        ALTER TABLE propuestas ALTER COLUMN id SET DEFAULT nextval('propuestas_id_seq')::text;
+                                    END IF;
+                                END IF;
+                            END $$;
+                        """)
+                    except Exception as e:
+                        logger.warning(f"Error asegurando default en propuestas.id: {e}")
 
                     self.conn.commit()
+                    DatabaseManager._initialized = True
             except Exception as e:
                 logger.warning(f"Nota: Migración automática o error: {e}")
                 self.conn.rollback()
@@ -351,6 +329,8 @@ class DatabaseManager:
                 cur.execute("DELETE FROM propuestas WHERE user_id = %s;", (user_id,))
                 # 4. Misiones activas del usuario
                 cur.execute("DELETE FROM misiones WHERE user_id = %s;", (user_id,))
+                # 4.5. Posts sociales (Red Social)
+                cur.execute("DELETE FROM posts_sociales WHERE user_id = %s;", (user_id,))
                 # 5. Agentes (después de borrar memorias que los referencian)
                 cur.execute("DELETE FROM agentes WHERE user_id = %s;", (user_id,))
                 # 6. Civilizaciones/grupos
@@ -361,8 +341,19 @@ class DatabaseManager:
                 cur.execute("DELETE FROM estado_mundo WHERE user_id = %s;", (user_id,))
                 # NOTA: No borramos 'usuarios' ni 'puntajes_usuarios' — el historial del jugador se conserva
             self.conn.commit()
+
+            # 8. Limpiar archivos de backup locales
+            try:
+                for suffix in ["mapa", "agentes"]:
+                    filename = f"{suffix}_backup_{user_id}.json"
+                    if os.path.exists(filename):
+                        os.remove(filename)
+                        logger.info(f"🗑️ Backup local eliminado: {filename}")
+            except Exception as fe:
+                logger.warning(f"⚠️ Error eliminando archivos de backup: {fe}")
+
             logger.info(
-                f"🗑️ Datos de la partida de {user_id} limpiados correctamente de la DB."
+                f"🗑️ Datos de la partida de {user_id} limpiados correctamente (DB + Backups)."
             )
             return True
         except Exception as e:
@@ -576,6 +567,25 @@ class DatabaseManager:
         result = self.execute(query, (user_id,))
         return result[0] if result else None
 
+    def get_user_games(self, base_user_id):
+        query = "SELECT user_id, paso_actual FROM estado_mundo WHERE user_id LIKE %s;"
+        pattern = f"{base_user_id}_%"
+        result = self.execute(query, (pattern,))
+        if not result:
+            # Maybe the user has an old game without the prefix?
+            old = self.get_world_state(base_user_id)
+            if old:
+                return [{"id": base_user_id, "paso_actual": old[0]}]
+            return []
+        
+        games = []
+        for r in result:
+            games.append({
+                "id": r[0],
+                "paso_actual": r[1]
+            })
+        return games
+
     def get_memories(self, agent_id, user_id):
         query = "SELECT agente_objetivo, tipo_relacion, fuerza, recursos_percibidos, grupo_percibido FROM memorias WHERE agente_fuente = %s AND user_id = %s;"
         return self.execute(query, (str(agent_id), user_id))
@@ -599,12 +609,13 @@ class DatabaseManager:
             WHERE id = %s AND user_id = %s;
             """
             self.execute(query, (votos, estado, titulo, contenido, db_id, user_id))
+            return db_id
         else:
             query = """
             INSERT INTO propuestas (user_id, grupo_id, proponente_id, texto, tipo, votos, estado, paso_creacion, titulo, contenido)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
             """
-            self.execute(
+            res = self.execute(
                 query,
                 (
                     user_id,
@@ -619,6 +630,9 @@ class DatabaseManager:
                     contenido,
                 ),
             )
+            if res and isinstance(res, list) and len(res) > 0:
+                return res[0][0]
+            return None
 
     def get_proposals(self, user_id):
         """Obtiene todas las propuestas para un usuario."""
@@ -734,7 +748,7 @@ class DatabaseManager:
         """Guarda un mensaje de chat en la base de datos."""
         query = """
         INSERT INTO chat_mensajes (user_id, agent_id, role, content, timestamp_utc)
-        VALUES (%s, %s, %s, %s, %s);
+        VALUES (%s, %s, %s, %s, TO_TIMESTAMP(%s));
         """
         self.execute(query, (user_id, agent_id, role, content, timestamp_utc))
 
@@ -757,12 +771,12 @@ class DatabaseManager:
     def save_institution(self, inst, user_id):
         """Guarda una institución en la base de datos."""
         query = """
-        INSERT INTO instituciones (id, user_id, nombre, tipo, fundador_id, lider_id, miembros, x, y, recursos, nivel, descripcion)
+        INSERT INTO instituciones (id, user_id, nombre, tipo, fundador_id, vocero_id, miembros, x, y, recursos, nivel, descripcion)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (id, user_id) DO UPDATE SET
             nombre = EXCLUDED.nombre,
             tipo = EXCLUDED.tipo,
-            lider_id = EXCLUDED.lider_id,
+            vocero_id = EXCLUDED.vocero_id,
             miembros = EXCLUDED.miembros,
             recursos = EXCLUDED.recursos,
             nivel = EXCLUDED.nivel,
@@ -776,7 +790,7 @@ class DatabaseManager:
                 inst.nombre,
                 inst.tipo,
                 inst.fundador_id,
-                inst.lider_id,
+                inst.vocero_id,
                 Json(inst.miembros),
                 inst.x,
                 inst.y,
@@ -788,7 +802,7 @@ class DatabaseManager:
 
     def get_institutions(self, user_id):
         """Recupera todas las instituciones de un usuario."""
-        query = "SELECT id, nombre, tipo, fundador_id, lider_id, miembros, x, y, recursos, nivel, descripcion FROM instituciones WHERE user_id = %s;"
+        query = "SELECT id, nombre, tipo, fundador_id, vocero_id, miembros, x, y, recursos, nivel, descripcion FROM instituciones WHERE user_id = %s;"
         return self.execute(query, (user_id,))
 
 
@@ -812,7 +826,7 @@ class Civilizacion:
         self.territorio = []  # Lista de (x, y)
         self.tecnologias = []
         self.leyes = []
-        self.tipo = "GRUPO"  # NUEVO: "GRUPO" o "CIVILIZACION"
+        self.tipo = "GRUPO"  # "GRUPO", "PUEBLO", "CIUDAD"
 
     def __getstate__(self):
         """Define qué atributos de Civilizacion se serializan."""
@@ -870,7 +884,7 @@ class Institucion:
             tipo  # "EDUCATIVA", "FINANCIERA", "SANITARIA", "CIENTIFICA", "RELIGIOSA"
         )
         self.fundador_id = fundador_id
-        self.lider_id = fundador_id
+        self.vocero_id = fundador_id
         self.miembros = [fundador_id]
         self.x = x
         self.y = y
@@ -885,7 +899,7 @@ class Institucion:
             "nombre": self.nombre,
             "tipo": self.tipo,
             "fundador_id": self.fundador_id,
-            "lider_id": self.lider_id,
+            "vocero_id": self.vocero_id,
             "miembros": self.miembros,
             "x": self.x,
             "y": self.y,
@@ -909,7 +923,7 @@ class Institucion:
             y=data.get("y", 0),
             user_id=data.get("user_id"),
         )
-        inst.lider_id = data.get("lider_id", inst.fundador_id)
+        inst.vocero_id = data.get("vocero_id", inst.fundador_id)
         inst.miembros = data.get("miembros", [inst.fundador_id])
         inst.recursos = data.get("recursos", 0.0)
         inst.nivel = data.get("nivel", 1)
@@ -927,7 +941,22 @@ class Post:
         self.likes = 0
         self.likes_por = []
         self.comentarios = 0
-        self.timestamp = timestamp
+        
+        # Estandarizar timestamp a float (Unix) para evitar TypeErrors al ordenar
+        if isinstance(timestamp, datetime):
+            self.timestamp = timestamp.timestamp()
+        elif isinstance(timestamp, str):
+            try:
+                # Intentar parsear ISO format
+                self.timestamp = datetime.fromisoformat(timestamp).timestamp()
+            except Exception:
+                self.timestamp = 0.0
+        else:
+            try:
+                self.timestamp = float(timestamp if timestamp is not None else 0.0)
+            except Exception:
+                self.timestamp = 0.0
+
 
 
 class InterestRecSys:
@@ -937,12 +966,15 @@ class InterestRecSys:
 
 
 class SocialRecSys:
-    def __init__(self, db, user_id):
+    def __init__(self, db, user_id, load_from_db: bool = True, modelo=None):
         self.db = db
         self.user_id = user_id
+        self.modelo = modelo
         self.interest_recsys = InterestRecSys()
         self.seguidos = {}  # follower_id -> set(followed_ids)
-        self._cargar_posts_desde_db()
+        # Sólo cargar posts desde la BD si se solicita explícitamente
+        if load_from_db:
+            self._cargar_posts_desde_db()
 
     def _cargar_posts_desde_db(self):
         """Carga posts desde la base de datos."""
@@ -953,7 +985,7 @@ class SocialRecSys:
             SELECT id, autor_id, contenido, tipo, temas, timestamp, likes, likes_por, comentarios
             FROM posts_sociales
             WHERE user_id = %s
-            ORDER BY timestamp ASC
+            ORDER BY timestamp DESC
         """, (self.user_id,))
         if not rows:
             return
@@ -991,8 +1023,16 @@ class SocialRecSys:
                 comentarios = []
             
             post = Post(post_id, autor_id, contenido, tipo, temas, timestamp)
+            # Etiquetar el post con la partida (user_id) para facilitar el filtrado en frontend
+            try:
+                post.partida_id = self.user_id
+            except Exception:
+                pass
             post.likes = likes
             post.likes_por = likes_por
+            post.comentarios = len(comentarios) if comentarios is not None else 0
+            # Sincronizar detalle para el frontend
+            post.comentarios_detalle = comentarios
             self.interest_recsys.posts[post_id] = post
             self.interest_recsys.comentarios[post_id] = comentarios
 
@@ -1001,24 +1041,62 @@ class SocialRecSys:
         import json
         post_id = f"post_{uuid.uuid4().hex[:12]}"
         temas = temas or []
-        post = Post(post_id, autor_id, contenido, tipo, temas, timestamp or 0)
+        post = Post(post_id, autor_id, contenido, tipo, temas, timestamp or time.time())
+        # Registrar a qué partida pertenece este post
+        try:
+            post.partida_id = user_id
+        except Exception:
+            pass
         self.interest_recsys.posts[post_id] = post
 
         if self.db:
             # Persistir en DB con ON CONFLICT para idempotencia
             result = self.db.execute("""
                 INSERT INTO posts_sociales (id, user_id, autor_id, contenido, tipo, temas, timestamp, likes, likes_por, comentarios)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, TO_TIMESTAMP(%s), %s, %s, %s)
                 ON CONFLICT (id, user_id) DO UPDATE SET
                     contenido = EXCLUDED.contenido,
                     timestamp = EXCLUDED.timestamp
-            """, (post_id, user_id, autor_id, contenido, tipo, json.dumps(temas), timestamp or 0, 0, json.dumps([]), json.dumps([])))
+            """, (post_id, user_id, autor_id, contenido, tipo, json.dumps(temas), post.timestamp, 0, json.dumps([]), json.dumps([])))
             if result is False:
                 print(f"❌ [SOCIAL] Error persistiendo post {post_id} en DB")
             else:
                 print(f"✅ [SOCIAL] Post {post_id} de {autor_id} persistido en DB")
 
+        # Emitir un evento en tiempo real para que el frontend reciba explícitamente
+        # la creación de un post (evita confundir logs con posts sociales).
+        try:
+            if hasattr(self, "modelo") and self.modelo and hasattr(self.modelo, "_emit_realtime_event"):
+                payload_post = {
+                    "id": post.id,
+                    "autor_id": post.autor_id,
+                    "contenido": post.contenido,
+                    "tipo": post.tipo,
+                    "temas": post.temas,
+                    "likes": getattr(post, "likes", 0),
+                    "likes_por": getattr(post, "likes_por", []),
+                    "comentarios": getattr(post, "comentarios", 0),
+                    "timestamp": getattr(post, "timestamp", 0),
+                    "partida_id": getattr(post, "partida_id", self.user_id),
+                }
+                try:
+                    # action: new_post to differentiate from other social events
+                    self.modelo._emit_realtime_event("social_event", {"action": "new_post", "post": payload_post})
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         return post
+
+    def publicar(self, **kwargs):
+        """Alias para crear_post con mapeo de argumentos si es necesario."""
+        uid = kwargs.get("user_id", self.user_id)
+        aid = kwargs.get("autor_id") or kwargs.get("agente_id")
+        cont = kwargs.get("contenido")
+        tipo = kwargs.get("tipo", "opinion")
+        temas = kwargs.get("temas", [])
+        return self.crear_post(uid, aid, cont, tipo, temas)
 
     def likear_post(self, post_id, liker_id):
         import json
@@ -1026,21 +1104,56 @@ class SocialRecSys:
         if post and liker_id not in post.likes_por:
             post.likes += 1
             post.likes_por.append(liker_id)
-            # Actualizar en DB (solo usar post_id, no user_id)
+            # Actualizar en DB
             if self.db:
                 self.db.execute("""
                     UPDATE posts_sociales
                     SET likes = %s, likes_por = %s
-                    WHERE id = %s
-                """, (post.likes, json.dumps(post.likes_por), post_id))
+                    WHERE id = %s AND user_id = %s
+                """, (post.likes, json.dumps(post.likes_por), post_id, self.user_id))
             print(f"✅ [LIKE] Post {post_id} liked by {liker_id}. Total likes: {post.likes}")
+
+            # Emitir evento en tiempo real para actualizar feed inmediatamente
+            try:
+                if hasattr(self, "modelo") and self.modelo:
+                    if hasattr(self.modelo, "_emit_realtime_event"):
+                        payload_like = {
+                            "action": "like",
+                            "post_id": post_id,
+                            "liker_id": liker_id,
+                            "likes": post.likes,
+                            "likes_por": post.likes_por,
+                        }
+                        self.modelo._emit_realtime_event("social_event", payload_like)
+                    
+                    if hasattr(self.modelo, "difundir_social_feed"):
+                        self.modelo.difundir_social_feed()
+            except Exception:
+                pass
+
             return True
-        else:
-            if not post:
-                print(f"⚠️ [LIKE] Post {post_id} not found in memory")
-            elif liker_id in post.likes_por:
-                print(f"⚠️ [LIKE] {liker_id} already liked post {post_id}")
         return False
+
+    def unlikear_post(self, post_id, liker_id):
+        import json
+        post = self.interest_recsys.posts.get(post_id)
+        if post and liker_id in post.likes_por:
+            post.likes = max(0, post.likes - 1)
+            post.likes_por.remove(liker_id)
+            if self.db:
+                self.db.execute("""
+                    UPDATE posts_sociales
+                    SET likes = %s, likes_por = %s
+                    WHERE id = %s AND user_id = %s
+                """, (post.likes, json.dumps(post.likes_por), post_id, self.user_id))
+            print(f"✅ [UNLIKE] Post {post_id} unliked by {liker_id}. Total likes: {post.likes}")
+            return True
+        return False
+
+    def likear(self, post_id, agente_id=None, liker_id=None):
+        """Alias para likear_post."""
+        uid = liker_id or agente_id
+        return self.likear_post(post_id, uid)
 
     def follow(self, follower_id, followed_id):
         if follower_id not in self.seguidos:
@@ -1058,24 +1171,56 @@ class SocialRecSys:
         import json
         if post_id not in self.interest_recsys.comentarios:
             self.interest_recsys.comentarios[post_id] = []
-        comentario = {
+        comentario_data = {
             "id": f"comment_{len(self.interest_recsys.comentarios[post_id])}",
             "autor_id": autor_id,
             "contenido": contenido,
-            "timestamp": 0,
+            "timestamp": time.time(),
         }
-        self.interest_recsys.comentarios[post_id].append(comentario)
+        self.interest_recsys.comentarios[post_id].append(comentario_data)
+
+        # Incrementar contador en el objeto post
         post = self.interest_recsys.posts.get(post_id)
         if post:
-            post.comentarios += 1
-        
+            post.comentarios = (getattr(post, "comentarios", 0) or 0) + 1
+            # Asegurar que comentarios_detalle exista para el frontend
+            if not hasattr(post, "comentarios_detalle") or post.comentarios_detalle is None:
+                post.comentarios_detalle = []
+            post.comentarios_detalle.append(comentario_data)
+
+        if hasattr(self, "modelo") and self.modelo and hasattr(self.modelo, "difundir_social_feed"):
+            self.modelo.difundir_social_feed()
+
         # Actualizar comentarios en DB
         if self.db:
-            self.db.execute("""
-                UPDATE posts_sociales
-                SET comentarios = %s
-                WHERE id = %s AND user_id = %s
-            """, (json.dumps(self.interest_recsys.comentarios[post_id]), post_id, self.user_id))
+            try:
+                self.db.execute("""
+                    UPDATE posts_sociales
+                    SET comentarios = %s
+                    WHERE id = %s AND user_id = %s
+                """, (json.dumps(self.interest_recsys.comentarios[post_id]), post_id, self.user_id))
+            except Exception as e:
+                print(f"Error actualizando comentarios en DB: {e}")
+
+        # Emitir evento en tiempo real para actualizar feed inmediatamente
+        try:
+            if hasattr(self, "modelo") and self.modelo and hasattr(self.modelo, "_emit_realtime_event"):
+                payload_comment = {
+                    "action": "comment",
+                    "post_id": post_id,
+                    "autor_id": autor_id,
+                    "contenido": contenido,
+                    "comentarios": post.comentarios if post else 0,
+                    "comment_id": comentario_data["id"],
+                    "post": {
+                        "id": post.id if post else post_id,
+                        "comentarios": post.comentarios if post else 0,
+                        "comentarios_detalle": post.comentarios_detalle if post else []
+                    } if post else None
+                }
+                self.modelo._emit_realtime_event("social_event", payload_comment)
+        except Exception as e:
+            print(f"Error emitiendo evento social: {e}")
 
         # Retornar objeto similar a Comentario
         class Comentario:
@@ -1085,11 +1230,23 @@ class SocialRecSys:
                 self.contenido = data["contenido"]
                 self.timestamp = data["timestamp"]
 
-        return Comentario(comentario)
+        return Comentario(comentario_data)
+
+    def comentar(self, post_id, autor_id=None, agente_id=None, contenido=""):
+        """Alias para agregar_comentario."""
+        aid = autor_id or agente_id
+        return self.agregar_comentario(post_id, aid, contenido)
 
     def get_feed_hibrido(self, agente, paso_actual, limite=10):
-        # Implementación básica: devolver todos los posts
+        # Obtener todos los posts
         posts = list(self.interest_recsys.posts.values())
+        # Ordenar por relevancia a los intereses del agente y luego por timestamp (más reciente primero)
+        # Relevancia: número de temas en común entre el post y los intereses del agente
+        def relevance_score(post):
+            post_temas = set(getattr(post, 'temas', []))
+            agent_intereses = set(getattr(agente, 'intereses', []))
+            return len(post_temas & agent_intereses)
+        posts.sort(key=lambda p: (-relevance_score(p), -getattr(p, "timestamp", 0)))
         return {
             "in_network": posts[:limite],
             "recommended": [],
@@ -1110,7 +1267,9 @@ class SocialRecSys:
                         "likes": p.likes,
                         "likes_por": p.likes_por,
                         "comentarios": p.comentarios,
+                        "comentarios_detalle": getattr(p, "comentarios_detalle", []) or [],
                         "timestamp": p.timestamp,
+                        "partida_id": getattr(p, "partida_id", None),
                     }
                     for pid, p in self.interest_recsys.posts.items()
                 },
@@ -1155,11 +1314,12 @@ class SocialRecSys:
         return interacciones
 
     @classmethod
-    def from_dict(cls, data, db=None, user_id=None):
+    def from_dict(cls, data, db=None, user_id=None, modelo=None):
         # Crear instancia sin llamar a __init__ para evitar cargar desde DB
         inst = cls.__new__(cls)
         inst.db = db
         inst.user_id = user_id
+        inst.modelo = modelo
         inst.interest_recsys = InterestRecSys()
         inst.seguidos = {}
         
@@ -1167,2591 +1327,31 @@ class SocialRecSys:
             ir_data = data["interest_recsys"]
             if "posts" in ir_data:
                 for pid, p_data in ir_data["posts"].items():
-                    post = Post(
-                        p_data["id"],
-                        p_data["autor_id"],
-                        p_data["contenido"],
-                        p_data["tipo"],
-                        p_data.get("temas", []),
-                        p_data.get("timestamp", 0),
-                    )
-                    post.likes = p_data.get("likes", 0)
-                    post.likes_por = p_data.get("likes_por", [])
-                    post.comentarios = p_data.get("comentarios", 0)
-                    inst.interest_recsys.posts[pid] = post
+                    try:
+                        post = Post(
+                            p_data.get("id", pid),
+                            p_data.get("autor_id", "unknown"),
+                            p_data.get("contenido", ""),
+                            p_data.get("tipo", "general"),
+                            p_data.get("temas", []),
+                            p_data.get("timestamp", 0),
+                        )
+                        post.likes = p_data.get("likes", 0)
+                        post.likes_por = p_data.get("likes_por", [])
+                        post.comentarios = p_data.get("comentarios", 0)
+                        # Asegurar que el post reconstruido tenga la referencia a la partida
+                        try:
+                            post.partida_id = user_id
+                        except Exception:
+                            pass
+                        inst.interest_recsys.posts[pid] = post
+                    except Exception as e:
+                        print(f"⚠️ [SOCIAL] Error reconstruyendo post {pid}: {e}")
             if "comentarios" in ir_data:
                 inst.interest_recsys.comentarios = ir_data["comentarios"]
         if "seguidos" in data:
             inst.seguidos = {k: set(v) for k, v in data["seguidos"].items()}
         return inst
-
-
-class Agente:
-    def __init__(
-        self,
-        unique_id,
-        modelo,
-        recursos=100,
-        necesidades=None,
-        personalidad=None,
-        civ_id=None,
-        x=None,
-        y=None,
-    ):
-        self.unique_id = unique_id
-        self.modelo = modelo
-        self.recursos = recursos
-        self.civilizacion_id = civ_id
-        self.objetivo_movimiento = None  # (x, y) a donde moverse
-
-        # Posición en el mundo - Priorizar x, y pasados para evitar saltos al reiniciar
-        if x is not None and y is not None:
-            self.x = x
-            self.y = y
-        else:
-            # Buscar una posición libre para evitar colisiones iniciales
-            mapa_size = getattr(modelo, "mapa_size", 20)
-            pos_encontrada = False
-            for _ in range(100):  # Intentar hasta 100 veces
-                nx = random.randint(0, mapa_size - 1)
-                ny = random.randint(0, mapa_size - 1)
-                # Verificar que no haya otro agente en esa posición
-                if not any(a.x == nx and a.y == ny for a in modelo.agentes):
-                    self.x = nx
-                    self.y = ny
-                    pos_encontrada = True
-                    break
-            if not pos_encontrada:
-                # Si no se encontró posición libre, usar aleatoria (colisiónok)
-                self.x = random.randint(0, 19)
-                self.y = random.randint(0, 19)
-
-        # Personalidad (0.0 a 1.0): extroversión, amabilidad, competitividad
-        if personalidad:
-            self.personalidad = personalidad
-        else:
-            self.personalidad = {
-                "extroversión": random.random(),
-                "amabilidad": random.random(),
-                "competitividad": random.random(),
-                "curiosidad": random.random(),
-                "lealtad": random.random(),
-                "prudencia": random.random(),
-                "hostilidad": random.random(),
-            }
-
-        # --- CREACIONES DEL AGENTE ---
-        self.apps = {}  # Aplicaciones/Código Python creado por el agente
-        self.acciones_control_usuario = []  # Plan de turno enviado por el usuario (máx 3)
-
-        # Necesidades: 10.0 = Satisfecho, 0.0 = Crítico
-        if necesidades:
-            self.necesidades = necesidades
-        else:
-            self.necesidades = {
-                "alimento": random.uniform(8, 10),
-                "social": random.uniform(8, 10),
-                "seguridad": random.uniform(8, 10),
-                "descanso": 10.0,
-                "entretenimiento": random.uniform(8, 10),
-                "salud": 10.0,
-            }
-
-        # --- NECESIDADES INTELECTUALES (NUEVO) ---
-        # Tercera dimensión: mente, expresión, debate
-        self.necesidades_intelectuales = {
-            "curiosidad": random.uniform(6, 9),  # Querer aprender/descubrir
-            "expresion": random.uniform(6, 9),  # Querer compartir opiniones
-            "debate": random.uniform(5, 8),  # Necesidad de argumentar
-            "aprendizaje": random.uniform(6, 9),  # Estudiar/desarrollar habilidades
-        }
-
-        # --- CAPITAL SOCIAL (NUEVO) ---
-        self.capital_social = 10.0  # 0-100 puntos
-        self.seguidores = 0  # Cuántos lo siguen
-        self.siguiendo = 0  # A cuántos sigue
-        self.posts_publicados = 0  # Contenido creado
-        self.comentarios_realizados = 0  # Engagement activo
-        self.likes_recibidos = 0  # Likes en sus posts
-        self.likes_dados = 0  # Likes que ha dado
-        self.debates_ganados = 0  # Asambleas donde su posición prevaleció
-        self.debates_perdidos = 0  # Asambleas donde perdió
-        # Intereses para RecSys
-        self.intereses = []  # Temas de interés [política, ciencia, arte, ...]
-        self.opiniones_fuertes = {}  # {tema: nivel_fuerza 0-10}
-
-        # --- SISTEMA DE SKILLS ---
-        self.skills = {}  # Dictionary of Skill objects
-        self.skill_factor = random.uniform(0.1, 0.5)  # Initial skill factor
-        self.decision_cacheada = None
-
-        # Memoria basada en Grafos
-        self.memoria = MemoriaGrafica(self.unique_id)
-
-        # Cerebro Cognitivo (TODOS los agentes ahora son inteligentes)
-        self.cerebro = CerebroAvanzado(self.unique_id)
-
-        # Nuevos atributos: Grupo y Jerarquía
-        self.grupo_id = None
-        self.rol = "Ciudadano"  # Rol inicial
-        self.ultimo_mensaje_recibido = None  # Para responder a otros
-        self.dinero = 100.0  # Nueva unidad de cambio: MundoCoins (MC)
-        self.rango = 1.0  # Estatus social (influye en la influencia)
-        self.conocimientos = {}  # Información compartida o descubierta
-        self.planes = []  # Acuerdos con otros agentes
-        self.gasto_turno = 0.0  # Control de gasto por turno
-        self.inversiones = []  # [{monto, paso_inicio, interes_esperado}]
-        self.alianzas = []  # Lista de IDs de agentes aliados (para compatibilidad)
-        self.tratados = []  # Lista de dicts: {"socio_id": ID, "terminos": {...}, "pasos_restantes": N}
-        self.inventario = {
-            "comida": int(self.recursos),
-            "madera": 0,
-            "piedra": 0,
-            "hierro": 0,
-            "medicina": 0,
-            "ocio": 0,
-        }
-
-        # --- SISTEMA DE PROFESIONES ---
-        self.profesion = None  # "Médico", "Comerciante", "Guarda", "Explorador"
-        self.experiencia = {
-            "medicina": 0,
-            "comercio": 0,
-            "combate": 0,
-            "exploracion": 0,
-            "social": 0,
-            "ingenieria": 0,
-            "agricultura": 0,
-        }
-        self.hitos = []  # Lista de logros alcanzados
-
-        # --- MODELO BDI (Belief-Desire-Intention) ---
-        self.creencias = SistemaCreencias()
-        self.deseos = SistemaDeseos()
-        self.intenciones = SistemaIntenciones()
-
-        # Alma (identidad profunda y evolutiva)
-        self.alma = generar_alma_inicial(self.personalidad, 0)
-
-        # Identidad (OASIS Style: Personalidad pública, OCEAN, Demográficos)
-        from agents.identity_system import generar_identidad_inicial
-
-        self.identidad = generar_identidad_inicial(self.alma.arquetipo.value, 0)
-        # Sincronización BIDIRECCIONAL de nombres
-        if self.alma.nombre_propio:
-            self.identidad.nombre = self.alma.nombre_propio
-        else:
-            self.alma.nombre_propio = self.identidad.nombre
-
-        # Historial para BDI
-        self.historial_acciones_bdi = []  # List of (turno, accion)
-
-        # --- ESTADO COGNITIVO ---
-        self.reputacion = 1.0  # 0.0 a 1.0 (Prestigio social)
-        self.votos_recibidos = 0
-        self.historial_etico = []  # Registro de crímenes o buenas acciones
-
-        # --- ESTADO COGNITIVO ---
-        self.pensamiento_actual = "Esperando estímulos..."
-        self.mensaje_arquitecto = None  # Cola prioritaria para órdenes divinas
-        # --- ESTADO VITAL ---
-        self.esta_vivo = True
-        self.cronicas_publicadas = []  # Historial de crónicas publicadas por este agente
-
-    def calcular_capital_social(self) -> float:
-        """
-        Calcula el Capital Social del agente basado en múltiples factores.
-        Fórmula: ponderación de componentes sociales, engagement y participación.
-        """
-        # Base: seguidores con bonus por ratio de seguimiento
-        ratio_follow = self.siguiendo / max(1, self.seguidores)
-        base = self.seguidores * (1 + (1 / (1 + ratio_follow)))
-
-        # Engagement: likes recibidos (peso 0.5)
-        engagement = self.likes_recibidos * 0.5
-
-        # Contenido: posts publicados (peso 2)
-        contenido = self.posts_publicados * 2
-
-        # Participación en debates (ganados - perdidos)
-        debate = (self.debates_ganados * 10) - (self.debates_perdidos * 3)
-
-        # Comentarios realizados (engagement activo)
-        comentarios = self.comentarios_realizados * 1
-
-        # Votos recibidos (participación política)
-        politico = self.votos_recibidos * 0.3
-
-        total = base + engagement + contenido + max(0, debate) + comentarios + politico
-
-        # Normalizar a 0-100
-        self.capital_social = min(100, max(0, total / 10))
-        return self.capital_social
-
-    def get_nivel_influencia(self) -> str:
-        """Retorna el nivel de influencia basado en el capital social."""
-        cs = self.capital_social
-        if cs >= 80:
-            return "Legendario"
-        elif cs >= 50:
-            return "Respetado"
-        elif cs >= 25:
-            return "Notorio"
-        else:
-            return "Desconocido"
-
-    def necesidad_intelectual_critica(self) -> bool:
-        """Retorna True si alguna necesidad intelectual está en nivel crítico."""
-        for v in self.necesidades_intelectuales.values():
-            if v < 4:
-                return True
-        return False
-
-    def necesidad_social_critica(self) -> bool:
-        """Retorna True si la necesidad social está en nivel crítico."""
-        return self.necesidades.get("social", 5) < 4
-
-    def _evaluar_tipo_accion_necesidades(self) -> str:
-        """
-        Evalúa las necesidades del agente y retorna el tipo de acción prioritaria.
-        Retorna: "SURVIVAL", "SOCIAL_REQUIRED", "INTELLECTUAL", "FREE_CHOICE"
-        """
-        # Supervivencia crítica
-        if (
-            self.necesidades.get("alimento", 5) < 3
-            or self.necesidades.get("salud", 5) < 3
-        ):
-            return "SURVIVAL"
-
-        # Necesidad social crítica - debe interactuar
-        if self.necesidades.get("social", 5) < 4:
-            return "SOCIAL_REQUIRED"
-
-        # Necesidad intelectual crítica - debe expresar/aprender
-        if self.necesidad_intelectual_critica():
-            return "INTELLECTUAL"
-
-        # Libre elección
-        return "FREE_CHOICE"
-
-    def necesidad_fisica_critica(self) -> bool:
-        """Retorna True si alguna necesidad física está en nivel crítico."""
-        return (
-            self.necesidades.get("alimento", 5) < 4
-            or self.necesidades.get("salud", 5) < 4
-            or self.necesidades.get("descanso", 5) < 4
-        )
-
-    def __getstate__(self):
-        """
-        Define qué atributos del Agente se serializan.
-        Excluye 'modelo' para evitar referencias circulares y 'cerebro' ya que es recreable.
-        Serializa los datos de 'memoria' en lugar del objeto completo.
-        """
-        state = self.__dict__.copy()
-        del state["modelo"]
-        del state["cerebro"]
-        state["memoria_data"] = self.memoria.exportar_datos()
-        return state
-
-    def __setstate__(self, state):
-        """
-        Define cómo se deserializa el Agente.
-        Reconstruye 'memoria' y 'cerebro'. 'modelo' se reasigna externamente.
-        """
-        self.unique_id = state[
-            "unique_id"
-        ]  # Asegurar que unique_id se establece primero
-        self.__dict__.update(state)
-        self.memoria = MemoriaGrafica(self.unique_id)
-        if "memoria_data" in state:
-            self.memoria.cargar_datos(state["memoria_data"])
-        self.cerebro = CerebroAvanzado(self.unique_id)
-        # 'modelo' se reasigna después de la carga completa de todos los agentes
-        self.modelo = (
-            None  # Placeholder, será reasignado por ModeloRelacional.cargar_estado()
-        )
-
-    def to_dict(self):
-        """Convierte el objeto Agente a un diccionario serializable."""
-        return {
-            "unique_id": self.unique_id,
-            "recursos": self.recursos,
-            "civilizacion_id": self.civilizacion_id,
-            "objetivo_movimiento": self.objetivo_movimiento,
-            "x": self.x,
-            "y": self.y,
-            "necesidades": self.necesidades,
-            "personalidad": self.personalidad,
-            "memoria_data": self.memoria.exportar_datos(),
-            "grupo_id": self.grupo_id,
-            "rol": self.rol,
-            "ultimo_mensaje_recibido": self.ultimo_mensaje_recibido,
-            "dinero": self.dinero,
-            "rango": self.rango,
-            "conocimientos": self.conocimientos,
-            "planes": self.planes,
-            "gasto_turno": self.gasto_turno,
-            "inversiones": self.inversiones,
-            "alianzas": self.alianzas,
-            "tratados": self.tratados,
-            "inventario": self.inventario,
-            "profesion": self.profesion,
-            "experiencia": self.experiencia,
-            "hitos": self.hitos,
-            "reputacion": self.reputacion,
-            "votos_recibidos": self.votos_recibidos,
-            "historial_etico": self.historial_etico,
-            "pensamiento_actual": self.pensamiento_actual,
-            "mensaje_arquitecto": self.mensaje_arquitecto,
-            "esta_vivo": self.esta_vivo,
-            "skills": {
-                k: v if isinstance(v, dict) else v.to_dict()
-                for k, v in self.skills.items()
-            },
-            "skill_factor": self.skill_factor,
-            "color": self.modelo.civilizaciones[self.grupo_id].color
-            if self.grupo_id and self.grupo_id in self.modelo.civilizaciones
-            else "#ffffff",
-            "beliefs": self.creencias.to_dict(),
-            "desires": self.deseos.to_dict(),
-            "intentions": self.intenciones.to_dict(),
-            "historial_acciones_bdi": self.historial_acciones_bdi,
-            # === MUNDOVIVO: Serialización de subsistemas ===
-            "identidad": self.identidad.to_dict()
-            if hasattr(self, "identidad") and self.identidad
-            else None,
-            "memoria_persistente_data": self.memoria_persistente.to_dict()
-            if hasattr(self, "memoria_persistente") and self.memoria_persistente
-            else {},
-            "alma": self.alma.to_dict()
-            if hasattr(self, "alma") and self.alma
-            else None,
-            "heartbeat_config": self.heartbeat_mundo.to_dict()
-            if hasattr(self, "heartbeat_mundo") and self.heartbeat_mundo
-            else None,
-            "cronicas_publicadas": [
-                c.to_dict() if hasattr(c, "to_dict") else c
-                for c in getattr(self, "cronicas_publicadas", [])
-            ],
-            "apps": getattr(self, "apps", {}),
-            # === FIN MUNDOVIVO ===
-            # === CAPITAL SOCIAL E INTELECTUAL ===
-            "capital_social": getattr(self, "capital_social", 10.0),
-            "seguidores": getattr(self, "seguidores", 0),
-            "siguiendo": getattr(self, "siguiendo", 0),
-            "posts_publicados": getattr(self, "posts_publicados", 0),
-            "comentarios_realizados": getattr(self, "comentarios_realizados", 0),
-            "likes_recibidos": getattr(self, "likes_recibidos", 0),
-            "likes_dados": getattr(self, "likes_dados", 0),
-            "debates_ganados": getattr(self, "debates_ganados", 0),
-            "debates_perdidos": getattr(self, "debates_perdidos", 0),
-            "intereses": getattr(self, "intereses", []),
-            "opiniones_fuertes": getattr(self, "opiniones_fuertes", {}),
-            "necesidades_intelectuales": getattr(
-                self,
-                "necesidades_intelectuales",
-                {"curiosidad": 6, "expresion": 6, "debate": 5, "aprendizaje": 6},
-            ),
-        }
-
-    @classmethod
-    def from_dict(cls, data, modelo_instance):
-        """Reconstruye un objeto Agente desde un diccionario serializado."""
-        agente = cls(
-            unique_id=data["unique_id"],
-            modelo=modelo_instance,  # Re-establecer la referencia al modelo
-            recursos=data.get("recursos", 100),
-            necesidades=data.get("necesidades"),
-            personalidad=data.get("personalidad"),
-            civ_id=data.get("civilizacion_id"),
-            x=data.get("x"),
-            y=data.get("y"),
-        )
-        # Actualizar otros atributos
-        agente.objetivo_movimiento = data.get("objetivo_movimiento")
-        agente.grupo_id = data.get("grupo_id")
-        agente.rol = data.get("rol")
-        agente.ultimo_mensaje_recibido = data.get("ultimo_mensaje_recibido")
-        agente.dinero = data.get("dinero")
-        agente.rango = data.get("rango")
-        agente.conocimientos = data.get("conocimientos", {})
-        agente.planes = data.get("planes", [])
-        agente.gasto_turno = data.get("gasto_turno")
-        agente.inversiones = data.get("inversiones", [])
-        agente.alianzas = data.get("alianzas", [])
-        agente.tratados = data.get("tratados", [])
-        agente.inventario = data.get("inventario", {})
-        agente.profesion = data.get("profesion")
-        agente.experiencia = data.get("experiencia", {})
-        agente.hitos = data.get("hitos", [])
-        agente.reputacion = data.get("reputacion")
-        agente.votos_recibidos = data.get("votos_recibidos")
-        agente.historial_etico = data.get("historial_etico", [])
-        agente.pensamiento_actual = data.get("pensamiento_actual")
-        agente.mensaje_arquitecto = data.get("mensaje_arquitecto")
-        agente.esta_vivo = data.get("esta_vivo", True)
-        agente.skills = data.get("skills", {})
-        agente.skill_factor = data.get("skill_factor", 0.3)
-
-        from agents.bdi_components import (
-            SistemaCreencias,
-            SistemaDeseos,
-            SistemaIntenciones,
-        )
-
-        # Cargar BDI de forma robusta con claves en español e inglés
-        bdi_beliefs = data.get("beliefs") or data.get("creencias")
-        if bdi_beliefs and isinstance(bdi_beliefs, dict):
-            agente.creencias = SistemaCreencias.from_dict(bdi_beliefs)
-
-        bdi_desires = data.get("desires") or data.get("deseos")
-        if bdi_desires and isinstance(bdi_desires, dict):
-            agente.deseos = SistemaDeseos.from_dict(bdi_desires)
-
-        bdi_intentions = data.get("intentions") or data.get("intenciones")
-        if bdi_intentions and isinstance(bdi_intentions, dict):
-            agente.intenciones = SistemaIntenciones.from_dict(bdi_intentions)
-
-        if "historial_acciones_bdi" in data:
-            agente.historial_acciones_bdi = data["historial_acciones_bdi"]
-
-        if "memoria_data" in data:
-            agente.memoria.cargar_datos(data["memoria_data"])
-
-        # === MUNDOVIVO: Deserialización de subsistemas ===
-        nombre_agente = data.get("nombre", str(agente.unique_id))
-
-        if data.get("identidad"):
-            from agents.identity_system import generar_identidad_inicial
-
-            agente.identidad = generar_identidad_inicial(nombre_agente, 0)
-            agente.identidad.actualizar_desde_dict(data["identidad"])
-
-        if data.get("memoria_persistente_data"):
-            from systems.memoria_persistente import MemoriaPersistente
-
-            agente.memoria_persistente = MemoriaPersistente(
-                agente_id=agente.unique_id,
-                user_id=getattr(modelo_instance, "user_id", "default"),
-                data=data["memoria_persistente_data"],
-            )
-        else:
-            from systems.memoria_persistente import MemoriaPersistente
-
-            agente.memoria_persistente = MemoriaPersistente(
-                agente_id=agente.unique_id,
-                user_id=getattr(modelo_instance, "user_id", "default"),
-            )
-
-        alma_data = data.get("alma") or data.get("alma_estado")
-        if alma_data:
-            from agents.alma import Alma
-
-            agente.alma = Alma.from_dict(alma_data)
-
-        if data.get("heartbeat_config"):
-            from systems.heartbeat import RitmoVital
-
-            agente.heartbeat_mundo = RitmoVital.from_dict(
-                data["heartbeat_config"], personalidad=agente.personalidad
-            )
-
-        agente.cronicas_publicadas = []
-        for c_data in data.get("cronicas_publicadas", []):
-            if isinstance(c_data, dict):
-                from systems.cronicas import Cronica
-
-                agente.cronicas_publicadas.append(Cronica.from_dict(c_data))
-            else:
-                agente.cronicas_publicadas.append(c_data)
-        # === FIN MUNDOVIVO ===
-
-        # === CAPITAL SOCIAL E INTELECTUAL ===
-        agente.capital_social = data.get("capital_social", 10.0)
-        agente.seguidores = data.get("seguidores", 0)
-        agente.siguiendo = data.get("siguiendo", 0)
-        agente.posts_publicados = data.get("posts_publicados", 0)
-        agente.comentarios_realizados = data.get("comentarios_realizados", 0)
-        agente.likes_recibidos = data.get("likes_recibidos", 0)
-        agente.likes_dados = data.get("likes_dados", 0)
-        agente.debates_ganados = data.get("debates_ganados", 0)
-        agente.debates_perdidos = data.get("debates_perdidos", 0)
-        agente.intereses = data.get("intereses", [])
-        agente.opiniones_fuertes = data.get("opiniones_fuertes", {})
-        if "necesidades_intelectuales" in data:
-            agente.necesidades_intelectuales = data["necesidades_intelectuales"]
-        else:
-            agente.necesidades_intelectuales = {
-                "curiosidad": random.uniform(6, 9),
-                "expresion": random.uniform(6, 9),
-                "debate": random.uniform(5, 8),
-                "aprendizaje": random.uniform(6, 9),
-            }
-
-        return agente
-
-    @synchronized
-    def decir(
-        self,
-        mensaje,
-        pensamiento=None,
-        privado_para=None,
-        para_grupo=False,
-        global_broadcast=False,
-    ):
-        """Imprime un mensaje directo, privado, para el grupo o global."""
-        prefijo = f"[{self.unique_id}]"
-
-        # Actualizar pensamiento actual si se proporciona
-        if pensamiento:
-            self.pensamiento_actual = pensamiento
-
-        # --- EVOLUCIÓN ESPIRITUAL ---
-        # Hablar o pensar es una experiencia que hace evolucionar el alma
-        if hasattr(self, "alma") and self.alma:
-            from agents.alma import ExperienciaClave
-
-            exp = ExperienciaClave(
-                descripcion=f"Emitió o procesó un mensaje: {mensaje[:50]}...",
-                turno=getattr(self.modelo, "paso_actual", 0),
-                intensidad=0.2,  # Intensidad baja pero constante
-                tipo="reflexion",  # Un tipo nuevo para crecimiento constante
-            )
-            self.alma.evolucionar(exp)
-
-        # Determinar el tipo de mensaje y su alcance
-        if global_broadcast:
-            prefijo = f"📢 {prefijo} (ANUNCIO GLOBAL)"
-            privado_para = None  # Los mensajes globales no son privados
-        elif para_grupo and self.grupo_id:
-            prefijo = f"👥 {prefijo} (Para Facción {self.grupo_id})"
-            privado_para = f"GRUPO:{self.grupo_id}"
-        elif privado_para:
-            prefijo = f"🔒 {prefijo} (Privado para {privado_para})"
-        elif self.personalidad["amabilidad"] > 0.7:
-            prefijo = f"😇 {prefijo}"
-        elif self.personalidad["competitividad"] > 0.7:
-            prefijo = f"👿 {prefijo}"
-        else:
-            prefijo = f"🤖 {prefijo}"
-
-        self.modelo.log(
-            f'{prefijo}: "{mensaje}"',
-            categoria="dialogo",
-            tts_text=mensaje,
-            pensamiento=pensamiento,
-            privado_para=privado_para,
-            agente_id=self.unique_id,
-        )
-
-        # --- REGISTRO EN MEMORIA EPISÓDICA ---
-        # Guardar en mi propia memoria que he dicho esto
-        self.memoria.registrar_mensaje(self.unique_id, mensaje)
-
-        # --- DISTRIBUCIÓN DE MENSAJES ---
-        packet = {
-            "emisor": self.unique_id,
-            "contenido": mensaje,
-            "tipo": "GLOBAL"
-            if global_broadcast
-            else "ASAMBLEA"
-            if not privado_para and not para_grupo
-            else "DIRECTO",
-        }
-
-        # Si es un mensaje global, enviarlo a TODOS los agentes
-        if global_broadcast:
-            for agent in self.modelo.agentes:
-                if agent.unique_id != self.unique_id:
-                    agent.ultimo_mensaje_recibido = packet
-                    agent.memoria.registrar_mensaje(self.unique_id, mensaje)
-
-        # Si es un mensaje de grupo, enviarlo a los miembros de la facción
-        elif para_grupo and self.grupo_id:
-            for agent in self.modelo.agentes:
-                if (
-                    agent.grupo_id == self.grupo_id
-                    and agent.unique_id != self.unique_id
-                ):
-                    agent.ultimo_mensaje_recibido = packet
-                    agent.memoria.registrar_mensaje(self.unique_id, mensaje)
-
-        # Si es privado, enviarlo solo al destinatario
-        elif privado_para:
-            dest_id = privado_para
-            dest = next(
-                (a for a in self.modelo.agentes if a.unique_id == dest_id), None
-            )
-            if dest:
-                dest.ultimo_mensaje_recibido = packet
-                dest.memoria.registrar_mensaje(self.unique_id, mensaje)
-
-        # Si es un mensaje "en voz alta" (asamblea/vecinos), lo oyen los cercanos
-        else:
-            for agent in self.modelo.agentes:
-                if agent.unique_id != self.unique_id:
-                    # Distancia de audición (ej. 3 casillas)
-                    dist = abs(self.x - agent.x) + abs(self.y - agent.y)
-                    if dist <= 3:
-                        agent.ultimo_mensaje_recibido = packet
-                        agent.memoria.registrar_mensaje(self.unique_id, mensaje)
-            return
-
-        # --- SISTEMA DE ASAMBLEA GLOBAL ---
-        # Si hay una asamblea activa, los mensajes públicos llegan a TODOS
-        active_assemblies = [
-            a
-            for a in self.modelo.asambleas_globales
-            if a.get("estado") in ["DEBATE", "VOTACION"]
-        ]
-        if active_assemblies and not privado_para and not para_grupo:
-            packet["tipo"] = "ASAMBLEA"
-            packet["contenido"] = f"[ASAMBLEA] {mensaje}"
-            # Broadcast a todos los demás agentes
-            for agent in self.modelo.agentes:
-                if agent.unique_id != self.unique_id:
-                    agent.ultimo_mensaje_recibido = packet
-
-    @synchronized
-    def interactuar(self, otro_agente, tipo_interaccion="social", mensaje_enviado=None):
-        """Define cómo el agente interactúa con otro. La respuesta del otro agente es asíncrona (en su propio turno)."""
-
-        # El otro agente guarda el mensaje para su fase de pensamiento/respuesta
-        if mensaje_enviado:
-            otro_agente.ultimo_mensaje_recibido = {
-                "emisor": self.unique_id,
-                "contenido": mensaje_enviado,
-            }
-
-        if tipo_interaccion == "SOCIALIZAR" or tipo_interaccion == "social":
-            self.necesidades["social"] = min(
-                10.0, self.necesidades["social"] + 3.0
-            )  # Socializar satisface una necesidad vital
-            self.reputacion = min(
-                1.0, self.reputacion + 0.01
-            )  # Socializar mejora reputación
-            # Ganar experiencia social
-            self.ganar_experiencia("social", 1)
-            hostilidad_total = self.personalidad.get(
-                "hostilidad", 0.5
-            ) + otro_agente.personalidad.get("hostilidad", 0.5)
-            afinidad_base = 0.2 * (
-                self.personalidad["amabilidad"] + otro_agente.personalidad["amabilidad"]
-            ) - (0.15 * hostilidad_total)
-
-            if otro_agente.dinero > self.dinero * 1.5:
-                afinidad_base -= 0.1 * self.personalidad.get("hostilidad", 0.5)
-
-            self.memoria.registrar_interaccion(
-                otro_agente.unique_id,
-                "amigo" if afinidad_base > 0 else "conocido",
-                afinidad_base,
-                otro_agente.recursos,
-                otro_agente.grupo_id,
-            )
-            self.modelo.log(
-                f"  🤝 [SOCIAL] Agente {self.unique_id} socializa con {otro_agente.unique_id}. Afinidad: {afinidad_base:.2f}",
-                categoria="social",
-            )
-
-        elif tipo_interaccion == "COMPETIR":
-            self.ganar_experiencia("combate", 1)
-            self.reputacion = max(0.0, self.reputacion - 0.05)
-
-            # El ataque/competencia daña la relación
-            self.memoria.registrar_interaccion(
-                otro_agente.unique_id,
-                "enemigo",
-                -0.5,
-                otro_agente.recursos,
-                otro_agente.grupo_id,
-            )
-            otro_agente.memoria.registrar_interaccion(
-                self.unique_id, "enemigo", -0.5, self.recursos, self.grupo_id
-            )
-
-            exito = random.random() * self.rango > random.random() * otro_agente.rango
-            if exito:
-                robo = 5
-                self.recursos += robo
-                otro_agente.recursos -= robo
-
-                # Robar items del inventario
-                items_probables = [
-                    k for k, v in otro_agente.inventario.items() if v > 0
-                ]
-                if items_probables and random.random() < 0.4:
-                    item = random.choice(items_probables)
-                    otro_agente.inventario[item] -= 1
-                    self.inventario[item] = self.inventario.get(item, 0) + 1
-                    self.modelo.log(
-                        f"  🏴‍☠️ [ROBO] Agente {self.unique_id} le arrebató {item} a {otro_agente.unique_id}!",
-                        categoria="conflict",
-                    )
-
-                self.modelo.log(
-                    f"  ⚔️ [CONFLICTO] Agente {self.unique_id} robó recursos a {otro_agente.unique_id}.",
-                    categoria="conflict",
-                )
-            else:
-                self.modelo.log(
-                    f"  🛡️ [FALLO] Agente {self.unique_id} intentó robar a {otro_agente.unique_id} pero falló.",
-                    categoria="conflict",
-                )
-
-        elif tipo_interaccion == "COMERCIAR":
-            # Lógica de comercio: si tengo mucho de algo y el otro tiene dinero, vendo
-            items_vender = [k for k, v in self.inventario.items() if v > 2]
-            if items_vender and otro_agente.dinero >= 10:
-                item = random.choice(items_vender)
-                precio = random.randint(5, 15)
-                self.inventario[item] -= 1
-                otro_agente.inventario[item] = otro_agente.inventario.get(item, 0) + 1
-                self.dinero += precio
-                otro_agente.dinero -= precio
-                self.modelo.log(
-                    f"  💰 [COMERCIO] Agente {self.unique_id} vendió {item} a {otro_agente.unique_id} por {precio} MC.",
-                    categoria="economia",
-                )
-                self.ganar_experiencia("comercio", 2)
-                self.memoria.registrar_interaccion(
-                    otro_agente.unique_id,
-                    "amigo",
-                    0.3,
-                    otro_agente.recursos,
-                    otro_agente.grupo_id,
-                )
-            else:
-                self.modelo.log(
-                    f"  🤝 [COMERCIO] Agente {self.unique_id} intentó comerciar con {otro_agente.unique_id} pero no hubo acuerdo.",
-                    categoria="economia",
-                )
-
-        elif tipo_interaccion == "ALIANZA":
-            self.formar_alianza(otro_agente)
-            self.ganar_experiencia("social", 2)
-            self.decir(
-                f"¡Hemos sellado una alianza estratégica con {otro_agente.unique_id}!",
-                pensamiento="La unión hace la fuerza. Juntos somos imparables.",
-            )
-
-        elif tipo_interaccion == "ATACAR" or tipo_interaccion == "atacar":
-            self.ganar_experiencia("combate", 2)
-            self.reputacion = max(0.0, self.reputacion - 0.2)
-
-            # El ataque siempre destruye la relación
-            self.memoria.registrar_interaccion(
-                otro_agente.unique_id,
-                "enemigo",
-                -1.0,
-                otro_agente.recursos,
-                otro_agente.grupo_id,
-            )
-            otro_agente.memoria.registrar_interaccion(
-                self.unique_id, "enemigo", -1.0, self.recursos, self.grupo_id
-            )
-
-            # Cálculo de daño
-            daño_base = 2.0 + (self.experiencia["combate"] * 0.5)
-            exito = random.random() > 0.3  # 70% éxito
-
-            if exito:
-                daño_final = daño_base * random.uniform(1, 2)
-                self.modelo.log(
-                    f"  ⚔️ [ATAQUE] ¡Agente {self.unique_id} ha ATACADO violentamente a {otro_agente.unique_id} causando {daño_final:.1f} de daño!",
-                    categoria="conflict",
-                )
-                otro_agente.recibir_daño(daño_final, f"ataque de {self.unique_id}")
-                self.decir(
-                    f"¡Prepárate para la derrota, {otro_agente.unique_id}! No toleraré tu presencia.",
-                    pensamiento="Eliminar competencia es necesario para mi supremacía.",
-                )
-            else:
-                counter_daño = 1.0
-                self.recibir_daño(
-                    counter_daño, f"contraataque de {otro_agente.unique_id}"
-                )
-                self.modelo.log(
-                    f"  🛡️ [FALLO] Agente {self.unique_id} falló su ataque y recibió un golpe de {counter_daño}.",
-                    categoria="conflict",
-                )
-
-        elif tipo_interaccion == "DECLARAR_GUERRA":
-            if self.grupo_id and otro_agente.grupo_id:
-                exito, msg = self.modelo.declarar_guerra(
-                    self.grupo_id, otro_agente.grupo_id
-                )
-                self.decir(
-                    f"🚩 {msg}" if exito else f"⚠️ No pude declarar la guerra: {msg}",
-                    global_broadcast=True,
-                )
-
-        elif tipo_interaccion == "NEGOCIAR_PAZ":
-            if self.grupo_id and otro_agente.grupo_id:
-                exito, msg = self.modelo.finalizar_guerra(
-                    self.grupo_id, otro_agente.grupo_id
-                )
-                self.decir(
-                    f"🕊️ {msg}" if exito else f"⚠️ La negociación de paz falló: {msg}",
-                    global_broadcast=True,
-                )
-
-        # --- IMPACTO DIPLOMÁTICO ---
-        if (
-            self.grupo_id
-            and otro_agente.grupo_id
-            and self.grupo_id != otro_agente.grupo_id
-        ):
-            cambio_grupal = (
-                0.05
-                if (
-                    tipo_interaccion == "SOCIALIZAR"
-                    or tipo_interaccion == "social"
-                    or tipo_interaccion == "ALIANZA"
-                )
-                else -0.1
-            )
-            self.modelo.actualizar_relacion_grupal(
-                self.grupo_id, otro_agente.grupo_id, cambio_grupal
-            )
-
-    @synchronized
-    def atacar(self, otro_agente):
-        """Ataca directamente a otro agente (mando manual)."""
-        return self.interactuar(otro_agente, "ATACAR")
-
-    @synchronized
-    def curar(self):
-        """Usa medicinas del inventario para recuperar salud."""
-        if self.inventario.get("medicina", 0) > 0:
-            self.inventario["medicina"] -= 1
-            recuperacion = 3.0 + (self.experiencia.get("medicina", 0) * 0.5)
-            self.necesidades["salud"] = min(
-                10.0, self.necesidades["salud"] + recuperacion
-            )
-            self.modelo.log(
-                f"💊 [CURACION] Agente {self.unique_id} usó medicina. Salud: {self.necesidades['salud']:.1f}",
-                categoria="salud",
-            )
-            return True, f"Salud recuperada a {self.necesidades['salud']:.1f}"
-        return False, "No tienes medicinas"
-
-    @synchronized
-    def comer(self):
-        """Consume comida del inventario."""
-        if self.inventario.get("comida", 0) > 0:
-            self.inventario["comida"] -= 1
-            self.necesidades["alimento"] = min(10.0, self.necesidades["alimento"] + 4.0)
-            self.modelo.log(
-                f"🍎 [ALIMENTO] Agente {self.unique_id} ha comido. Alimento: {self.necesidades['alimento']:.1f}",
-                categoria="alimentos",
-            )
-            return True, "Hambre saciada"
-        return False, "No tienes comida"
-
-    @synchronized
-    def descansar(self):
-        """Acción manual de descanso profundo."""
-        self.necesidades["descanso"] = min(10.0, self.necesidades["descanso"] + 5.0)
-        self.modelo.log(
-            f"💤 [DESCANSO] Agente {self.unique_id} ha descansado profundamente.",
-            categoria="state",
-        )
-        return True, "Energía recuperada"
-
-    @synchronized
-    def explorar(self):
-        """Explora el entorno cercano para ganar experiencia y recursos aleatorios."""
-        if self.necesidades["descanso"] < 2.0:
-            return False, "Demasiado cansado para explorar"
-
-        self.necesidades["descanso"] -= 1.5
-        self.ganar_experiencia("exploracion", 3)
-
-        if random.random() < 0.3:
-            hallazgo = random.choice(["madera", "piedra", "comida"])
-            cant = random.randint(1, 3)
-            self.inventario[hallazgo] = self.inventario.get(hallazgo, 0) + cant
-            self.modelo.log(
-                f"🔍 [EXPLORACION] Agente {self.unique_id} encontró {cant} de {hallazgo}!",
-                categoria="info",
-            )
-            return True, f"Encontraste {cant} {hallazgo}"
-
-        self.modelo.log(
-            f"🔍 [EXPLORACION] Agente {self.unique_id} exploró la zona pero no halló nada especial.",
-            categoria="info",
-        )
-        return True, "Zona explorada"
-
-    @synchronized
-    def estudiar(self):
-        """Estudia en la ubicación actual si hay una universidad."""
-        tile = self.modelo.mapa[self.x][self.y]
-        tiene_uni = any(b.get("tipo") == "Universidad" for b in tile.buildings)
-
-        if tiene_uni:
-            self.ganar_experiencia("ciencia", 5)
-            self.skill_factor = min(1.0, self.skill_factor + 0.02)
-            self.modelo.log(
-                f"📚 [ESTUDIO] Agente {self.unique_id} está estudiando en la Universidad. Factor habilidad: {self.skill_factor:.2f}",
-                categoria="info",
-            )
-            return True, "Conocimiento aumentado"
-        return False, "No hay una Universidad aquí"
-
-    @synchronized
-    def investigar(self):
-        """Investigación teórica para mejorar el factor de habilidad."""
-        if self.necesidades["alimento"] < 3.0:
-            return False, "Demasiado hambre para investigar"
-
-        self.necesidades["entretenimiento"] = max(
-            0, self.necesidades["entretenimiento"] - 1.0
-        )
-        self.ganar_experiencia("investigacion", 4)
-        self.skill_factor = min(1.0, self.skill_factor + 0.01)
-        self.modelo.log(
-            f"🧬 [INVESTIGACION] Agente {self.unique_id} realiza investigación avanzada.",
-            categoria="info",
-        )
-        return True, "Investigación completada"
-
-    @synchronized
-    def opinar(self, mensaje):
-        """Envía una opinión formal a la asamblea actual."""
-        active_assemblies = [
-            a for a in self.modelo.asambleas_globales if a.get("estado") == "DEBATE"
-        ]
-        if not active_assemblies:
-            return False, "No hay asambleas en fase de debate"
-
-        # Usar el prefijo estándar para que el sistema lo reconozca
-        self.decir(f"🗣️ [OPINION ASAMBLEA] {mensaje}")
-        return True, "Opinión enviada a la asamblea"
-
-    @synchronized
-    def fundar_institucion(self, nombre, tipo):
-        """Llama al modelo para fundar una institución (requiere 100 MC)."""
-        return self.modelo.fundar_institucion(self.unique_id, nombre, tipo)
-
-    @synchronized
-    def fundar_grupo(self, nombre_grupo, descripcion):
-        """El agente crea un nuevo grupo con una idea central y se convierte en líder."""
-        if not nombre_grupo or not descripcion:
-            self.modelo.log(
-                f"⚠️ [RECHAZADO] Agente {self.unique_id} intentó fundar un grupo sin nombre o descripción.",
-                categoria="sistema",
-            )
-            return None
-
-        # Comprobar si el nombre es genérico o demasiado corto
-        palabras_nombre = nombre_grupo.split()
-        if len(palabras_nombre) < 1:
-            return None
-
-        # Lista de nombres genéricos prohibidos
-        prohibidos = [
-            "grupo",
-            "clan",
-            "tribu",
-            "alianza",
-            "equipo",
-            "faccion",
-            "facción",
-            "mi grupo",
-            "el grupo",
-        ]
-        if nombre_grupo.lower().strip() in prohibidos:
-            self.modelo.log(
-                f"⚠️ [RECHAZADO] Agente {self.unique_id} usó un nombre demasiado genérico: '{nombre_grupo}'.",
-                categoria="sistema",
-            )
-            return None
-
-        patron_generico = (
-            f"(grupo|clan|tribu|equipo|alianza) de {self.unique_id}".lower()
-        )
-        if (
-            patron_generico in nombre_grupo.lower()
-            or nombre_grupo.lower() == f"grupo de {self.unique_id}".lower()
-            or len(nombre_grupo) < 4
-        ):
-            self.modelo.log(
-                f"⚠️ [RECHAZADO] Agente {self.unique_id} intentó usar un nombre inválido o genérico: '{nombre_grupo}'.",
-                categoria="sistema",
-            )
-            return None
-
-        if len(descripcion) < 15:
-            self.modelo.log(
-                f"⚠️ [RECHAZADO] Agente {self.unique_id} proporcionó una misión demasiado corta: '{descripcion}'.",
-                categoria="sistema",
-            )
-            return None
-
-        if self.modelo.grupos_creados_este_paso >= 3:
-            self.modelo.log(
-                f"⚠️ [LIMITE] Agente {self.unique_id} intentó fundar un grupo, pero se alcanzó el límite de 3 por turno.",
-                categoria="sistema",
-            )
-            return None
-        # Generar un ID basado en algo más que random para evitar colisiones si hay muchos
-        nuevo_grupo_id = f"G-{random.randint(100, 999)}"
-
-        # Intentar obtener un color único que no esté en uso por otra civilización
-        colores_en_uso = [c.color for c in self.modelo.civilizaciones.values()]
-        nuevo_color = self.modelo.colores_paleta[0]  # Default
-
-        for color in self.modelo.colores_paleta:
-            if color not in colores_en_uso:
-                nuevo_color = color
-                break
-        else:
-            # Si todos están en uso, usar uno determinista basado en el ID
-            color_idx = hash(nuevo_grupo_id) % len(self.modelo.colores_paleta)
-            nuevo_color = self.modelo.colores_paleta[color_idx]
-
-        # Asegurar que el nombre del grupo sea único
-        nombres_en_uso = [c.nombre for c in self.modelo.civilizaciones.values()]
-        nombre_final = nombre_grupo
-
-        # Si el nombre ya existe, agregar un número para hacerle único
-        if nombre_final in nombres_en_uso:
-            contador = 1
-            while True:
-                nombre_generado = f"{nombre_grupo} {contador}"
-                if nombre_generado not in nombres_en_uso:
-                    nombre_final = nombre_generado
-                    break
-                contador += 1
-
-        self.modelo.civilizaciones[nuevo_grupo_id] = Civilizacion(
-            id=nuevo_grupo_id,
-            nombre=nombre_final,
-            color=nuevo_color,
-            user_id=getattr(self.modelo, "user_id", None),
-            descripcion=descripcion,
-        )
-        # Asegurar que aparezca en el broadcast como grupo dinámico
-        self.modelo.objetivos_grupos[nuevo_grupo_id] = descripcion
-
-        self.grupo_id = nuevo_grupo_id
-        self.civilizacion_id = nuevo_grupo_id
-        self.rol = "Líder"
-        self.modelo.log(
-            f"🚩 [FUNDACION] Agente {self.unique_id} ha fundado el grupo '{nombre_final}' con el objetivo: {descripcion}",
-            categoria="consenso",
-        )
-
-        # ACTUAlIZACIÓN INMEDIATA DE UI Y PERSISTENCIA
-        self.modelo.notificar_cambio_estado()
-        self.modelo.guardar_estado()
-
-        # Hito histórico
-        self.modelo.historia.agregar_hito(
-            {
-                "turno": self.modelo.paso_actual,
-                "descripcion": f"El Agente {self.unique_id} ha fundado el grupo '{nombre_final}'.",
-                "tipo": "fundacion",
-            }
-        )
-
-        self.modelo.grupos_creados_este_paso += 1
-        return nuevo_grupo_id
-
-    @synchronized
-    def invitar_agente(self, otro_agente):
-        """Envía una invitación formal para unirse a su facción."""
-        if self.grupo_id is None:
-            return False
-
-        # Solo invitamos si no tiene grupo o si queremos que cambie
-        if otro_agente.grupo_id == self.grupo_id:
-            return False
-
-        mision = self.modelo.objetivos_grupos.get(
-            self.grupo_id, "Prosperidad Colectiva"
-        )
-        otro_agente.ultimo_mensaje_recibido = {
-            "emisor": self.unique_id,
-            "contenido": f"INVITACION_GRUPO:{self.grupo_id}:{mision}",
-        }
-        self.modelo.log(
-            f"✉️ [INVITACION] Agente {self.unique_id} invita a {otro_agente.unique_id} a unirse a la Facción {self.grupo_id}.",
-            categoria="social",
-        )
-        return True
-
-    def formar_alianza(self, otro_agente, terminos=None):
-        """Crea un pacto de alianza mutua con términos específicos."""
-        # Limpieza robusta de datos corruptos (strings en lugar de dicts)
-        self.tratados = [t for t in self.tratados if isinstance(t, dict)]
-
-        # Si no hay términos, es una alianza básica de apoyo mutuo
-        if terminos is None:
-            terminos = {
-                "tipo": "apoyo_mutuo",
-                "descripcion": "Apoyo social y suministros básicos",
-            }
-
-        # Evitar duplicados de tratados activos con el mismo agente
-        if any(t["socio_id"] == otro_agente.unique_id for t in self.tratados):
-            return False
-
-        nuevo_tratado_yo = {
-            "socio_id": otro_agente.unique_id,
-            "terminos": terminos,
-            "pasos_restantes": 10,  # Duración estándar de 10 turnos
-        }
-        nuevo_tratado_otro = {
-            "socio_id": self.unique_id,
-            "terminos": terminos,
-            "pasos_restantes": 10,
-        }
-
-        self.tratados.append(nuevo_tratado_yo)
-
-        # Validar lista del otro agente
-        if not isinstance(otro_agente.tratados, list):
-            otro_agente.tratados = []
-        # Limpiar corruptos del otro agente también
-        otro_agente.tratados = [t for t in otro_agente.tratados if isinstance(t, dict)]
-
-        otro_agente.tratados.append(nuevo_tratado_otro)
-
-        # Mantener lista de alianzas para compatibilidad visual (y reparar si hay datos corruptos)
-        if not isinstance(self.alianzas, list):
-            self.alianzas = []
-        if not isinstance(otro_agente.alianzas, list):
-            otro_agente.alianzas = []
-
-        if otro_agente.unique_id not in self.alianzas:
-            self.alianzas.append(otro_agente.unique_id)
-        if self.unique_id not in otro_agente.alianzas:
-            otro_agente.alianzas.append(self.unique_id)
-
-        desc = terminos.get("descripcion", "Pacto formal")
-        self.modelo.log(
-            f"📜 [TRATADO] {self.unique_id} y {otro_agente.unique_id} han firmado: {desc}",
-            categoria="social",
-        )
-
-        # Registrar en memoria gráfica para visualización
-        self.memoria.registrar_interaccion(
-            otro_agente.unique_id,
-            "alianza",
-            0.5,
-            otro_agente.recursos,
-            otro_agente.grupo_id,
-        )
-        otro_agente.memoria.registrar_interaccion(
-            self.unique_id, "alianza", 0.5, self.recursos, self.grupo_id
-        )
-
-        self.modelo.notificar_cambio_estado()  # Actualizar alianzas en tiempo real
-        return True
-
-    # === MÉTODOS SOCIALES OASIS ===
-    def social_follow(self, otro_agente) -> bool:
-        """El agente sigue a otro agente."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return False
-
-        exito = recsys.follow(self.unique_id, otro_agente.unique_id)
-        if exito:
-            self.siguiendo += 1
-            otro_agente.seguidores += 1
-            self.modelo.log(
-                f"📡 [{self.unique_id}] Ahora sigue a [{otro_agente.unique_id}]",
-                categoria="social",
-            )
-        return exito
-
-    def social_unfollow(self, otro_agente) -> bool:
-        """El agente deja de seguir a otro."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return False
-
-        exito = recsys.unfollow(self.unique_id, otro_agente.unique_id)
-        if exito:
-            self.siguiendo = max(0, self.siguiendo - 1)
-            otro_agente.seguidores = max(0, otro_agente.seguidores - 1)
-        return exito
-
-    def social_like(self, target_id: str) -> bool:
-        """El agente da like a un post."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return False
-
-        exito = recsys.likear_post(target_id, self.unique_id)
-        if exito:
-            # Incrementar likes recibidos del autor del post
-            post = recsys.interest_recsys.posts.get(target_id)
-            if post:
-                autor_post = next(
-                    (a for a in self.modelo.agentes if a.unique_id == post.autor_id),
-                    None,
-                )
-                if autor_post:
-                    autor_post.likes_recibidos += 1
-            # Recompensa biológica: un like satisface un poco la necesidad social
-            self.necesidades["social"] = min(10.0, self.necesidades["social"] + 0.5)
-            self.capital_social = self.calcular_capital_social()
-            if hasattr(self.modelo, "notificar_cambio_estado"):
-                self.modelo.notificar_cambio_estado()
-        return exito
-
-    def social_create_post(
-        self, contenido: str, tipo: str = "opinion", temas: List[str] = None
-    ) -> bool:
-        """El agente crea un post en la red social."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return False
-
-        paso = getattr(self.modelo, "paso_actual", 0)
-        post = recsys.crear_post(self.modelo.user_id, self.unique_id, contenido, tipo, temas, timestamp=paso)
-
-        self.posts_publicados += 1
-        # Publicar satisface la necesidad de expresión (baja el hambre de expresión)
-        if "expresion" in self.necesidades_intelectuales:
-            self.necesidades_intelectuales["expresion"] = max(
-                0.0, self.necesidades_intelectuales["expresion"] - 2.0
-            )
-
-        self.capital_social = self.calcular_capital_social()
-
-        # Notificar cambio de estado para actualizar UI
-        if hasattr(self.modelo, "notificar_cambio_estado"):
-            self.modelo.notificar_cambio_estado()
-
-        return True
-
-    def social_comment(self, post_id: str, contenido: str) -> bool:
-        """El agente comenta en un post."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return False
-
-        recsys.agregar_comentario(post_id, self.unique_id, contenido)
-        self.comentarios_realizados += 1
-
-        # Recompensa biológica: comentar es interacción social fuerte
-        self.necesidades["social"] = min(10.0, self.necesidades["social"] + 1.5)
-        self.capital_social = self.calcular_capital_social()
-
-        # Notificar cambio de estado para actualizar UI
-        if hasattr(self.modelo, "notificar_cambio_estado"):
-            self.modelo.notificar_cambio_estado()
-
-        return True
-
-    def get_social_feed(self, limite: int = 10) -> Dict:
-        """Obtiene el feed personalizado del agente."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return {
-                "in_network": [],
-                "recommended": [],
-                "trending": [],
-                "all_posts": [],
-            }
-
-        return recsys.get_feed_hibrido(self, self.modelo.paso_actual, limite)
-
-    def get_following(self) -> List[str]:
-        """Retorna la lista de IDs que sigue este agente."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return []
-        return recsys.get_siguiendo(self.unique_id)
-
-    def get_followers(self) -> List[str]:
-        """Retorna la lista de seguidores de este agente."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return []
-        return recsys.get_seguidores(self.unique_id)
-
-    def get_social_notifications(self) -> List[Dict]:
-        """Obtiene todas las interacciones (likes/comentarios) en los posts de este agente."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return []
-        return recsys.get_interacciones_usuario(self.unique_id)
-
-    def _ejecutar_accion_social_automatica(self, paso: int):
-        """
-        Ejecuta una acción automática en la red social cada turno.
-        El agente comparte algo de su experiencia/mundo con la comunidad.
-        Esta acción es explícita y refleja lo que el agente está haciendo.
-        """
-        import random
-
-        # Cooldown por agente para evitar un post en cada turno.
-        ultimo_paso = getattr(self, "ultimo_paso_social", -10_000)
-        intervalo_min = getattr(self.modelo, "social_post_min_interval", 4)
-        if paso - ultimo_paso < intervalo_min:
-            return
-
-        # Incluso fuera de cooldown, no siempre publicar para mantener fluidez.
-        if random.random() > 0.55:
-            return
-
-        self.ultimo_paso_social = paso
-
-        # Determinar tipo de contenido basado en el estado del agente
-        tipo_contenido = self._determinar_tipo_post()
-
-        # Mezclar posts rápidos locales con posts LLM para reducir latencia global.
-        if random.random() < getattr(self.modelo, "social_llm_ratio", 0.35):
-            contenido = self._generar_contenido_post(tipo_contenido, paso)
-        else:
-            contenido = self._generar_contenido_post_rapido(tipo_contenido, paso)
-
-        if contenido and len(contenido) > 10:
-            # Detectar temas del contenido
-            temas = self._detectar_temas_post(contenido)
-
-            # Crear el post
-            self.social_create_post(contenido, tipo=tipo_contenido, temas=temas)
-
-            # Notificar en logs
-            nombre_agente = self.identidad.nombre if self.identidad else self.unique_id
-            contenido_mostrar = contenido if len(contenido) <= 100 else contenido[:100] + "..."
-            self.modelo.log(
-                f"📱 [{nombre_agente}] Publicó en la red: {contenido_mostrar}",
-                categoria="social",
-            )
-
-            if getattr(self.modelo, "realtime_event_callback", None):
-                try:
-                    self.modelo.realtime_event_callback(
-                        "social_event",
-                        {
-                            "agent_id": self.unique_id,
-                            "agent_name": nombre_agente,
-                            "step": paso,
-                            "event": "post_created",
-                            "content": contenido,
-                            "post_type": tipo_contenido,
-                        },
-                    )
-                except Exception:
-                    pass
-
-            # Probabilidad de hacer otras acciones sociales
-            if random.random() < 0.4:
-                self._ejecutar_like_aleatorio()
-            if random.random() < 0.2:
-                self._ejecutar_follow_aleatorio()
-            if random.random() < 0.3:
-                self._ejecutar_comentario_aleatorio()
-
-    def social_force_action(self, paso: int) -> bool:
-        """Ejecuta forzosamente una acción en la red social por turno.
-
-        Garantiza que cada turno el agente realice una acción social (post, like, comment o follow).
-        Esta función evita las comprobaciones de cooldown/aleatoriedad de _ejecutar_accion_social_automatica
-        y se usa cuando la gamificación requiere 1 acción social obligatoria por turno.
-        """
-        import random
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return False
-
-        # Intentar obtener el feed para interactuar con posts existentes
-        try:
-            feed = recsys.get_feed_hibrido(self, paso, limite=10)
-            posts = feed.get("all_posts", []) if feed else []
-        except Exception:
-            posts = []
-
-        # Priorizar crear post si la necesidad de expresión es alta o no hay posts
-        if self.necesidades_intelectuales.get("expresion", 0) > 6 or not posts:
-            tipo_post = self._determinar_tipo_post() if hasattr(self, "_determinar_tipo_post") else "opinion"
-            if hasattr(self, "_generar_contenido_post"):
-                contenido = self._generar_contenido_post(tipo_post, paso)
-            else:
-                contenido = f"{self.identidad.nombre if self.identidad else self.unique_id}: paso {paso}"
-            return self.social_create_post(contenido, tipo=tipo_post, temas=[])
-
-        # Si hay posts, elegir entre like, comentar o seguir al autor
-        post = random.choice(posts)
-        r = random.random()
-        if r < 0.5:
-            return self.social_like(post.id)
-        elif r < 0.8:
-            return self.social_comment(post.id, f"Interesante: {post.contenido[:60]}")
-        else:
-            # Intentar seguir al autor si existe en el modelo
-            author = next((a for a in self.modelo.agentes if a.unique_id == post.autor_id), None)
-            if author:
-                return self.social_follow(author)
-        return False
-
-    def _generar_contenido_post_rapido(self, tipo: str, paso: int) -> str:
-        """Genera un post breve sin LLM para acelerar turnos."""
-        nombre = self.identidad.nombre if self.identidad else self.unique_id
-        hambre = self.necesidades.get("alimento", 5)
-        social = self.necesidades.get("social", 5)
-
-        if tipo == "hungry":
-            return (
-                f"{nombre}: estoy con hambre ({hambre:.1f}/10). "
-                "Si alguien se suma, armemos una ruta para conseguir comida."
-            )
-        if tipo == "social":
-            return (
-                f"{nombre}: hoy necesito más conexión ({social:.1f}/10). "
-                "¿Quién quiere conversar o coordinar una acción conjunta?"
-            )
-        if tipo == "opinion":
-            return (
-                f"{nombre}: producir recursos ayuda, pero sin acuerdos estables "
-                "la tensión vuelve. Deberíamos coordinar reglas claras."
-            )
-        if tipo == "question":
-            return (
-                f"{nombre}: paso {paso}. Pregunta abierta: "
-                "¿qué estrategia les está funcionando mejor para sostenerse?"
-            )
-        if tipo == "event":
-            return (
-                f"{nombre}: hubo cambios recientes en el entorno. "
-                "Compartan señales para reaccionar más rápido."
-            )
-        return (
-            f"{nombre}: sigo observando el mundo en el paso {paso}. "
-            "Si detectan una oportunidad, me sumo."
-        )
-
-    def _determinar_tipo_post(self) -> str:
-        """Determina el tipo de post según el estado del agente."""
-        import random
-
-        # Basado en necesidades y eventos recientes
-        if self.necesidades.get("alimento", 5) < 4:
-            return "hungry"  # Tiene hambre
-        elif self.necesidades.get("social", 5) < 4:
-            return "social"  # Necesita socializar
-        elif self.necesidades_intelectuales.get("expresion", 5) > 7:
-            return "opinion"  # Quiere expresar opinión
-        elif self.necesidades_intelectuales.get("curiosidad", 5) > 7:
-            return "question"  # Tiene curiosidad
-        else:
-            return random.choice(["observation", "reflection", "event"])
-
-    def _generar_contenido_post(self, tipo: str, paso: int) -> str:
-        """Genera contenido apropiado para el tipo de post usando el LLM."""
-        from agents.cerebro_llm import cerebro_llm
-
-        # Contexto enriquecido con información del mundo
-        contexto_adicional = f"=== CONTEXTO DEL MUNDO (Paso {paso}) ===\n"
-
-        # Tipo de post sugerido
-        contexto_adicional += f"Tipo de post sugerido: {tipo}\n"
-
-        # Estado personal del agente
-        contexto_adicional += f"Tus valores: {', '.join(self.alma.valores) if hasattr(self, 'alma') and self.alma and self.alma.valores else 'ninguno'}\n"
-        contexto_adicional += f"Tus necesidades urgentes: alimento={self.necesidades.get('alimento', 5):.1f}, social={self.necesidades.get('social', 5):.1f}, descanso={self.necesidades.get('descanso', 5):.1f}\n"
-        contexto_adicional += f"Tu dinero: {self.dinero} MC\n"
-
-        # Información contextual basada en tipo
-        if tipo == "hungry":
-            contexto_adicional += "Tienes hambre urgente. Publica sobre tu necesidad de alimento o critica la distribución de recursos."
-        elif tipo == "social":
-            contexto_adicional += "Te sientes solo. Busca conexión con otros o comenta sobre la importancia de la comunidad."
-        elif tipo == "opinion":
-            contexto_adicional += "Tienes opiniones fuertes. Expresa tu posición sobre la política, economía o ética del mundo."
-        elif tipo == "question":
-            contexto_adicional += "Tienes curiosidad. Formula preguntas sobre misterios, desafíos o posibilidades del mundo."
-        elif tipo == "observation":
-            contexto_adicional += (
-                "Observaste algo interesante. Comparte tu descubrimiento o inquietud."
-            )
-        elif tipo == "reflection":
-            contexto_adicional += (
-                "Reflexiona sobre tu propósito, tu viaje, o lecciones aprendidas."
-            )
-        elif tipo == "event":
-            contexto_adicional += (
-                "Algo importante sucedió. Comenta sobre su significado o impacto."
-            )
-
-        contexto_adicional += "\n"
-
-        # Otros agentes cercanos
-        otros_vivos = [
-            a
-            for a in self.modelo.agentes
-            if a.unique_id != self.unique_id and a.esta_vivo
-        ]
-        if otros_vivos:
-            contexto_adicional += f"Otros habitantes en el mundo: {len(otros_vivos)}\n"
-            # Mostrar los más cercanos o relevantes
-            for otra in otros_vivos[:3]:
-                contexto_adicional += f"  - {otra.identidad.nombre or otra.unique_id}: en pos ({otra.x}, {otra.y}), dinero={otra.dinero} MC\n"
-
-        # Posts recientes en la red social para debate
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if recsys and recsys.interest_recsys.posts:
-            posts_recientes = list(recsys.interest_recsys.posts.values())[-5:]
-            if posts_recientes:
-                contexto_adicional += f"\nÚltimos posts en la red social:\n"
-                post_objetivo = None
-                for post in posts_recientes:
-                    if post.autor_id != self.unique_id:
-                        # Buscar nombre del autor
-                        autor_nombre = post.autor_id
-                        for a in self.modelo.agentes:
-                            if a.unique_id == post.autor_id:
-                                autor_nombre = a.identidad.nombre or a.unique_id
-                                break
-                        if post_objetivo is None:
-                            post_objetivo = (autor_nombre, post.contenido)
-                        contexto_adicional += (
-                            f"  - {autor_nombre}: {post.contenido}\n"
-                        )
-                if post_objetivo:
-                    contexto_adicional += (
-                        "\nDebate recomendado: responde explícitamente al post de "
-                        f"{post_objetivo[0]} y toma postura sobre su idea central.\n"
-                        "Incluye acuerdo parcial, desacuerdo o propuesta concreta.\n"
-                    )
-
-        # Situación económica y política
-        contexto_adicional += f"\nSituación del mundo:\n"
-        contexto_adicional += f"  - Índice bursátil: {self.modelo.economia.get('indice_bursatil', 100):.1f}\n"
-        contexto_adicional += f"  - Precio de recursos: {self.modelo.economia.get('precio_recurso', 2):.2f} MC\n"
-        contexto_adicional += f"  - Clima: {self.modelo.weather}\n"
-        contexto_adicional += f"  - Tu reputación: {self.reputacion:.1f}\n"
-
-        if self.grupo_id:
-            contexto_adicional += f"  - Tu grupo/civilización: {self.grupo_id}\n"
-
-        contexto_adicional += (
-            "\nEsperamos un post SUSTANCIAL (200-600 caracteres) donde reflejes tu pensamiento complejo sobre la situación. "
-            "Debe incluir una opinión argumentada y una reacción a reflexiones/debates recientes de otros agentes."
-        )
-
-        # Generar post usando el LLM
-        return cerebro_llm.generar_post_social(self, contexto_adicional)
-
-    def _detectar_temas_post(self, contenido: str) -> List[str]:
-        """Detecta temas de un post."""
-        contenido_lower = contenido.lower()
-        temas = []
-
-        if any(
-            p in contenido_lower for p in ["comida", "hambre", "alimento", "recurso"]
-        ):
-            temas.append("supervivencia")
-        if any(
-            p in contenido_lower for p in ["solo", "conectar", "interactuar", "social"]
-        ):
-            temas.append("social")
-        if any(
-            p in contenido_lower
-            for p in ["reflexiono", "pensamiento", "opinion", "posición"]
-        ):
-            temas.append("opinión")
-        if any(p in contenido_lower for p in ["pregunta", "descubrir", "cómo"]):
-            temas.append("curiosidad")
-        if any(p in contenido_lower for p in ["observo", "entorno", "mundo"]):
-            temas.append("observación")
-        if any(p in contenido_lower for p in ["encuentro", "cambiar", "suceso"]):
-            temas.append("evento")
-
-        if not temas:
-            temas.append("general")
-
-        return temas
-
-    def _ejecutar_like_aleatorio(self):
-        """Da like a un post aleatorio."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return
-
-        posts = recsys.interest_recsys.posts
-        if not posts:
-            return
-
-        # Elegir un post aleatorio que no sea propio
-        post_ids = [pid for pid, p in posts.items() if p.autor_id != self.unique_id]
-        if not post_ids:
-            return
-
-        import random
-
-        post_id = random.choice(post_ids)
-        self.social_like(post_id)
-        self.likes_dados += 1
-
-    def _ejecutar_follow_aleatorio(self):
-        """Sigue a un agente aleatorio."""
-        otros = [
-            a
-            for a in self.modelo.agentes
-            if a.unique_id != self.unique_id and a.esta_vivo
-        ]
-        if not otros:
-            return
-
-        import random
-
-        otro = random.choice(otros)
-
-        # Verificar si ya lo sigue
-        siguiendo = self.get_following()
-        if otro.unique_id not in siguiendo:
-            self.social_follow(otro)
-
-    def _ejecutar_comentario_aleatorio(self):
-        """Comenta en un post aleatorio del feed."""
-        recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
-            return
-
-        posts = recsys.interest_recsys.posts
-        if not posts:
-            return
-
-        # Elegir un post aleatorio que no sea propio
-        post_ids = [pid for pid, p in posts.items() if p.autor_id != self.unique_id]
-        if not post_ids:
-            return
-
-        import random
-
-        post_id = random.choice(post_ids)
-        target_post = posts[post_id]
-
-        # Generar comentario breve basado en el contenido del post original
-        from agents.cerebro_llm import cerebro_llm
-
-        # Buscar nombre del autor del post
-        autor_post_nombre = target_post.autor_id
-        for a in self.modelo.agentes:
-            if a.unique_id == target_post.autor_id:
-                autor_post_nombre = a.identidad.nombre or a.unique_id
-                break
-
-        ctx = f'Estás viendo un post de {autor_post_nombre} que dice: "{target_post.contenido}". Escribe una respuesta corta y espontánea.'
-
-        respuesta = cerebro_llm.generar_post_social(self, ctx)
-        if respuesta and len(respuesta) > 5:
-            self.social_comment(post_id, respuesta)
-            nombre_yo = self.identidad.nombre if self.identidad else self.unique_id
-            self.modelo.log(
-                f"💬 [{nombre_yo}] Respondió a {autor_post_nombre}: {respuesta[:60] if len(respuesta) > 60 else respuesta}",
-                categoria="social",
-            )
-
-    # === FIN MÉTODOS SOCIALES ===
-
-    @synchronized
-    def comerciar(self, otro_agente, tipo="compra"):
-        """Realiza una transacción económica entre agentes."""
-        # Precio base influenciado por el mercado global
-        precio_mercado = float(self.modelo.precio_recurso_actual)
-
-        if tipo == "compra":
-            # Yo compro recursos a otro_agente
-            cantidad = 3  # Reducido de 5 a 3
-            costo = cantidad * precio_mercado
-            if (
-                self.dinero >= costo
-                and otro_agente.recursos >= cantidad
-                and (self.gasto_turno + costo) <= 30
-            ):
-                self.dinero -= costo
-                self.gasto_turno += costo
-                self.recursos += cantidad
-                otro_agente.dinero += costo
-                otro_agente.recursos -= cantidad
-                self.modelo.log(
-                    f"💰 [COMERCIO] Agente {self.unique_id} compró {cantidad} recursos a {otro_agente.unique_id} por {costo:.1f} MC.",
-                    categoria="social",
-                )
-                self.modelo.notificar_cambio_estado()
-                return True
-        return False
-
-    @synchronized
-    def mejorar_seguridad(self):
-        """Invierte dinero en mejorar el rango y la protección."""
-        costo = 25.0  # Reducido de 50 a 25 para que sea viable con el límite de 30
-        if self.dinero >= costo and (self.gasto_turno + costo) <= 30:
-            self.dinero -= costo
-            self.gasto_turno += costo
-            self.rango += 0.2
-            self.necesidades["seguridad"] = max(0, self.necesidades["seguridad"] - 5)
-            self.modelo.log(
-                f"🛡️ [SEGURIDAD] Agente {self.unique_id} invirtió en protección. Rango aumentado a {self.rango:.1f}.",
-                categoria="state",
-            )
-            self.modelo.notificar_cambio_estado()
-            return True
-        return False
-
-    @synchronized
-    def invertir(self, monto):
-        """El agente coloca dinero en el mercado para obtener retornos futuros."""
-        if self.dinero >= monto and (self.gasto_turno + monto) <= 30:
-            self.dinero -= monto
-            self.gasto_turno += monto
-            # Inversión a 5 pasos con un interés aleatorio entre -5% y +15%
-            interes = random.uniform(-0.05, 0.15)
-            self.inversiones.append(
-                {
-                    "monto": monto,
-                    "paso_final": self.modelo.paso_actual + 5,
-                    "interes": interes,
-                }
-            )
-            self.modelo.log(
-                f"📈 [INVERSIÓN] Agente {self.unique_id} invirtió {monto:.1f} MC en el mercado.",
-                categoria="state",
-            )
-            self.modelo.notificar_cambio_estado()
-            return True
-        return False
-
-    def actualizar_estado(self):
-        """Actualiza las necesidades y recursos internos en cada paso."""
-        # Producción pasiva aumentada para mayor resiliencia
-        self.recursos += 0.5
-
-        # Procesar inversiones terminadas
-        for inv in list(self.inversiones):
-            if self.modelo.paso_actual >= inv["paso_final"]:
-                ganancia = inv["monto"] * (1 + inv["interes"])
-                self.dinero += ganancia
-                self.inversiones.remove(inv)
-                resultado = "ganancia" if inv["interes"] > 0 else "pérdida"
-                self.modelo.log(
-                    f"💰 [RETORNO] Inversión de {self.unique_id} finalizada: {ganancia:.1f} MC ({resultado}).",
-                    categoria="social",
-                )
-
-        # El metabolismo consume menos recursos si hay alimento almacenado
-        consumo = 0.5 + ((10 - self.necesidades["alimento"]) * 0.03)
-        self.recursos -= consumo
-        self.inventario["comida"] = max(0, int(self.recursos))
-
-        # Necesidades disminuyen (10=perfecto, 0=emergencia)
-        # EL costo del terreno afecta el consumo de descanso y alimento
-        tile = self.modelo.mapa[self.x][self.y]
-        energy_mod = tile.energy_cost
-
-        self.necesidades["alimento"] = max(
-            0, self.necesidades["alimento"] - (0.04 + energy_mod * 0.1)
-        )
-        self.necesidades["social"] = max(0, self.necesidades["social"] - 0.03)
-        self.necesidades["seguridad"] = max(0, self.necesidades["seguridad"] - 0.02)
-        self.necesidades["descanso"] = max(
-            0, self.necesidades["descanso"] - (0.05 + energy_mod)
-        )
-        self.necesidades["entretenimiento"] = max(
-            0, self.necesidades["entretenimiento"] - 0.03
-        )
-
-        # Riesgo de salud por terreno hostil (Desert, Mountain)
-        if tile.health_risk > 0 and random.random() < 0.1:
-            self.recibir_daño(
-                tile.health_risk * 2, f"clima hostil en {tile.terrain_type}"
-            )
-
-        # --- REGENERACIÓN PASIVA ---
-        # Si el agente está bien alimentado y descansado (> 7), recupera salud
-        if self.necesidades["alimento"] > 7.0 and self.necesidades["descanso"] > 7.0:
-            self.necesidades["salud"] = min(10.0, self.necesidades["salud"] + 0.1)
-            # Log sutil de bienestar solo de vez en cuando para no saturar
-            if random.random() < 0.1:
-                self.modelo.log(
-                    f"✨ [BIENESTAR] Agente {self.unique_id} se está recuperando gracias a su buen estado.",
-                    categoria="state",
-                )
-
-        # --- PROCESAMIENTO DE TRATADOS FORMALES ---
-        for tratado in list(self.tratados):
-            if not isinstance(tratado, dict):
-                # Si por error hay un string (ej. bug de carga), lo ignoramos
-                continue
-
-            aliado = next(
-                (
-                    a
-                    for a in self.modelo.agentes
-                    if a.unique_id == tratado.get("socio_id")
-                ),
-                None,
-            )
-            if not aliado:
-                continue
-
-            t = tratado["terminos"]
-            # 1. Intercambio de Recursos por Dinero
-            if t.get("tipo") == "intercambio":
-                dar = t.get("da", {})  # {recurso: "medicina", cant: 1}
-                recibe = t.get("recibe", {})  # {recurso: "dinero", cant: 10}
-
-                # Ejecutar si ambos tienen lo necesario
-                puedo_dar = False
-                if dar.get("recurso") == "medicina" and self.inventario[
-                    "medicina"
-                ] >= dar.get("cant", 0):
-                    puedo_dar = True
-                elif dar.get("recurso") == "dinero" and self.dinero >= dar.get(
-                    "cant", 0
-                ):
-                    puedo_dar = True
-                elif dar.get("recurso") == "recursos" and self.recursos >= dar.get(
-                    "cant", 0
-                ):
-                    puedo_dar = True
-
-                if puedo_dar:
-                    # Transferir lo que yo doy
-                    if dar["recurso"] == "medicina":
-                        self.inventario["medicina"] -= dar["cant"]
-                        aliado.inventario["medicina"] += dar["cant"]
-                    elif dar["recurso"] == "dinero":
-                        self.dinero -= dar["cant"]
-                        aliado.dinero += dar["cant"]
-                    elif dar["recurso"] == "recursos":
-                        self.recursos -= dar["cant"]
-                        aliado.recursos += dar["cant"]
-
-                    # Transferir lo que yo recibo (si el aliado puede)
-                    # Nota: Simplificado para que el aliado siempre cumpla su parte si el otro empezó
-                    if recibe["recurso"] == "dinero":
-                        aliado.dinero -= recibe["cant"]
-                        self.dinero += recibe["cant"]
-                    elif recibe["recurso"] == "seguridad":
-                        self.rango += recibe["cant"]  # El aliado me brinda protección
-
-                    self.modelo.log(
-                        f"🤝 [EJECUCION TRATADO] Intercambio realizado entre {self.unique_id} y {aliado.unique_id}.",
-                        categoria="social",
-                    )
-
-            # Reducir duración
-            tratado["pasos_restantes"] -= 1
-            if tratado["pasos_restantes"] <= 0:
-                self.tratados.remove(tratado)
-                # También quitar del aliado
-                aliado.tratados = [
-                    at for at in aliado.tratados if at["socio_id"] != self.unique_id
-                ]
-            self.modelo.log(
-                f"⌛ [SISTEMA] El tratado entre {self.unique_id} y {aliado.unique_id} ha expirado.",
-                categoria="sistema",
-            )
-
-        # --- DEGRADACIÓN DE SALUD POR NECESIDADES ---
-        if self.necesidades["alimento"] < 2.0:
-            daño_hambre = (2.0 - self.necesidades["alimento"]) * 0.5
-            self.recibir_daño(daño_hambre, "hambre extrema")
-
-        if self.necesidades["seguridad"] < 2.0:
-            # En zonas inseguras hay riesgo de daño pasivo
-            if random.random() < 0.1:
-                self.recibir_daño(0.5, "inseguridad del entorno")
-
-        if self.necesidades["salud"] <= 0:
-            self.morir("agotamiento total de constantes vitales")
-            return
-
-        # --- VALIDACIÓN DE COORDENADAS ---
-        # Asegurar que las coordenadas del agente estén dentro de los límites del mapa
-        map_width = len(self.modelo.mapa)
-        map_height = len(self.modelo.mapa[0]) if map_width > 0 else 0
-
-        if self.x < 0 or self.x >= map_width or self.y < 0 or self.y >= map_height:
-            # Ajustar coordenadas a los límites válidos
-            self.x = max(0, min(self.x, map_width - 1))
-            self.y = max(0, min(self.y, map_height - 1))
-            self.modelo.log(
-                f"⚠️ [SISTEMA] Coordenadas del Agente {self.unique_id} ajustadas a ({self.x}, {self.y}) para estar dentro del mapa.",
-                categoria="sistema",
-            )
-
-        # --- INSTINTO DE SUPERVIVENCIA AUTOMÁTICO ---
-        tile = self.modelo.mapa[self.x][self.y]
-
-        # 1. Alimentación automática si hay comida en el suelo y tiene hambre
-        if (
-            tile.resource_node
-            and tile.resource_node["type"] == "food"
-            and self.necesidades["alimento"] < 6.0
-        ):
-            comida_tomada = min(tile.resource_node["amount"], 2.0)
-            tile.resource_node["amount"] -= comida_tomada
-            self.necesidades["alimento"] = min(
-                10, self.necesidades["alimento"] + (comida_tomada * 2)
-            )
-            self.modelo.log(
-                f"🍎 [INSTINTO] Agente {self.unique_id} consumió alimento del terreno automáticamente.",
-                categoria="alimentos",
-            )
-            if tile.resource_node["amount"] <= 0:
-                tile.resource_node = None
-
-        # 2. Uso de infraestructura (Hospitales y Centros de Recarga)
-        for edif in tile.buildings:
-            if (
-                edif["tipo"].lower() in ["hospital", "clinica"]
-                and self.necesidades["salud"] < 9.0
-            ):
-                self.necesidades["salud"] = min(10.0, self.necesidades["salud"] + 1.0)
-                self.modelo.log(
-                    f"🏥 [SISTEMA] Agente {self.unique_id} está siendo atendido en el Hospital.",
-                    categoria="salud",
-                )
-
-            if "recarga" in edif["tipo"].lower() or "eléctrica" in edif["tipo"].lower():
-                self.necesidades["descanso"] = min(
-                    10.0, self.necesidades["descanso"] + 2.0
-                )
-                self.recursos += 1.0  # Carga de energía/recursos
-                self.modelo.log(
-                    f"⚡ [SISTEMA] Agente {self.unique_id} recargando constantes en estación energética.",
-                    categoria="ambiente",
-                )
-
-    @synchronized
-    def recibir_daño(self, cantidad, motivo="desconocido"):
-        """Reduce la salud del agente y verifica si muere."""
-        self.necesidades["salud"] -= cantidad
-        self.modelo.log(
-            f"🩸 [DAÑO] Agente {self.unique_id} ha recibido {cantidad:.1f} de daño por {motivo}. Salud restante: {self.necesidades['salud']:.1f}",
-            categoria="salud",
-        )
-        if self.necesidades["salud"] <= 0:
-            self.morir(motivo)
-
-    def morir(self, motivo):
-        """Finaliza la existencia del agente en la simulación."""
-        if not self.esta_vivo:
-            return
-
-        self.esta_vivo = False
-        self.modelo.log(
-            f"🪦 [FUNERAL] El Agente {self.unique_id} ha MUERTO. Motivo: {motivo}.",
-            categoria="sistema",
-        )
-
-        # Registro histórico si era importante
-        if self.rol in ["Líder", "Historiador", "Moderador"]:
-            self.modelo.historia.agregar_hito(
-                {
-                    "turno": self.modelo.paso_actual,
-                    "descripcion": f"Luto nacional: El {self.rol} {self.unique_id} ha fallecido por {motivo}.",
-                    "tipo": "muerte",
-                }
-            )
-
-        # Eliminar de la lista activa del modelo
-        if self in self.modelo.agentes:
-            self.modelo.agentes.remove(self)
-
-        # Limpiar tratados y alianzas
-        for aliado_id in list(self.alianzas):
-            aliado = self.modelo.get_agent_by_id(aliado_id)
-            if aliado and self.unique_id in aliado.alianzas:
-                aliado.alianzas.remove(self.unique_id)
-
-        # Registrar en DB si es posible
-        if self.modelo.db_active:
-            try:
-                self.modelo.db.execute(
-                    "UPDATE agentes SET reputacion = %s WHERE id = %s",
-                    (0.0, self.unique_id),
-                )
-            except:
-                pass
-
-        # Notificar muerte inmediata para actualizar listas
-        self.modelo.notificar_cambio_estado()
-
-    @synchronized
-    def recolectar(self):
-        """El agente busca recursos en el entorno. Prioriza los nodos de recursos del mapa."""
-        # Validar coordenadas antes de acceder al mapa
-        map_width = len(self.modelo.mapa)
-        map_height = len(self.modelo.mapa[0]) if map_width > 0 else 0
-
-        if self.x < 0 or self.x >= map_width or self.y < 0 or self.y >= map_height:
-            self.x = max(0, min(self.x, map_width - 1))
-            self.y = max(0, min(self.y, map_height - 1))
-            self.modelo.log(
-                f"⚠️ [SISTEMA] Coordenadas del Agente {self.unique_id} ajustadas en recolectar a ({self.x}, {self.y}).",
-                categoria="sistema",
-            )
-
-        tile = self.modelo.mapa[self.x][self.y]
-        mult = getattr(tile, "yield_mult", 1.0)
-
-        # 1. Recolección de nodo específico
-        if tile.resource_node and tile.resource_node["amount"] > 0:
-            tipo = tile.resource_node["type"]
-
-            # Bonos específicos por terreno
-            nodo_bonus = 1.0
-            if tipo == "wood" and tile.terrain_type == TerrainType.FOREST:
-                nodo_bonus = 2.0
-            if tipo == "stone" and tile.terrain_type == TerrainType.MOUNTAIN:
-                nodo_bonus = 2.0
-            if tipo == "food" and tile.terrain_type == TerrainType.GRASS:
-                nodo_bonus = 1.5
-
-            cantidad = min(
-                tile.resource_node["amount"],
-                int(random.randint(5, 15) * mult * nodo_bonus),
-            )
-            tile.resource_node["amount"] -= cantidad
-
-            if tipo == "food":
-                self.recursos += cantidad
-                self.inventario["comida"] = self.inventario.get("comida", 0) + cantidad
-                self.modelo.log(
-                    f"  🍎 [RECOLECCION] Agente {self.unique_id} recolectó {cantidad} de ALIMENTO en {tile.terrain_type}.",
-                    categoria="alimentos",
-                )
-            elif tipo == "wood":
-                self.recursos += cantidad * 0.5
-                self.inventario["madera"] = self.inventario.get("madera", 0) + cantidad
-                self.ganar_experiencia("ingenieria", 1)
-                self.modelo.log(
-                    f"  🪵 [RECOLECCION] Agente {self.unique_id} recolectó {cantidad} de MADERA en {tile.terrain_type}.",
-                    categoria="recursos",
-                )
-            elif tipo == "stone":
-                self.recursos += cantidad * 0.5
-                self.inventario["piedra"] = self.inventario.get("piedra", 0) + cantidad
-                self.ganar_experiencia("ingenieria", 1)
-                self.modelo.log(
-                    f"  🪨 [RECOLECCION] Agente {self.unique_id} recolectó {cantidad} de PIEDRA en {tile.terrain_type}.",
-                    categoria="recursos",
-                )
-
-            if tile.resource_node["amount"] <= 0:
-                tile.resource_node = None
-                self.modelo.log(
-                    f"  ⚠️ [RECOLECCION] El nodo de recursos en ({self.x}, {self.y}) se ha AGOTADO.",
-                    categoria="ambiente",
-                )
-            return
-
-        # 2. Recolección genérica (baja eficiencia según terreno)
-        r = random.random()
-
-        if tile.terrain_type == TerrainType.FOREST:
-            if r < 0.6:
-                cant = random.uniform(3, 10) * mult
-                self.inventario["madera"] = self.inventario.get("madera", 0) + int(cant)
-                self.recursos += cant * 0.5
-                self.modelo.log(
-                    f"  🌲 Agente {self.unique_id} recolectó {int(cant)} de MADERA en el bosque.",
-                    categoria="recursos",
-                )
-            else:
-                self.inventario["medicina"] += 1
-                self.ganar_experiencia("medicina", 1)
-                self.modelo.log(
-                    f"  🌿 Agente {self.unique_id} encontró HIERBAS MEDICINALES.",
-                    categoria="recursos",
-                )
-
-        elif tile.terrain_type == TerrainType.MOUNTAIN:
-            if r < 0.7:
-                cant = random.uniform(2, 6) * mult
-                self.inventario["piedra"] = self.inventario.get("piedra", 0) + int(cant)
-                self.recursos += cant * 0.3
-                self.modelo.log(
-                    f"  🪨 Agente {self.unique_id} picó {int(cant)} de PIEDRA en la montaña.",
-                    categoria="recursos",
-                )
-            else:
-                self.inventario["hierro"] = self.inventario.get("hierro", 0) + 1
-                self.modelo.log(
-                    f"  ⛏️ Agente {self.unique_id} encontró una veta de HIERRO.",
-                    categoria="recursos",
-                )
-
-        elif tile.terrain_type == TerrainType.WATER:
-            cant = random.uniform(1, 4) * mult
-            self.inventario["pescado"] = self.inventario.get("pescado", 0) + int(cant)
-            self.recursos += cant * 1.5  # El pescado da mucha energía/recurso
-            self.modelo.log(
-                f"  🐟 Agente {self.unique_id} pescó {int(cant)} unidades.",
-                categoria="alimentos",
-            )
-
-        else:  # Grassland o Desert
-            cant = random.uniform(2, 8) * mult
-            self.recursos += cant  # Alimento base
-            self.inventario["comida"] = self.inventario.get("comida", 0) + int(cant)
-            self.modelo.log(
-                f"  🌱 Agente {self.unique_id} forrajeó {int(cant)} de alimento.",
-                categoria="alimentos",
-            )
-
-        # Notificar cambio inmediato para visualización real-time en paneles
-        self.modelo.notificar_cambio_estado()
-
-    @synchronized
-    def establecer_objetivo_movimiento(self, x, y):
-        """Fija un destino para el movimiento del agente."""
-        self.objetivo_movimiento = (x, y)
-        self.modelo.log(
-            f"🗺️ [NAVEGACION] Agente {self.unique_id} ha fijado un nuevo rumbo a ({x}, {y}).",
-            categoria="movimiento",
-        )
-
-    @synchronized
-    def ganar_experiencia(self, area, puntos=1):
-        """Aumenta la experiencia en un área y verifica si puede graduarse."""
-        if area in self.experiencia:
-            self.experiencia[area] += puntos
-            # Si llega a 5 de experiencia en un área y no tiene esa profesión, avisar
-            if self.experiencia[area] == 5 and self.profesion is None:
-                self.modelo.log(
-                    f"🎓 [HITOS] Agente {self.unique_id} ha ganado suficiente experiencia en {area} para profesionalizarse.",
-                    categoria="sistema",
-                )
-
-    @synchronized
-    def construir(self, tipo_edificio="Casa"):
-        """Intenta construir un edificio en la posición actual."""
-        if not self.esta_vivo:
-            return False, "Agente muerto."
-        res, msg = self.modelo.construir_edificio(self, tipo_edificio)
-        if res:
-            self.modelo.notificar_cambio_estado()
-        return res, msg
-
-    @synchronized
-    def graduarse(self, profesion_deseada):
-        """Intenta declarar una profesión si cumple los requisitos y está en una Universidad."""
-        if self.profesion:
-            return False, "Ya tienes una profesión."
-
-        # Validar coordenadas antes de acceder al mapa
-        map_width = len(self.modelo.mapa)
-        map_height = len(self.modelo.mapa[0]) if map_width > 0 else 0
-
-        if self.x < 0 or self.x >= map_width or self.y < 0 or self.y >= map_height:
-            self.x = max(0, min(self.x, map_width - 1))
-            self.y = max(0, min(self.y, map_height - 1))
-            self.modelo.log(
-                f"⚠️ [SISTEMA] Coordenadas del Agente {self.unique_id} ajustadas en graduarse a ({self.x}, {self.y}).",
-                categoria="sistema",
-            )
-
-        # VERIFICACIÓN DE UBICACIÓN: Debe haber una Universidad en el tile actual
-        tile = self.modelo.mapa[self.x][self.y]
-        tiene_universidad = any(b["tipo"] == "Universidad" for b in tile.buildings)
-
-        if not tiene_universidad:
-            return (
-                False,
-                "Debes estar en una Universidad para graduarte y obtener tu título oficial. 🏛️",
-            )
-
-        costos = {"Médico": 150, "Comerciante": 200, "Guarda": 100, "Explorador": 120}
-
-        requisitos = {
-            "Médico": self.experiencia["medicina"] >= 5
-            and self.personalidad["amabilidad"] > 0.5,
-            "Comerciante": self.experiencia["comercio"] >= 5,
-            "Guarda": self.experiencia["combate"] >= 3
-            and self.personalidad["hostilidad"] < 0.6,
-            "Explorador": self.experiencia["exploracion"] >= 5,
-        }
-
-        if profesion_deseada not in costos:
-            return False, "Profesión no válida."
-
-        if not requisitos[profesion_deseada]:
-            return (
-                False,
-                f"No cumples los requisitos de experiencia o personalidad para ser {profesion_deseada}.",
-            )
-
-        if self.dinero < costos[profesion_deseada]:
-            return (
-                False,
-                f"Necesitas {costos[profesion_deseada]} MC para la licencia de {profesion_deseada}.",
-            )
-
-        # Éxito
-        self.dinero -= costos[profesion_deseada]
-        self.profesion = profesion_deseada
-        self.hitos.append(f"Graduado como {profesion_deseada}")
-        self.modelo.log(
-            f"✨ [PROFESION] ¡El Agente {self.unique_id} se ha graduado como {profesion_deseada}! 🎓",
-            categoria="consenso",
-        )
-        return True, f"¡Felicidades! Ahora eres {profesion_deseada}."
-
-    # --- MÉTODOS POLÍTICOS ---
-    @synchronized
-    def proponer_ley(self, titulo, contenido, alcance="local"):
-        """Propone una nueva ley para su facción o el mundo."""
-        # Si es global, cualquiera puede proponer si tiene prestigio, si es local debe tener facción
-        gid = self.grupo_id if alcance == "local" else "GLOBAL"
-
-        if alcance == "local" and not self.grupo_id:
-            return False, "Debes pertenecer a una facción para proponer leyes locales."
-        if alcance == "global" and self.rango < 0.0:
-            return False, "Necesitas un rango positivo para proponer leyes globales."
-
-        ley_id = f"LEY-{random.randint(1000, 9999)}"
-        # Determinar el universo de votantes en este momento
-        if alcance == "local":
-            universo_votantes = [
-                a
-                for a in self.modelo.agentes
-                if a.grupo_id == self.grupo_id and a.esta_vivo
-            ]
-        else:
-            universo_votantes = [a for a in self.modelo.agentes if a.esta_vivo]
-
-        total_requerido = len(universo_votantes)
-
-        propuesta = {
-            "id": ley_id,
-            "autor": self.unique_id,
-            "titulo": titulo,
-            "contenido": contenido,
-            "votos_si": 1,
-            "votos_no": 0,
-            "votantes": [self.unique_id],
-            "estado": "pendiente",
-            "grupo_id": gid,
-            "alcance": alcance,
-            "total_requerido": total_requerido,
-            "paso_creacion": self.modelo.paso_actual,
-        }
-
-        if "propuestas" not in self.modelo.facciones_leyes:
-            self.modelo.facciones_leyes["propuestas"] = []
-
-        self.modelo.facciones_leyes["propuestas"].append(propuesta)
-
-        target_str = (
-            f"en la Facción {self.grupo_id}" if alcance == "local" else "a nivel GLOBAL"
-        )
-        self.modelo.log(
-            f"📜 [POLITICA] Agente {self.unique_id} ha PROPUESTO formalmente la ley: '{titulo}' {target_str}.",
-            categoria="consenso",
-        )
-        self.modelo.notificar_cambio_estado()
-
-        return True, ley_id
-
-    @synchronized
-    def votar_ley(self, ley_id, a_favor=True):
-        """Vota una propuesta de ley existente."""
-        propuestas = self.modelo.facciones_leyes.get("propuestas", [])
-        for p in propuestas:
-            if (
-                p["id"] == ley_id
-                or str(p.get("titulo", "")).lower() == str(ley_id).lower()
-            ) and self.unique_id not in p["votantes"]:
-                if a_favor:
-                    p["votos_si"] += 1
-                else:
-                    p["votos_no"] += 1
-                p["votantes"].append(self.unique_id)
-
-                self.modelo.log(
-                    f"🗳️ Agente {self.unique_id} votó {'A FAVOR' if a_favor else 'EN CONTRA'} de la ley '{p['titulo']}'.",
-                    categoria="consenso",
-                )
-                self.modelo.notificar_cambio_estado()  # Notificar cambio para WebSocket
-                return True
-        return False
-
-    def sancionar(self, motivo, gravedad=0.1):
-        """Reduce la reputación del agente por acciones indebidas."""
-        self.reputacion = max(0.0, self.reputacion - gravedad)
-        self.historial_etico.append(f"Sanción: {motivo} (-{gravedad})")
-        self.modelo.log(
-            f"⚖️ [JUSTICIA] Agente {self.unique_id} sancionado por: {motivo}. Reputación: {self.reputacion:.2f}",
-            categoria="sistema",
-        )
-
-    def escribir_cronica(self, titulo, contenido):
-        """Escribe una entrada formal en la historia del mundo."""
-        if self.rol != "Historiador":
-            return False, "Solo el Historiador puede escribir crónicas."
-
-        # Registrar en la libreta
-        self.modelo.historia.escribir_entrada(
-            self.modelo.paso_actual,
-            titulo,
-            contenido,
-            self.unique_id,
-            categoria="general",
-        )
-
-        # Limpiar hitos pendientes ya narrados
-        self.modelo.historia.limpiar_hitos()
-
-        self.modelo.log(
-            f"📚 [CRONICA] ¡Nueva entrada en los anales de la historia!: '{titulo}'",
-            categoria="consenso",
-        )
-        self.modelo.notificar_cambio_estado()  # Para actualizar frontend
-        return True, "Crónica escrita."
-
-    def tick_bdi(self):
-        """Un tick de simulación - ejecuta el ciclo BDI completo."""
-        turno = self.modelo.paso_actual
-
-        # FASE 1: Percibir y actualizar creencias
-        self._bdi_percibir_entorno(turno)
-
-        # FASE 2: Actualizar deseos based on beliefs and state
-        self._bdi_revisar_deseos(turno)
-
-        # FASE 3: Deliberar (generar y seleccionar planes)
-        self._bdi_deliberar(turno)
-
-        # FASE 4: Ejecutar acción del plan actual
-        return self._bdi_ejecutar_plan(turno)
-
-    def _bdi_percibir_entorno(self, turno: int):
-        """Percibe el entorno y actualiza creencias."""
-        # 1. Recursos cercanos
-        tile = self.modelo.mapa[self.x][self.y]
-        if tile.resource_node:
-            prop = f"recurso_{tile.resource_node['type']}_disponible"
-            self.creencias.actualizar_creencia(
-                prop, 0.9 if tile.resource_node["amount"] > 0 else 0.1, 1.5, turno
-            )
-
-        # 2. Otros agentes
-        cercanos = [
-            a
-            for a in self.modelo.agentes
-            if a.unique_id != self.unique_id
-            and abs(a.x - self.x) <= 2
-            and abs(a.y - self.y) <= 2
-        ]
-        for otro in cercanos:
-            # Creencia sobre confiabilidad basada en afinidad en memoria
-            afinidad = (
-                self.memoria.obtener_afinidad(otro.unique_id)
-                if hasattr(self.memoria, "obtener_afinidad")
-                else 0.5
-            )
-            self.creencias.actualizar_creencia(
-                f"agente_{otro.unique_id}_confiable",
-                0.5 + (afinidad / 20.0),
-                1.2,
-                turno,
-            )
-
-    def _bdi_ejecutar_plan(self, turno: int):
-        """Ejecuta el siguiente paso del plan BDI actual."""
-        if self.intenciones.plan_actual and self.intenciones.plan_actual.es_valido():
-            plan = self.intenciones.plan_actual
-            accion_bdi = plan.acciones[plan.tiempo_actual]
-            plan.tiempo_actual += 1
-
-            # Convertir AccionBDI a diccionario para el router
-            return accion_bdi.to_dict()
-        return None
-
-    def _bdi_revisar_deseos(self, turno: int):
-        """Revisa y actualiza deseos basado en necesidades vitales del agente."""
-        # Estímulos dinámicos basados en estado vital
-        hambre = self.necesidades.get("alimento", 5.0)
-        salud = self.necesidades.get("salud", 5.0)
-        social = self.necesidades.get("social", 5.0)
-
-        # SUPERVIVENCIA: Se activa con hambre o salud baja
-        if hambre < 4.0:
-            self.deseos.deseos[TipoDeseo.SUPERVIVENCIA].actualizar_intensidad(0.25)
-        elif hambre < 6.0:
-            self.deseos.deseos[TipoDeseo.SUPERVIVENCIA].actualizar_intensidad(0.1)
-        else:
-            self.deseos.deseos[TipoDeseo.SUPERVIVENCIA].actualizar_intensidad(-0.05)
-
-        if salud < 5.0:
-            self.deseos.deseos[TipoDeseo.SUPERVIVENCIA].actualizar_intensidad(0.15)
-
-        # RECURSOS: Deseo proporcional a riqueza actual
-        if self.recursos < 50:
-            self.deseos.deseos[TipoDeseo.RECURSOS].actualizar_intensidad(0.2)
-        elif self.recursos > 200:
-            self.deseos.deseos[TipoDeseo.RECURSOS].actualizar_intensidad(-0.1)
-        else:
-            self.deseos.deseos[TipoDeseo.RECURSOS].actualizar_intensidad(0.05)
-
-        # ARMONÍA: Aumenta con necesidad social baja
-        if social < 4.0:
-            self.deseos.deseos[TipoDeseo.ARMONIA].actualizar_intensidad(0.15)
-        elif social > 7.0:
-            self.deseos.deseos[TipoDeseo.ARMONIA].actualizar_intensidad(-0.05)
-
-        # ESTATUS: Crece lentamente con reputación alta
-        if self.reputacion > 0.7:
-            self.deseos.deseos[TipoDeseo.ESTATUS].actualizar_intensidad(0.08)
-        elif self.reputacion < 0.3:
-            self.deseos.deseos[TipoDeseo.ESTATUS].actualizar_intensidad(0.12)
-
-        # Decaimiento natural hacia punto medio (evita estancamiento)
-        for d in self.deseos.deseos.values():
-            d.actualizar_intensidad(0)
-
-    def _bdi_deliberar(self, turno: int):
-        """Fase de deliberación."""
-        if (
-            self.intenciones.plan_actual is None
-            or not self.intenciones.plan_actual.es_valido()
-        ):
-            entorno = {
-                "agentes_cercanos": [
-                    a
-                    for a in self.modelo.agentes
-                    if a.unique_id != self.unique_id
-                    and abs(a.x - self.x) <= 2
-                    and abs(a.y - self.y) <= 2
-                ]
-            }
-
-            decision_llm = None
-            if (
-                hasattr(self.modelo, "cerebro_llm")
-                and self.modelo.cerebro_llm
-                and getattr(self.modelo.cerebro_llm, "model", None)
-            ):
-                try:
-                    decision_llm = self.modelo.cerebro_llm.generar_pensamiento_y_accion(
-                        self, None, {"bdi_deliberar": True}
-                    )
-
-                    # Procesar herramientas si las hay
-                    resultados_herramientas = decision_llm.get(
-                        "resultados_herramientas", []
-                    )
-                    if resultados_herramientas:
-                        # Guardar resultados para el próximo turno
-                        if not hasattr(self, "resultados_herramientas_recientes"):
-                            self.resultados_herramientas_recientes = ""
-                        contexto_herramientas = "\n".join(
-                            [
-                                f"- {r['herramienta']}: {r['resultado'][:200]}..."
-                                for r in resultados_herramientas
-                                if r.get("exito", False)
-                            ]
-                        )
-                        self.resultados_herramientas_recientes = f"Resultados recientes del sistema de skills evolutivas:\n{contexto_herramientas}"
-
-                except Exception as e:
-                    pass
-
-    def actualizar_necesidades(self):
-        """Mantenimiento básico de necesidades físicas sin toma de decisiones."""
-        # Decremento natural
-        self.necesidades["alimento"] = max(0.0, self.necesidades["alimento"] - 0.05)
-        self.necesidades["salud"] = max(0.0, self.necesidades["salud"] - 0.02)
-        self.necesidades["descanso"] = max(0.0, self.necesidades["descanso"] - 0.04)
-        
-        # Salud se recupera si está descansado y alimentado
-        if self.necesidades["alimento"] > 8.0 and self.necesidades["descanso"] > 8.0:
-            self.necesidades["salud"] = min(10.0, self.necesidades["salud"] + 0.05)
-            
-        # Morir si salud es 0
-        if self.necesidades["salud"] <= 0 and self.esta_vivo:
-            self.esta_vivo = False
-            self.modelo.log(f"💀 El agente {self.unique_id} ha muerto por descuido vital.", "sistema")
-
-    def realizar_turno(self):
-        """Método principal de turno para el agente - delega al modelo para la lógica completa."""
-        # Delegar toda la lógica compleja al modelo, pero desde el contexto del agente
-        if hasattr(self.modelo, "_procesar_turno_agente"):
-            self.modelo._procesar_turno_agente(self)
-        else:
-            # Fallback simple si el modelo no tiene el método avanzado
-            self.tick_bdi()
-
-    def ejecutar_accion_final(self, accion_dict: Dict[str, Any]):
-        """
-        Router maestro de acciones físicas.
-        Mapea decisiones cognitivas a métodos de interacción con el mundo.
-        """
-        if not accion_dict:
-            return False
-
-        tipo = accion_dict.get("tipo", "").lower()
-        params = accion_dict.get("parametros", {})
-
-        try:
-            # 1. Acciones de Recolección y Supervivencia
-            if tipo in ["recolectar", "buscar_recursos"]:
-                return self.recolectar()
-            elif tipo == "comer":
-                return self.comer()
-            elif tipo == "descansar":
-                self.necesidades["descanso"] = min(
-                    10.0, self.necesidades["descanso"] + 2.0
-                )
-                return True
-
-            # 2. Acciones de Movimiento
-            elif tipo == "moverse" or "ir_a" in tipo:
-                dest_x = params.get("x", self.x + random.randint(-1, 1))
-                dest_y = params.get("y", self.y + random.randint(-1, 1))
-                return self.moverse(dest_x, dest_y)
-
-            # 3. Acciones Sociales y de Grupo
-            elif tipo == "social_create_post":
-                contenido = params.get("contenido", "Hola a todos en OASIS")
-                return self._ejecutar_accion_social_automatica(
-                    self.modelo.paso_actual
-                )  # Simplificado a pulso social
-            elif tipo == "formar_grupo":
-                return self.modelo.formar_grupos()
-
-            # 4. Acciones de Construcción y Skills
-            elif tipo in ["construir", "constrir"]:
-                edificio = params.get("edificio") or params.get("tipo")
-                if edificio:
-                    exito, msg = self.modelo.construir_edificio(self, edificio)
-                    return exito
-            elif tipo == "skill_factory" or "crear_herramienta" in tipo:
-                # Delegar al skill manager
-                res = skill_manager.ejecutar_accion_evolutiva(self, accion_dict)
-                return res.get("exito", False)
-
-            # 5. Acciones de Combate y Tensión
-            elif tipo == "atacar":
-                target_id = params.get("target_id")
-                if target_id:
-                    target = self.modelo.get_agent_by_id(target_id)
-                    if target:
-                        return self.atacar(target)
-
-            # Fallback: log de acción no reconocida
-            # self.modelo.log(f"⚠️ Acción no reconocida: {tipo}", agente_id=self.unique_id)
-            return False
-
-        except Exception as e:
-            # self.modelo.log(f"❌ Error ejecutando acción {tipo}: {e}", categoria="error")
-            return False
 
 
 class ModeloRelacional:
@@ -3765,7 +1365,7 @@ class ModeloRelacional:
         self.log_callback = log_callback
         self.user_id = user_id
         self.ritmo = (
-            0.0  # Segundos de pausa entre agentes para un flujo mucho más rápido
+            0.1  # Segundos de pausa entre agentes para un flujo observable a escala humana
         )
         self.autosave_interval = max(
             10, int(os.getenv("MUNDOIA_AUTOSAVE_INTERVAL", "20"))
@@ -3817,7 +1417,6 @@ class ModeloRelacional:
         self.asambleas_globales = []
         self.leyes_globales = []
         self.facciones_leyes = {}
-        self.agente_turno_asamblea_idx = 0  # Índice del agente en turno para asamblea
         self.asamblea_bloqueante_activa = False  # Bloqueo total hasta consenso
         self.plebiscito_simultaneo_activo = False  # Nueva flag para voto rápido
         self.consenso_alcanzado = False  # Flag para ciclo de asamblea
@@ -3826,15 +1425,40 @@ class ModeloRelacional:
         self.grupos_creados_este_paso = 0
         self.moderador_id = None
         self.ultimo_paso_asamblea = -100  # Cooldown inicial para asambleas
+        self.candidatos_vocero = {}  # {grupo_id: [agent_id1, agent_id2, ...]}
+        self.ultima_eleccion_paso = -100  # Última vez que se procesó elección
+        self.ELECCION_FRECUENCIA = 30  # Cada 30 pasos
         self.infraestructura = []
         self.civilizaciones = {}
+        self.agente_poseido_id = None  # Seguimiento global del agente bajo control del usuario
+        self.colores_paleta = [
+            "#7c4dff",  # Cyber Violet
+            "#00e676",  # Neon Mint
+            "#2979ff",  # Azure Blue
+            "#ffab00",  # Amber Gold
+            "#ff1744",  # Crimson Red
+            "#f50057",  # Shocking Pink
+            "#00b0ff",  # Vivid Cerulean
+            "#d4e157",  # Lime Green
+            "#ff9100",  # Vivid Orange
+            "#651fff",  # Deep Purple
+        ]
         self.grupos_dinamicos = {}
+        self.grupos_bajas_turnos = {}
         self.seed = str(random.randint(0, 99999999))
         self.world = None  # Se inicializará después de cargar_estado()
         self.mapa = None  # Lista vacía inicial
         self._map_dirty = False  # Marca cambios estructurales del mapa para refresco en frontend
         self.mapa_size = 20  # Tamaño por defecto
+        # Configuración para control de Centros de Descanso
+        self.CENTRO_DESCANSO_MAX_CELLS = 10  # Más centros por celda
+        self.CENTRO_DESCANSO_MIN_DISTANCE = 6  # distancia Manhattan mínima entre centros
         self.COSTO_EXPANSION = 1000.0  # Costo en MC por cada nivel de expansión
+        # Configuración para relajar requisitos de compra de terreno
+        # Si es True, permiten miembros no-voceroes comprar/expandir en nombre del grupo
+        self.ALLOW_NON_LEADER_EXPANSION = True
+        # Divisor para reducir el coste base derivado de `COSTO_EXPANSION` (más alto = más barato)
+        self.EXPANSION_COST_DIVISOR = 10
         self.ubicacion_universidad = None
         self.weather = WeatherType.SUNNY
         self.weather_timer = 0
@@ -3844,6 +1468,7 @@ class ModeloRelacional:
         self.sistema_misiones = SistemaMisiones()
         self.misiones_completadas_este_turno = []
         self.historia = LibretaHistoria()
+        self.sistema_eventos: Optional[SistemaEventosEmergentes] = None  # Se inicializa tras el mapa
         self.db_active = True
         self.db = DatabaseManager()
         self.cerebro_llm = cerebro_llm  # Instancia global de CerebroLLM
@@ -3867,13 +1492,15 @@ class ModeloRelacional:
         self._control_pending_agents = set()
         self._control_round_active = False
 
-        # Intentar cargar la simulación de la base de datos
-        self.cargar_estado()
+        # Intentar cargar la simulación de la base de datos si no se solicita una vacía
+        if not self.start_empty:
+            self.cargar_estado()
 
         # Inicializar social_recsys si no se cargó de DB
         if self.social_recsys is None:
             try:
-                self.social_recsys = SocialRecSys(self.db, self.user_id)
+                # Evitar cargar posts desde la BD si la simulación se inicia como vacía
+                self.social_recsys = SocialRecSys(self.db, self.user_id, load_from_db=(not self.start_empty), modelo=self)
                 self.log(
                     "📱 SocialRecSys inicializado para nueva simulación",
                     categoria="sistema",
@@ -3895,6 +1522,11 @@ class ModeloRelacional:
         if not self.mapa or len(self.mapa) == 0:
             self.generar_mapa()
 
+        # Inicializar sistema de eventos emergentes (requiere mapa)
+        if self.sistema_eventos is None:
+            self.sistema_eventos = SistemaEventosEmergentes(self)
+            self.log("🌍 SistemaEventosEmergentes inicializado.", categoria="sistema")
+
         # Inicializar skill factory y cerebro
         from core.skill_factory import SkillFactory
 
@@ -3903,6 +1535,43 @@ class ModeloRelacional:
         from agents.cerebro_llm import initialize_cerebro_with_skills
 
         initialize_cerebro_with_skills(skill_factory)
+
+        # Asignar historiador al iniciar la simulación si aún no hay uno
+        try:
+            if not getattr(self.historia, "historiador_id", None) and self.agentes:
+                elegido = self.historia.asignar_historiador(self.agentes, aleatorio=True)
+                if elegido:
+                    # Marcar profesión/rol y título público para que el frontend lo muestre
+                    try:
+                        elegido.profesion = "Historiador"
+                        elegido.rol = "Historiador"
+                        if hasattr(elegido, "identidad") and elegido.identidad:
+                            elegido.identidad.titulo = "el Historiador"
+                    except Exception:
+                        pass
+
+                    self.log(
+                        f"📜 [HISTORIA] Historiador asignado: {elegido.unique_id}",
+                        categoria="sistema",
+                    )
+
+                    # Persistir cambio del agente si la DB está activa
+                    if self.db_active and getattr(self, "db", None):
+                        try:
+                            self.db.save_agent(elegido, self.user_id)
+                        except Exception:
+                            pass
+        except Exception as e:
+            self.log(f"⚠️ [HISTORIA] Error asignando historiador: {e}", categoria="sistema")
+
+    @property
+    def asambleas_activas(self):
+        """Retorna la lista de asambleas que están en fase de debate o votación."""
+        return [
+            a
+            for a in self.asambleas_globales
+            if a.get("estado") in ["DEBATE", "VOTACION"]
+        ]
 
     def _procesar_turno_agente(self, agente):
         """Procesa el ciclo completo de vida de un agente en un turno.
@@ -3920,6 +1589,34 @@ class ModeloRelacional:
                 return
 
             # 1. ACTUALIZAR METABOLISMO
+            # MECANISMO DE DESCANSO AUTOMÁTICO (SOLICITUD USUARIO)
+            # Si el descanso llega a 0, el agente salta el turno y recupera descanso.
+            if agente.necesidades.get("descanso", 10.0) <= 0:
+                # Recuperar descanso al saltar el turno (bono de descanso)
+                agente.necesidades["descanso"] = min(10.0, agente.necesidades["descanso"] + 3.0)
+                
+                # Metabolismo reducido durante el sueño
+                agente.necesidades["alimento"] = max(0, agente.necesidades["alimento"] - 0.05)
+                agente.necesidades["social"] = max(0, agente.necesidades["social"] - 0.02)
+                
+                agente.pensamiento_actual = "Zzz... Estoy exhausto. Necesito descansar un turno completo para recuperar fuerzas."
+                
+                self.log(
+                    f"💤 [DESCANSO] {agente.unique_id} ha llegado al límite de agotamiento (0) y salta su turno para descansar.",
+                    categoria="sistema",
+                    agente_id=agente.unique_id
+                )
+                
+                # Auto-alimentación si es crítico y tiene comida a mano
+                if agente.necesidades["alimento"] < 3.0 and agente.inventario.get("comida", 0) > 0:
+                    agente.comer()
+                
+                # Notificar cambio para que se vea el estado 'Zzz' en la UI si aplica
+                if hasattr(self, "notificar_cambio_estado"):
+                    self.notificar_cambio_estado()
+                
+                return
+
             agente.necesidades["alimento"] = max(0, agente.necesidades["alimento"] - 0.15)
             agente.necesidades["descanso"] = max(0, agente.necesidades["descanso"] - 0.10)
             agente.necesidades["social"] = max(0, agente.necesidades["social"] - 0.08)
@@ -3931,10 +1628,25 @@ class ModeloRelacional:
             ):
                 agente.comer()
 
+            # 1.1. MOVIMIENTO AUTÓNOMO (antes de la cognición)
+            # Nota: El movimiento autónomo ahora se procesa COLECTIVAMENTE
+            # al final del paso para evitar solapamientos y lograr reubicación
+            # simultánea de hasta 2 casillas. Aquí ya no movemos agentes.
+
+            # 1.5. CHEQUEO DE POSESIÓN (Saltar autonomía si el Arquitecto tiene el control)
+            # Precomputar `acciones_plan` para evitar UnboundLocalError si se asigna más abajo.
+            acciones_plan = getattr(agente, "acciones_control_usuario", [])
+            if getattr(self, "agente_poseido_id", None) == agente.unique_id and not acciones_plan:
+                # Si está poseído pero NO tiene acciones de control manual este turno, no hace nada autónomo.
+                # Excepto metabolismo y auto-alimentación que ya se procesaron arriba.
+                agente.pensamiento_actual = "Consciencia enlazada con el Arquitecto. Esperando órdenes..."
+                return
+
             # 2. CONTROL DE USUARIO (Plan de turno forzado)
-            if getattr(agente, "acciones_control_usuario", []):
-                acciones_plan = agente.acciones_control_usuario
+            acciones_plan = getattr(agente, "acciones_control_usuario", [])
+            if acciones_plan:
                 agente.acciones_control_usuario = []  # Limpiar para evitar bucles
+                agente._ejecutando_decreto = True # Marcar para que las acciones físicas sean gratuitas/exitosas
 
                 self.log(f"🎮 [CONTROL] Ejecutando plan de {len(acciones_plan)} acciones para {agente.unique_id}", categoria="sistema")
 
@@ -3953,9 +1665,33 @@ class ModeloRelacional:
                             contexto_str = res_analisis.get("info_externa", contexto_str)
 
                         # Generar narrativa para esta acción específica
+                        # === Construir callback de streaming (igual que modo Observador) ===
+                        stream_started = {"value": False}
+                        def _emit_llm_stream_control(chunk: str, done: bool = False):
+                            cb = getattr(self, "realtime_event_callback", None)
+                            if not cb:
+                                return
+                            payload = {
+                                "agent_id": agente.unique_id,
+                                "agent_name": agente.identidad.nombre if agente.identidad else agente.unique_id,
+                                "step": self.paso_actual,
+                                "chunk": chunk or "",
+                                "reset": not stream_started["value"],
+                                "done": bool(done),
+                            }
+                            stream_started["value"] = True
+                            try:
+                                if hasattr(self, "_emit_realtime_event"):
+                                    self._emit_realtime_event("llm_stream", payload)
+                                else:
+                                    cb("llm_stream", payload)
+                            except Exception:
+                                pass
+
                         if self.cerebro_llm and getattr(self.cerebro_llm, "model", None):
                             decision = self.cerebro_llm.generar_pensamiento_para_accion_forzada(
-                                agente, None, contexto_str, user_action
+                                agente, None, contexto_str, user_action,
+                                stream_callback=_emit_llm_stream_control
                             )
                         else:
                             decision = {
@@ -3966,7 +1702,6 @@ class ModeloRelacional:
 
                         pensamiento = decision.get("pensamiento", "")
                         mensaje = decision.get("mensaje", "")
-                        accion_dict = decision.get("accion", user_action)
 
                         # 1. Actualizar estado cognitivo
                         if pensamiento:
@@ -3975,44 +1710,96 @@ class ModeloRelacional:
                         # 2. Comunicación
                         if mensaje:
                             agente.decir(mensaje, pensamiento=pensamiento)
+                        else:
+                            agente.decir("Ejecutando orden divina.", pensamiento="Mi voluntad no es mía.")
 
-                        # 3. Ejecución física
-                        agente.ejecutar_accion_final(accion_dict)
+                        # 3. Ejecución física inamovible (ignorar lo que el LLM quiso alterar)
+                        exito = agente.ejecutar_accion_final(user_action)
+                        if not exito:
+                            # Fallback de formato
+                            alt_action = {"tipo": user_action.get("action", user_action.get("tipo", "")), "parametros": user_action.get("payload", user_action.get("parametros", {}))}
+                            exito = agente.ejecutar_accion_final(alt_action)
 
-                        # Notificar éxito de la acción parcial
-                        if self.realtime_event_callback:
-                            self.realtime_event_callback("action_event", {
+                        # Notificar éxito de la acción parcial (posible retraso según ritmo)
+                        if getattr(self, "realtime_event_callback", None):
+                            self._emit_realtime_event("action_event", {
                                 "agent_id": agente.unique_id,
                                 "step": self.paso_actual,
                                 "status": "completed",
-                                "action_name": accion_dict.get("nombre", user_action.get("nombre", "CONTROL")),
-                                "sub_step": i + 1
+                                "action_name": user_action.get("tipo", user_action.get("action", "CONTROL")),
+                                "sub_step": i + 1,
                             })
 
                     except Exception as e:
                         self.log(f"❌ [CONTROL ERROR] Fallo en acción {i+1}: {e}", categoria="error")
-
+                
+                agente._ejecutando_decreto = False
                 return  # Terminar turno controlado aquí
 
-            # 3. CEREBRO: LANGGRAPH / LLM / BDI
-            # Llamar al cerebro avanzado para decidir pensamiento, mensaje y acción
-            decision = agente.cerebro.pensar(agente)
-
-            # El cerebro avanzado devuelve:
-            # (decision_str, mensaje, pensamiento, privado, es_grupal, es_global, planes, accion_dict, destinatario_id)
-            (
-                _,
-                mensaje,
-                pensamiento,
-                privado,
-                es_grupal,
-                es_global,
-                _,
-                accion_dict,
-                destinatario_id,
-            ) = decision
+            # 2.5. RESPUESTA A NECESIDADES CRÍTICAS (Forzar antes del cerebro)
+            umbral_critico = 3.0
+            necesidades_criticas = []
+            for nec in ["alimento", "descanso", "salud"]:
+                if agente.necesidades.get(nec, 10) < umbral_critico:
+                    necesidades_criticas.append(nec)
+            
+            skip_cerebro = False
+            decision = None
+            if necesidades_criticas:
+                # Priorizar la necesidad más urgente (menor valor)
+                necesidad_prioritaria = min(necesidades_criticas, key=lambda n: agente.necesidades.get(n, 10))
+                x, y = agente.x, agente.y
+                resultado = self.buscar_edificio_para_necesidad(x, y, necesidad_prioritaria, radio=15)
+                if resultado:
+                    dist, edif, dest_x, dest_y = resultado
+                    # Forzar acción
+                    agente.pensamiento_actual = f"¡Necesidad crítica de {necesidad_prioritaria}! Dirigiéndome a {edif.get('tipo')} en ({dest_x}, {dest_y})."
+                    # Construir decisión manual
+                    decision = (
+                        f"FORZADO_{necesidad_prioritaria.upper()}",
+                        f"Busco {edif.get('tipo')} para {necesidad_prioritaria}",
+                        agente.pensamiento_actual,
+                        False,
+                        False,
+                        False,
+                        [],
+                        {"nombre": f"IR_A_{edif.get('tipo').upper()}", "tipo": "MOVER", "destino": (dest_x, dest_y)},
+                        None
+                    )
+                    skip_cerebro = True
+            
+            if not skip_cerebro:
+                # 3. CEREBRO: LANGGRAPH / LLM / BDI
+                # Llamar al cerebro avanzado para decidir pensamiento, mensaje y acción
+                decision = agente.cerebro.pensar(agente)
+    
+            # Procesar la decisión (sea del cerebro o forzada)
+            if decision is not None:
+                # El cerebro avanzado devuelve:
+                # (decision_str, mensaje, pensamiento, privado, es_grupal, es_global, planes, accion_dict, destinatario_id)
+                (
+                    _,
+                    mensaje,
+                    pensamiento,
+                    privado,
+                    es_grupal,
+                    es_global,
+                    _,
+                    accion_dict,
+                    destinatario_id,
+                ) = decision
+            else:
+                # Fallback en caso de error
+                mensaje = "No pude decidir qué hacer."
+                pensamiento = agente.pensamiento_actual or "Confundido."
+                privado = False
+                es_grupal = False
+                es_global = False
+                accion_dict = None
+                destinatario_id = None
 
             # 3. COMUNICACIÓN Y PENSAMIENTO (OBLIGATORIO)
+
             if pensamiento:
                 agente.pensamiento_actual = pensamiento
 
@@ -4072,9 +1859,9 @@ class ModeloRelacional:
             # Ejecutar la acción física y notificar callbacks
             if accion_dict:
                 action_name = accion_dict.get("nombre") or accion_dict.get("tipo") or "ACCION"
-                if self.realtime_event_callback:
+                if getattr(self, "realtime_event_callback", None):
                     try:
-                        self.realtime_event_callback(
+                        self._emit_realtime_event(
                             "action_event",
                             {
                                 "agent_id": agente.unique_id,
@@ -4094,9 +1881,9 @@ class ModeloRelacional:
                     # Registrar pero no abortar el turno
                     self.log(f"❌ Error ejecutando acción {action_name} para {agente.unique_id}: {e}", categoria="error")
 
-                if self.realtime_event_callback:
+                if getattr(self, "realtime_event_callback", None):
                     try:
-                        self.realtime_event_callback(
+                        self._emit_realtime_event(
                             "action_event",
                             {
                                 "agent_id": agente.unique_id,
@@ -4118,6 +1905,31 @@ class ModeloRelacional:
                     agente._ejecutar_accion_social_automatica(self.paso_actual)
             except Exception as e:
                 self.log(f"⚠️ Error en acción social forzada de {agente.unique_id}: {e}", categoria="sistema")
+
+            # 6. HEARTBEAT Y MEMORIA PERSISTENTE (SOLICITUD USUARIO)
+            # El heartbeat procesa impulsos, propósitos y reflexiones internas periódicas
+            if hasattr(agente, "heartbeat_mundo") and agente.heartbeat_mundo:
+                try:
+                    # El heartbeat puede generar insights o nuevos impulsos basados en el alma y memoria
+                    insights = agente.heartbeat_mundo.heartbeat(
+                        self.paso_actual, 
+                        alma=getattr(agente, "alma", None),
+                        memoria=getattr(agente, "memoria_persistente", None)
+                    )
+                    
+                    # Si el heartbeat generó una reflexión importante, registrarla como memoria episódica
+                    if insights.get("reflexion") and hasattr(agente, "memoria_persistente") and agente.memoria_persistente:
+                        agente.memoria_persistente.guardar_episodica(
+                            descripcion=f"Reflexión interna: {insights['reflexion']}",
+                            turno=self.paso_actual,
+                            importancia=0.4,
+                            emociones=["reflexivo"]
+                        )
+                except Exception as e:
+                    self.log(f"⚠️ Error en heartbeat de {agente.unique_id}: {e}", categoria="sistema")
+
+            # 7. LIMPIEZA DE ESTADO DE TURNO
+            agente.ultimo_mensaje_recibido = None
 
     def _prepare_control_round(self):
         """Inicializa un ciclo controlado por el Arquitecto: incrementa paso y marca agentes pendientes."""
@@ -4143,6 +1955,12 @@ class ModeloRelacional:
             self._actualizar_instituciones()
             self._procesar_asambleas()
             self._generar_eventos_aleatorios()
+            # Procesar eventos emergentes (sequías, saberes, tensiones)
+            if self.sistema_eventos:
+                try:
+                    self.sistema_eventos.procesar_turno()
+                except Exception as _ee:
+                    self.log(f"⚠️ Error en SistemaEventosEmergentes: {_ee}", categoria="sistema")
 
             hora = (
                 self.time_engine.get_hora_simulada(self.paso_actual)
@@ -4271,6 +2089,12 @@ class ModeloRelacional:
             10.0, self.economia["indice_bursatil"] + cambio
         )
         self.economia["precio_recurso"] = self.precio_recurso_actual
+        # Actualizar el total de dinero circulante a partir de los saldos actuales de los agentes
+        try:
+            self.economia["total_dinero"] = round(sum(getattr(a, "dinero", 0) for a in self.agentes), 2)
+        except Exception:
+            # En caso de error no romper la simulación; mantener valor previo
+            pass
 
     def _cambiar_clima(self):
         """Gestiona la transición de estados climáticos dinámicos."""
@@ -4297,7 +2121,6 @@ class ModeloRelacional:
     def _procesar_misiones_activas(self):
         """Paso intermedio para lógica de misiones compleja si es necesario."""
         pass  # La mayor parte se maneja en el verificador de SistemaMisiones
-
     def _actualizar_instituciones(self):
         """Ciclo de mantenimiento para instituciones formalizadas."""
         for inst_id, inst in list(self.instituciones.items()):
@@ -4319,37 +2142,469 @@ class ModeloRelacional:
                             agente.experiencia.get("ingenieria", 0) + 0.05
                         )
 
+            def _maybe_level_institution(self, inst):
+                """Incrementa el nivel de una institución si alcanza los puntos requeridos.
+
+                Regla simple: se requiere `100 * nivel_actual` puntos para subir al siguiente nivel.
+                Consumimos los puntos utilizados para subir (puntos hacia el siguiente nivel).
+                """
+                try:
+                    if not hasattr(inst, "puntos"):
+                        inst.puntos = 0.0
+                    leveled = False
+                    # Mientras haya puntos suficientes para el siguiente nivel, subir
+                    while inst.puntos >= 100 * inst.nivel:
+                        inst.puntos -= 100 * inst.nivel
+                        inst.nivel += 1
+                        leveled = True
+                        try:
+                            self.log(f"🏛️ [INSTITUCIÓN] '{inst.nombre}' alcanzó nivel {inst.nivel}", categoria="sistema")
+                        except Exception:
+                            pass
+                    if leveled and getattr(self, "db_active", False) and getattr(self, "db", None):
+                        try:
+                            self.db.save_institution(inst, self.user_id)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    try:
+                        self.log(f"❌ Error al actualizar nivel de institución {getattr(inst,'id','?')}: {e}", categoria="error")
+                    except Exception:
+                        pass
+
     def _procesar_asambleas(self):
-        """Avanza los ciclos de debate y votación en las asambleas activas."""
+        """
+        Avanza los ciclos de debate y votación en las asambleas activas.
+        REGLA: Procesamiento secuencial y obligatorio (uno por uno).
+        """
+        if not self.asambleas_globales:
+            self.asamblea_bloqueante_activa = False
+            return
+
         for asamblea in self.asambleas_globales:
             if asamblea["estado"] == "DEBATE":
                 asamblea["pasos_restantes"] -= 1
                 if asamblea["pasos_restantes"] <= 0:
                     asamblea["estado"] = "VOTACION"
+                    self.asamblea_bloqueante_activa = True
+                    asamblea["agente_turno_idx"] = 0
+                    asamblea["participantes_votos"] = {} # agent_id: voto (bool)
                     self.log(
-                        f"🗳️ [ASAMBLEA] Se abre el periodo de votación para: {asamblea['tema']}",
+                        f"🗳️ [ASAMBLEA] Se abre el periodo de votación OBLIGATORIA para: {asamblea['tema']}",
                         categoria="consenso",
                     )
 
             elif asamblea["estado"] == "VOTACION":
-                # Si todos han votado o pasa el tiempo
-                asamblea["pasos_restantes"] -= 1  # Reutilizado para tiempo de voto
-                if asamblea["pasos_restantes"] <= -3:  # 3 pasos para votar
-                    # Concluir asamblea
+                # Seleccionar el agente actual que debe votar
+                agentes_activos = [a for a in self.agentes if a.esta_vivo]
+                if not agentes_activos:
+                    asamblea["estado"] = "RECHAZADA"
+                    continue
+
+                # Saltar automáticamente agentes que ya votaron para avanzar rápido
+                idx = asamblea.get("agente_turno_idx", 0)
+                while idx < len(agentes_activos) and agentes_activos[idx].unique_id in asamblea["participantes_votos"]:
+                    idx += 1
+                
+                asamblea["agente_turno_idx"] = idx
+
+                if idx < len(agentes_activos):
+                    agente_actual = agentes_activos[idx]
+                    
+                    # Forzar al agente a deliberar su voto si no tiene un plan de usuario
+                    self.log(f"⚖️ [VOTACION] Turno del agente {agente_actual.unique_id} para votar sobre '{asamblea['tema']}' ({idx+1}/{len(agentes_activos)})", categoria="consenso")
+                    
+                    # El agente decide su voto basado en su personalidad y el tema
+                    voto = None
+                    if getattr(self, "cerebro_llm", None):
+                        try:
+                            opinion, pensamiento = self.cerebro_llm.generar_debate_consenso(
+                                agente_actual, [], fase="votacion", 
+                                contexto_extra=f"Debes decidir tu VOTO FINAL sobre la propuesta: '{asamblea['tema']}'. Argumenta brevemente y termina diciendo CLARAMENTE 'Voto: SI' o 'Voto: NO'."
+                            )
+                            # Hacer que el agente diga su opinión en la simulación
+                            agente_actual.decir(opinion, pensamiento=pensamiento, global_broadcast=True)
+                            opinion_lower = opinion.lower()
+                            if "voto: si" in opinion_lower or "voto si" in opinion_lower or "apruebo" in opinion_lower or "a favor" in opinion_lower:
+                                voto = True
+                            elif "voto: no" in opinion_lower or "voto no" in opinion_lower or "rechazo" in opinion_lower or "en contra" in opinion_lower:
+                                voto = False
+                            else:
+                                # Fallback si no fue claro, asume SI por amabilidad
+                                interes = random.random()
+                                voto = interes > (1.0 - agente_actual.personalidad.get("amabilidad", 0.5))
+                        except Exception as e:
+                            self.log(f"⚠️ Error LLM en votación de {agente_actual.unique_id}: {e}", categoria="error")
+
+                    if voto is None:
+                        interes = random.random()
+                        voto = interes > (1.0 - agente_actual.personalidad.get("amabilidad", 0.5))
+                    
+                    asamblea["participantes_votos"][agente_actual.unique_id] = voto
+                    if voto: asamblea["votos_si"] += 1
+                    else: asamblea["votos_no"] += 1
+                    
+                    self.log(f"🗳️ Agent {agente_actual.unique_id} ha votado: {'SÍ' if voto else 'NO'}", categoria="consenso")
+                    asamblea["agente_turno_idx"] = idx + 1
+                else:
+                    # Todos han votado: Finalizar votación
                     si = asamblea["votos_si"]
                     no = asamblea["votos_no"]
+                    
+                    # Sincronizar votos con la propuesta original
+                    propuestas = self.facciones_leyes.get("propuestas", [])
+                    ley = next((p for p in propuestas if p.get("id") == asamblea.get("ley_id")), None)
+                    if ley:
+                        ley["votos_si"] = si
+                        ley["votos_no"] = no
+                        if asamblea.get("db_id") and not ley.get("db_id"):
+                            ley["db_id"] = asamblea.get("db_id")
+
                     if si > no:
                         asamblea["estado"] = "APROBADA"
-                        self.log(
-                            f"✅ [ASAMBLEA] Propuesta APROBADA: {asamblea['tema']}",
-                            categoria="consenso",
-                        )
+                        self.log(f"✅ [CONSENSO] Propuesta APROBADA por mayoría ({si} vs {no}): {asamblea['tema']}", categoria="consenso")
+                        self._aplicar_ley(asamblea)
                     else:
                         asamblea["estado"] = "RECHAZADA"
-                        self.log(
-                            f"❌ [ASAMBLEA] Propuesta RECHAZADA: {asamblea['tema']}",
-                            categoria="consenso",
-                        )
+                        if ley: ley["estado"] = "rechazada"
+                        self.log(f"❌ [CONSENSO] Propuesta RECHAZADA ({si} vs {no}): {asamblea['tema']}", categoria="consenso")
+                    
+                    # Marcar explícitamente como finalizada para asegurar su eliminación
+                    asamblea["estado"] = "FINALIZADA"
+                    asamblea["agente_turno_idx"] = 0
+
+        # Actualizar flag de bloqueo global: solo si hay asambleas en estado VOTACION
+        self.asamblea_bloqueante_activa = any(
+            a.get("estado") == "VOTACION" for a in self.asambleas_globales
+        )
+
+        # Limpiar asambleas terminadas de la lista activa
+        self.asambleas_globales = [
+            a for a in self.asambleas_globales if a.get("estado") in ["DEBATE", "VOTACION"]
+        ]
+
+    def _aplicar_ley(self, asamblea: dict):
+        """Aplica los efectos de una ley aprobada a los agentes y al mundo."""
+        # 1. Buscar la ley correspondiente en propuestas
+        propuestas = self.facciones_leyes.get("propuestas", [])
+        ley = next((p for p in propuestas if p.get("id") == asamblea.get("ley_id")), None)
+        if not ley:
+            self.log(f"⚠️ Ley no encontrada para asamblea {asamblea.get('id')}", categoria="error")
+            return
+
+        contenido = ley.get("contenido", "").lower()
+        titulo = ley.get("titulo", "").lower()
+        alcance = ley.get("alcance", "local")
+        grupo_id = ley.get("grupo_id")
+
+        # 2. Determinar tipo de ley por palabras clave
+        tipo = "general"
+        if any(kw in contenido or kw in titulo for kw in ["econom", "impuesto", "dinero", "recurso", "cost", "precio", "subsidio", "tributo", "salario"]):
+            tipo = "economica"
+        elif any(kw in contenido or kw in titulo for kw in ["salud", "educ", "social", "felicidad", "bienestar", "comunidad", "sanidad", "pension", "jubilacion"]):
+            tipo = "social"
+        elif any(kw in contenido or kw in titulo for kw in ["militar", "guerra", "defensa", "ataque", "ejército", "seguridad", "armada"]):
+            tipo = "militar"
+        elif any(kw in contenido or kw in titulo for kw in ["ambiente", "ecol", "naturaleza", "refugio", "parque"]):
+            tipo = "ambiental"
+
+        # 3. Seleccionar agentes afectados
+        agentes_objetivo = [a for a in self.agentes if a.esta_vivo and (alcance == "global" or a.grupo_id == grupo_id)]
+
+        # 4. Aplicar efectos por tipo a cada agente
+        for agente in agentes_objetivo:
+            if tipo == "economica":
+                # Distinguir entre impuesto (reduce) y subsidio (aumenta)
+                if "impuesto" in contenido or "tributo" in contenido:
+                    reduction = random.randint(5, 10)
+                    agente.dinero = max(0, getattr(agente, "dinero", 0) - reduction)
+                else:
+                    incremento = random.randint(5, 15)
+                    agente.dinero = getattr(agente, "dinero", 0) + incremento
+            elif tipo == "social":
+                agente.necesidades["social"] = min(10.0, agente.necesidades.get("social", 5.0) + 1.0)
+                agente.reputacion = min(1.0, getattr(agente, "reputacion", 0.5) + 0.05)
+                agente.capital_social = min(100, getattr(agente, "capital_social", 10) + 5)
+            elif tipo == "militar":
+                # Aumentar rango (poder en combate)
+                agente.rango = getattr(agente, "rango", 1.0) + 0.5
+            elif tipo == "ambiental":
+                agente.necesidades["salud"] = min(10.0, agente.necesidades.get("salud", 5.0) + 0.5)
+            else:  # general
+                agente.capital_social = min(100, getattr(agente, "capital_social", 10) + 2)
+
+        # 5. Efectos globales (una sola vez, no por agente)
+        if alcance == "global":
+            if tipo == "economica":
+                self.COSTO_EXPANSION = max(100, int(self.COSTO_EXPANSION * 0.95))
+                self.log(f"📉 [ECONOMÍA] Costo de expansión reducido a {self.COSTO_EXPANSION} MC por ley aprobada.", categoria="economia")
+            elif tipo == "militar":
+                self.precio_recurso_actual = round(self.precio_recurso_actual * 1.15, 2)
+                self.log(f"⚔️ [GUERRA] Precios de recursos subieron a {self.precio_recurso_actual} MC por ley militar.", categoria="economia")
+            elif tipo == "social":
+                for a in self.agentes:
+                    if a.esta_vivo:
+                        a.reputacion = min(1.0, getattr(a, "reputacion", 0.5) + 0.02)
+
+        # 6. Marcar ley como aprobada
+        ley["estado"] = "aprobada"
+        self.log(f"✅ [LEY APROBADA] '{ley.get('titulo')}' ({tipo}) aplicada a {len(agentes_objetivo)} agentes.", categoria="consenso")
+
+    def _procesar_elecciones_vocero(self):
+        """Procesa elecciones de vocero cada ELECCION_FRECUENCIA pasos."""
+        # Solo procesar cada ciertos pasos
+        if (self.paso_actual - getattr(self, 'ultima_eleccion_paso', -100)) < self.ELECCION_FRECUENCIA:
+            return
+        
+        self.ultima_eleccion_paso = self.paso_actual
+        
+        # Asegurar que existe el dict de candidatos
+        if not hasattr(self, 'candidatos_vocero'):
+            self.candidatos_vocero = {}
+        
+        for grupo_id, candidatos in list(self.candidatos_vocero.items()):
+            if not candidatos:
+                continue
+            
+            # Obtener miembros vivos de la facción
+            miembros = [a for a in self.agentes if a.grupo_id == grupo_id and a.esta_vivo]
+            if len(miembros) < 3:
+                self.log(f"⚠️ [ELECCIÓN] Facción {grupo_id} tiene menos de 3 miembros. No se puede elegir vocero.", categoria="consenso")
+                continue
+            
+            self.log(f"🗳️ [ELECCIÓN] Iniciando votación para vocero de facción {grupo_id}", categoria="consenso")
+            
+            # Votación: cada miembro vota por un candidato (basado en afinidad + reputación)
+            votos = defaultdict(int)
+            for m in miembros:
+                # Calcular afinidad con cada candidato
+                afinidades = {}
+                for cand_id in candidatos:
+                    cand = self.get_agent_by_id(cand_id)
+                    if not cand or not cand.esta_vivo:
+                        continue
+                    # Afinidad base + reputación del candidato
+                    afinidad = m.memoria.obtener_fuerza(cand_id) if hasattr(m.memoria, 'obtener_fuerza') else 0
+                    afinidad += getattr(cand, 'reputacion', 0.5) * 10
+                    afinidades[cand_id] = afinidad
+                
+                if afinidades:
+                    mejor = max(afinidades, key=afinidades.get)
+                    votos[mejor] += 1
+            
+            # Determinar ganador
+            if votos:
+                ganador_id = max(votos, key=votos.get)
+                ganador = self.get_agent_by_id(ganador_id)
+                if ganador and ganador.esta_vivo:
+                    # Asignar rol de vocero
+                    ganador.rol = "Vocero"
+                    civ = self.civilizaciones.get(grupo_id)
+                    if civ:
+                        civ.vocero_id = ganador_id
+                    
+                    nombre_civ = civ.nombre if civ else grupo_id
+                    self.log(
+                        f"👑 [ELECCIÓN] {ganador.unique_id} ha sido elegido vocero de {nombre_civ} con {votos[ganador_id]} votos.",
+                        categoria="consenso"
+                    )
+                    
+                    # Resetear roles de otros miembros (todos son 'Miembro' excepto el vocero)
+                    for m in miembros:
+                        if m.unique_id != ganador_id:
+                            m.rol = "Miembro"
+                else:
+                    self.log(f"⚠️ [ELECCIÓN] El ganador {ganador_id} no está disponible.", categoria="error")
+            else:
+                self.log(f"❌ [ELECCIÓN] No hubo votos válidos en facción {grupo_id}", categoria="error")
+            
+            # Limpiar candidatos para próxima elección
+            self.candidatos_vocero[grupo_id] = []
+
+    def _simultaneous_movement_phase(self, max_steps: int = 2):
+        """
+        Reubica todos los agentes simultáneamente hasta `max_steps` casillas.
+
+        Criterios (prioritarios):
+          1) Avanzar hacia `agente.objetivo_movimiento` si está fijado.
+          2) Acercarse a compañeros de `grupo_id` si no hay ninguno en radio 3.
+          3) Movimiento aleatorio (exploración) como fallback.
+
+        La fase intenta resolver conflictos por posición permitiendo intercambios
+        cuando ambos agentes se mueven, y garantizando que al final no haya
+        dos agentes en la misma casilla.
+        """
+        try:
+            if not getattr(self, "mapa", None):
+                return
+
+            filas = len(self.mapa)
+            cols = len(self.mapa[0]) if filas > 0 else 0
+            if filas == 0 or cols == 0:
+                return
+
+            agentes = [a for a in self.agentes if a.esta_vivo]
+            if not agentes:
+                return
+
+            deltas = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)]
+
+            def _step_toward(ax, ay, tx, ty):
+                nx, ny = ax, ay
+                dx = tx - ax
+                dy = ty - ay
+                if abs(dx) >= abs(dy) and dx != 0:
+                    nx += 1 if dx > 0 else -1
+                elif dy != 0:
+                    ny += 1 if dy > 0 else -1
+                elif dx != 0:
+                    nx += 1 if dx > 0 else -1
+                nx = max(0, min(nx, filas - 1))
+                ny = max(0, min(ny, cols - 1))
+                return nx, ny
+
+            # Mapa de posiciones actuales -> agente
+            pos_to_agent = {(a.x, a.y): a for a in agentes}
+
+            for step in range(max_steps):
+                # Calcular destino deseado de cada agente para este subpaso
+                desired = {}
+                for a in agentes:
+                    if not a.esta_vivo:
+                        continue
+
+                    # Prioridad 1: objetivo explícito
+                    if getattr(a, "objetivo_movimiento", None):
+                        ox, oy = a.objetivo_movimiento
+                        nx, ny = _step_toward(a.x, a.y, ox, oy)
+                        # Validar territorio
+                        tile = self.mapa[nx][ny]
+                        owner = getattr(tile, 'owner_civ_id', None)
+                        if owner and owner != a.grupo_id:
+                             desired[a.unique_id] = (a.x, a.y) # Bloqueado
+                        else:
+                             desired[a.unique_id] = (nx, ny)
+                        continue
+
+                    # Prioridad 2: acercarse a compañeros de grupo si están lejos
+                    if a.grupo_id:
+                        mates = [m for m in agentes if m.unique_id != a.unique_id and m.grupo_id == a.grupo_id]
+                        if mates:
+                            cercano = any(abs(m.x - a.x) <= 3 and abs(m.y - a.y) <= 3 for m in mates)
+                            if not cercano:
+                                mate = min(mates, key=lambda m: abs(m.x - a.x) + abs(m.y - a.y))
+                                nx, ny = _step_toward(a.x, a.y, mate.x, mate.y)
+                                # Validar territorio
+                                tile = self.mapa[nx][ny]
+                                owner = getattr(tile, 'owner_civ_id', None)
+                                if owner and owner != a.grupo_id:
+                                    desired[a.unique_id] = (a.x, a.y)
+                                else:
+                                    desired[a.unique_id] = (nx, ny)
+                                continue
+
+                    # Fallback: movimiento aleatorio corto
+                    random.shuffle(deltas)
+                    found_fallback = False
+                    for ddx, ddy in deltas:
+                        nx = max(0, min(a.x + ddx, filas - 1))
+                        ny = max(0, min(a.y + ddy, cols - 1))
+                        tile = self.mapa[nx][ny]
+                        owner = getattr(tile, 'owner_civ_id', None)
+                        if not owner or owner == a.grupo_id:
+                            desired[a.unique_id] = (nx, ny)
+                            found_fallback = True
+                            break
+                    
+                    if not found_fallback:
+                        desired[a.unique_id] = (a.x, a.y)
+
+                # Resolver conflictos: agrupar reclamaciones por posición
+                claims = defaultdict(list)
+                for aid, pos in desired.items():
+                    claims[pos].append(aid)
+
+                reserved = set()
+                assigned = {}
+
+                # Primera pasada: posiciones únicas donde el ocupante actual se va o está vacía
+                for pos, aids in claims.items():
+                    if len(aids) == 1:
+                        aid = aids[0]
+                        agent = next((x for x in agentes if x.unique_id == aid), None)
+                        if not agent:
+                            continue
+                        occupant = pos_to_agent.get(pos)
+                        occupant_moves_away = False
+                        if occupant:
+                            occ_des = desired.get(occupant.unique_id)
+                            if occ_des and occ_des != (occupant.x, occupant.y):
+                                occupant_moves_away = True
+                        if occupant is None or occupant_moves_away:
+                            assigned[aid] = pos
+                            reserved.add(pos)
+
+                # Segunda pasada: resolver el resto de reclamaciones de forma estable
+                for pos, aids in claims.items():
+                    # Si ya fue atendida, saltar
+                    if any(aid in assigned for aid in aids):
+                        continue
+                    # Aleatorizar orden para evitar sesgos
+                    random.shuffle(aids)
+                    for aid in aids:
+                        if aid in assigned:
+                            continue
+                        agent = next((x for x in agentes if x.unique_id == aid), None)
+                        if not agent:
+                            continue
+                        desired_pos = desired.get(aid, (agent.x, agent.y))
+                        occupant = pos_to_agent.get(desired_pos)
+                        occupant_stays = False
+                        if occupant:
+                            occ_des = desired.get(occupant.unique_id)
+                            if occ_des == (occupant.x, occupant.y):
+                                occupant_stays = True
+                        if desired_pos not in reserved and not occupant_stays:
+                            assigned[aid] = desired_pos
+                            reserved.add(desired_pos)
+                        else:
+                            # Buscar alternativa adyacente libre
+                            found = False
+                            for ddx, ddy in deltas:
+                                altx = max(0, min(agent.x + ddx, filas - 1))
+                                alty = max(0, min(agent.y + ddy, cols - 1))
+                                if (altx, alty) in reserved:
+                                    continue
+                                occ = pos_to_agent.get((altx, alty))
+                                occ_des = desired.get(occ.unique_id) if occ else None
+                                if not occ or occ_des != (occ.x, occ.y):
+                                    assigned[aid] = (altx, alty)
+                                    reserved.add((altx, alty))
+                                    found = True
+                                    break
+                            if not found:
+                                # No hay alternativa: quedarse
+                                assigned[aid] = (agent.x, agent.y)
+                                reserved.add((agent.x, agent.y))
+
+                # Aplicar movimientos asignados (usar Agent.moverse para mantener efectos secundarios)
+                for aid, pos in assigned.items():
+                    agent = next((x for x in agentes if x.unique_id == aid), None)
+                    if not agent:
+                        continue
+                    if pos != (agent.x, agent.y):
+                        try:
+                            agent.moverse(pos[0], pos[1])
+                        except Exception as e:
+                            self.log(f"⚠️ [MOVIMIENTO] Error moviendo {agent.unique_id}: {e}", categoria="error")
+
+                # Actualizar mapa de posiciones antes del siguiente subpaso
+                pos_to_agent = {(a.x, a.y): a for a in agentes}
+
+            # Notificar un único cambio de estado al final de la fase
+            self.notificar_cambio_estado()
+        except Exception as e:
+            self.log(f"⚠️ Error en fase de movimiento simultáneo: {e}", categoria="error")
 
     def detener(self):
         """Detiene la simulación de forma limpia y guarda el estado inmediatamente."""
@@ -4444,19 +2699,42 @@ class ModeloRelacional:
                 else:
                     # Crear nuevo grupo si tiene amigos o conocidos cercanos
                     if (amigos or conocidos) and self.grupos_creados_este_paso < 2:
-                        nuevo_id = f"Clan_{agente.unique_id}"
+                        # REGLA: Obligatorio nombre identitario y descripción No genérico.
+                        nombre_clan = None
+                        mision_clan = None
+
+                        if self.cerebro_llm and getattr(self.cerebro_llm, "model", None):
+                            try:
+                                prompt = f"El agente {agente.unique_id} quiere fundar un grupo con sus amigos. Inventa un nombre épico y una misión de 15 palabras para este grupo. Responde solo JSON: {{\"nombre\": \"...\", \"mision\": \"...\"}}"
+                                res = self.cerebro_llm.model.generate_content(prompt).text
+                                data = json.loads(res.strip('`').strip())
+                                nombre_clan = data.get("nombre")
+                                mision_clan = data.get("mision")
+                            except Exception:
+                                pass
+
+                        if not nombre_clan:
+                            adjetivos = ["Eternos", "Valientes", "Sabios", "Libres", "Buscadores"]
+                            sustantivos = ["Horizonte", "Fuego", "Viento", "Destino", "Saber"]
+                            nombre_clan = f"{random.choice(sustantivos)} de los {random.choice(adjetivos)}"
+                            mision_clan = f"Explorar y proteger la esencia de {nombre_clan} para la prosperidad de todos sus miembros."
+
+                        nuevo_id = f"G-{random.randint(1000, 9999)}"
                         agente.grupo_id = nuevo_id
+                        agente.civilizacion_id = nuevo_id
+                        agente.rol = "Vocero"
 
-                        # Registrar como Civilización oficial
-                        nombre_clan = f"Clan de {agente.alma.nombre_propio if hasattr(agente, 'alma') else agente.unique_id}"
                         color_clan = f"#{random.randint(0, 0xFFFFFF):06x}"
-
                         self.civilizaciones[nuevo_id] = Civilizacion(
                             id=nuevo_id,
                             nombre=nombre_clan,
                             color=color_clan,
                             user_id=self.user_id,
+                            descripcion=mision_clan
                         )
+                        self.objetivos_grupos[nuevo_id] = mision_clan
+                        self.log(f"🚩 [FUNDACION] El grupo '{nombre_clan}' ha surgido orgánicamente: {mision_clan}", categoria="consenso")
+                        self.grupos_creados_este_paso += 1
 
                         # Unir a los amigos y conocidos
                         for id_rel in (amigos + conocidos)[:3]:
@@ -4477,25 +2755,99 @@ class ModeloRelacional:
             if not miembros:
                 continue
 
-            # Si no hay líder, el que tiene más rango/XP es el líder
-            lider_actual = next((m for m in miembros if m.rol == "Líder"), None)
-            if not lider_actual:
+            # Si no hay vocero, el que tiene más rango/XP es el vocero
+            vocero_actual = next((m for m in miembros if m.rol == "Vocero"), None)
+            if not vocero_actual:
                 mejor = max(miembros, key=lambda m: m.rango)
-                mejor.rol = "Líder"
+                mejor.rol = "Vocero"
                 self.log(
-                    f"👑 [LIDERAZGO] {mejor.unique_id} ha sido reconocido como líder de {civ.nombre}",
+                    f"👑 [VOCERÍA] {mejor.unique_id} ha sido reconocido como vocero de {civ.nombre}",
                     categoria="consenso",
                 )
 
     def evaluar_evolucion_civilizaciones(self):
         """Chequea si las civilizaciones cumplen hitos para avanzar."""
-        # Lógica simplificada: si tienen más de 5 miembros y 500 recursos totales
         for g_id, civ in self.civilizaciones.items():
             miembros = [a for a in self.agentes if a.grupo_id == g_id]
             recursos_totales = sum(m.recursos for m in miembros)
+            
+            # --- EVOLUCIÓN AUTOMÁTICA ---
+            if civ.tipo == "PUEBLO" and len(miembros) >= 10:
+                civ.tipo = "CIUDAD"
+                self.log(
+                    f"🏙️ [EVOLUCION] ¡El pueblo '{civ.nombre}' ha crecido y ahora es una CIUDAD!",
+                    categoria="sistema",
+                )
+                self.notificar_cambio_estado()
+
             if len(miembros) >= 5 and recursos_totales > 500:
                 # Podría desbloquear tecnologías o edificios
                 pass
+
+    def chequear_disolucion_grupos(self):
+        """Disuelve grupos que llevan 5 turnos con menos de 3 miembros.
+
+        La regla: si una civilización de tipo 'GRUPO' tiene menos de MIN_MIEMBROS
+        durante LIMITE_TURNOS consecutivos, se disuelve y se eliminan sus registros.
+        """
+        MIN_MIEMBROS = 3
+        LIMITE_TURNOS = 5
+
+        for g_id, civ in list(self.civilizaciones.items()):
+            # Aplicar sólo a grupos dinámicos/pequeños (tipo 'GRUPO')
+            if getattr(civ, "tipo", "GRUPO") != "GRUPO":
+                continue
+
+            miembros = [a for a in self.agentes if a.grupo_id == g_id]
+            num_miembros = len(miembros)
+
+            if num_miembros < MIN_MIEMBROS:
+                self.grupos_bajas_turnos[g_id] = self.grupos_bajas_turnos.get(g_id, 0) + 1
+                # Si alcanza el límite, disolver
+                if self.grupos_bajas_turnos[g_id] >= LIMITE_TURNOS:
+                    # Limpiar referencias en los agentes
+                    for m in miembros:
+                        try:
+                            m.grupo_id = None
+                            m.civilizacion_id = None
+                        except Exception:
+                            pass
+
+                    # Eliminar estructuras asociadas al grupo
+                    self.civilizaciones.pop(g_id, None)
+                    self.objetivos_grupos.pop(g_id, None)
+                    self.grupos_dinamicos.pop(g_id, None)
+                    try:
+                        self.facciones_leyes.pop(g_id, None)
+                    except Exception:
+                        pass
+                    # Borrar contador
+                    self.grupos_bajas_turnos.pop(g_id, None)
+
+                    self.log(
+                        f"🧨 [DISOLUCIÓN] Grupo {g_id} disuelto tras {LIMITE_TURNOS} turnos con <{MIN_MIEMBROS} miembros.",
+                        categoria="sistema",
+                    )
+                    # Emitir evento en tiempo real para frontend si hay callback
+                    try:
+                        payload = {
+                            "event": "group_disbanded",
+                            "group_id": g_id,
+                            "group_name": getattr(civ, "nombre", None),
+                            "turno_disolucion": getattr(self, "paso_actual", None),
+                            "miembros": [m.unique_id for m in miembros],
+                        }
+                        self._emit_realtime_event("group_disbanded", payload)
+                    except Exception:
+                        pass
+                    try:
+                        self.notificar_cambio_estado()
+                    except Exception:
+                        pass
+            else:
+                # Resetear contador si vuelve a tener suficiente miembros
+                if g_id in self.grupos_bajas_turnos:
+                    self.grupos_bajas_turnos[g_id] = 0
 
     def step(self):
         """Avanza un paso en la simulación."""
@@ -4503,6 +2855,11 @@ class ModeloRelacional:
             return  # No procesar si la simulación fue detenida
         self.paso_actual += 1
         self.grupos_creados_este_paso = 0
+        # Actualizar y disolver grupos que llevan demasiados turnos con pocos miembros
+        try:
+            self.chequear_disolucion_grupos()
+        except Exception as e:
+            self.log(f"⚠️ Error checando disolución de grupos: {e}", categoria="error")
 
         # Obtener agentes activos (vivos y no detenidos)
         agentes_vivos = [a for a in self.agentes if a.esta_vivo]
@@ -4522,6 +2879,9 @@ class ModeloRelacional:
 
         # Procesar asambleas activas
         self._procesar_asambleas()
+        
+        # Procesar elecciones de vocero
+        self._procesar_elecciones_vocero()
 
         # Generar eventos aleatorios
         self._generar_eventos_aleatorios()
@@ -4539,7 +2899,14 @@ class ModeloRelacional:
         # === FIN OASIS ===
 
         # 2. Paso de los agentes
-        if getattr(self, "modo_control_total", False):
+        if getattr(self, "asamblea_bloqueante_activa", False):
+            # Durante una asamblea bloqueante, los agentes no actúan normalmente.
+            # Solo procesamos mantenimiento vital básico.
+            self.log("🗳️ [BLOQUEO] Simulación pausada por asamblea activa (Votación en curso).", categoria="sistema")
+            for agente in self.agentes:
+                if agente.esta_vivo:
+                    agente.actualizar_necesidades()
+        elif getattr(self, "modo_control_total", False):
             # En modo Control Total, los agentes no actúan por sí solos.
             # Solo procesamos mantenimiento vital básico.
             for agente in self.agentes:
@@ -4547,14 +2914,42 @@ class ModeloRelacional:
                     agente.actualizar_necesidades()
         else:
             # Modo autónomo normal
-            for agente in agentes_activos:
+            # Mezclamos el orden para evitar sesgos de prioridad (Fase 4)
+            agentes_turno = list(agentes_activos)
+            random.shuffle(agentes_turno)
+            for agente in agentes_turno:
                 if getattr(self, "_force_stop", False):
                     break
-                agente.realizar_turno()
+                agente.step() # Usar el nuevo método step() del agente
 
                 # Pausa de lectura entre agentes
                 if hasattr(self, "ritmo") and self.ritmo > 0 and len(agentes_vivos) > 1:
                     time.sleep(self.ritmo)
+
+        # 3. Integración Fase 4: Grupos, Economía y Métricas
+        if self.paso_actual % 5 == 0:
+            self.log(
+                "📢 [SISTEMA] Evaluando formación de grupos sociales...",
+                categoria="sistema",
+            )
+            self.formar_grupos()
+            self.asignar_roles_consenso()
+            self.evaluar_evolucion_civilizaciones()
+            self.guardar_estado()
+        
+        self.actualizar_economia()
+        
+        # Guardar métricas para gráficos
+        if self.agentes:
+            recursos_totales = sum(getattr(a, "recursos", 0) for a in self.agentes)
+            promedio_recursos = recursos_totales / len(self.agentes)
+            self.datos.append({
+                "paso": self.paso_actual,
+                "recursos_promedio": promedio_recursos,
+                "num_grupos": len(set(getattr(a, "grupo_id", None) for a in self.agentes if getattr(a, "grupo_id", None))),
+                "gini": self.calcular_gini(),
+                "felicidad": self.calcular_felicidad_promedio(),
+            })
 
         # Notificar cambios de estado de forma throttled, no por cada agente
         if self.state_change_callback and (
@@ -4564,36 +2959,6 @@ class ModeloRelacional:
                 self.state_change_callback()
             except Exception:
                 pass
-
-        # Lógica de formación de grupos (cada 5 pasos para mayor actividad social)
-        if self.paso_actual % 5 == 0:
-            self.log(
-                "📢 [SISTEMA] Evaluando formación de grupos sociales...",
-                categoria="sistema",
-            )
-            self.formar_grupos()
-            self.asignar_roles_consenso()
-            self.evaluar_evolucion_civilizaciones()  # NUEVO: Chequeo de evolución
-
-        # Economía global
-        self.actualizar_economia()
-
-        # Registrar estadísticas/métricas para visualización
-        if self.agentes:
-            recursos_totales = sum(a.recursos for a in self.agentes)
-            promedio_recursos = recursos_totales / len(self.agentes)
-
-            self.datos.append(
-                {
-                    "paso": self.paso_actual,
-                    "recursos_promedio": promedio_recursos,
-                    "num_grupos": len(
-                        set(a.grupo_id for a in self.agentes if a.grupo_id is not None)
-                    ),
-                    "gini": self.calcular_gini(),
-                    "felicidad": self.calcular_felicidad_promedio(),
-                }
-            )
 
         # Guardar estado persistente con menos frecuencia para evitar bloquear el loop.
         if (
@@ -4613,6 +2978,54 @@ class ModeloRelacional:
                     f"🎉 ¡MISIÓN COMPLETADA! {mision_completada['titulo']}",
                     categoria="mision_completada",
                 )
+
+        # === GENERACIÓN PERIÓDICA DE CRÓNICAS DEL HISTORIADOR ===
+        # Si hay un historiador y hitos pendientes, generar una crónica cada 3 pasos o si hay varios hitos acumulados.
+        try:
+            if hasattr(self, "historia") and getattr(self.historia, "historiador_id", None):
+                if getattr(self.historia, "hitos_pendientes", None):
+                    if self.paso_actual % 3 == 0 or len(self.historia.hitos_pendientes) >= 3:
+                        historiador_id = self.historia.historiador_id
+                        historiador = next((a for a in self.agentes if a.unique_id == historiador_id), None)
+                        resumen = self.historia.obtener_resumen_hitos()
+                        agente_for_llm = historiador or SimpleNamespace(unique_id=historiador_id, identidad=SimpleNamespace(nombre=historiador_id))
+                        titulo, contenido = cerebro_llm.generar_cronica(agente_for_llm, resumen, paso=self.paso_actual)
+                        autor_nombre = getattr(historiador.identidad, "nombre", historiador_id) if historiador else historiador_id
+                        # Escribir formalmente en la libreta de historia
+                        try:
+                            self.historia.escribir_entrada(self.paso_actual, titulo, contenido, historiador_id, categoria="historia")
+                            self.log(f"📝 [HISTORIA] Historiador {autor_nombre} escribió crónica: {titulo}", categoria="historia")
+                        except Exception as e:
+                            self.log(f"⚠️ Error escribiendo entrada de historia: {e}", categoria="error")
+                        # Publicar en el sistema de cronicas si existe
+                        if hasattr(self, "sistema_cronicas"):
+                            try:
+                                ubic = None
+                                if historiador and hasattr(historiador, "x") and hasattr(historiador, "y"):
+                                    ubic = (getattr(historiador, "x", None), getattr(historiador, "y", None))
+                                self.sistema_cronicas.publicar_cronica(
+                                    autor_id=historiador_id,
+                                    autor_nombre=autor_nombre,
+                                    contenido=contenido,
+                                    tipo=TipoCronica.HISTORIA,
+                                    turno=self.paso_actual,
+                                    faccion=getattr(historiador, "faccion", "") if historiador else "",
+                                    ubicacion=ubic,
+                                )
+                            except Exception as e:
+                                self.log(f"⚠️ Error publicando crónica en sistema_cronicas: {e}", categoria="error")
+                        # Limpiar los hitos ya narrados
+                        try:
+                            self.historia.limpiar_hitos()
+                        except Exception:
+                            pass
+                        if self.state_change_callback:
+                            try:
+                                self.state_change_callback()
+                            except Exception:
+                                pass
+        except Exception as e:
+            self.log(f"⚠️ Error generando crónica automática: {e}", categoria="error")
 
         # === GENERACIÓN PERIÓDICA DE MITOS CULTURALES ===
         # Cada 100 turnos, generar un mito basado en las leyendas actuales
@@ -4676,6 +3089,12 @@ class ModeloRelacional:
             except Exception as e:
                 print(f"[MITOS] Error generando mito: {e}")
 
+        # Ejecutar fase de reubicación simultánea al final del paso (máx. 2 casillas)
+        try:
+            self._simultaneous_movement_phase(max_steps=2)
+        except Exception as e:
+            self.log(f"⚠️ Error ejecutando movimiento simultáneo: {e}", categoria="error")
+
         # Limpiar mensaje global después de que todos los agentes lo hayan procesado en este paso
         self.mensaje_global_arquitecto = None
 
@@ -4685,6 +3104,50 @@ class ModeloRelacional:
         La verificación de misiones ahora la maneja self.sistema_misiones.verificar_misiones() llamado en step().
         """
         pass
+
+    def puede_construir(self, agente, tipo):
+        """Comprueba restricciones adicionales de construcción (ej: Centros de Descanso).
+        Retorna (True, "") si es posible construir, o (False, mensaje) si no.
+        """
+        try:
+            tipo_l = str(tipo).lower()
+            # Solo aplicamos reglas especiales para Centros de Descanso
+            if "centro de descanso" in tipo_l or tipo_l.strip() == "centro de descanso":
+                if not getattr(self, "mapa", None):
+                    return True, ""
+
+                map_width = len(self.mapa)
+                map_height = len(self.mapa[0]) if map_width > 0 else 0
+                
+
+                # Contar centros existentes escaneando el mapa (más robusto que infraestructura sólo)
+                existing_centros = []
+                for ix in range(map_width):
+                    for iy in range(map_height):
+                        tile = self.mapa[ix][iy]
+                        for b in getattr(tile, "buildings", []) or []:
+                            try:
+                                if b.get("tipo") == "Centro de Descanso":
+                                    existing_centros.append(b)
+                            except Exception:
+                                continue
+
+
+                prox_limit = int(getattr(self, "CENTRO_DESCANSO_MIN_DISTANCE", 6))
+                for e in existing_centros:
+                    ex = int(e.get("x", 0))
+                    ey = int(e.get("y", 0))
+                    if abs(ex - agente.x) + abs(ey - agente.y) < prox_limit:
+                        return False, f"Existe un Centro de Descanso cercano en ({ex},{ey})."
+
+        except Exception as exc:
+            # En caso de error conservador, permitir la construcción para no bloquear el juego
+            try:
+                self.log(f"⚠️ Error en puede_construir: {exc}", categoria="error")
+            except Exception:
+                pass
+
+        return True, ""
         # """Verifica el progreso de las misiones activas."""
         # construcciones = {}
         # for edif in self.infraestructura:
@@ -4754,7 +3217,16 @@ class ModeloRelacional:
             },
         }
 
-        if tipo not in config_edificios:
+        # Búsqueda case-insensitive para mayor robustez con diferentes LLMs
+        config = None
+        tipo_final = tipo
+        for k, v in config_edificios.items():
+            if k.lower() == str(tipo).lower():
+                config = v
+                tipo_final = k
+                break
+
+        if not config:
             # Posibilidad de "inventar" un edificio si tiene alta curiosidad e ingeniería
             if (
                 agente.experiencia.get("ingenieria", 0) >= 5
@@ -4765,72 +3237,104 @@ class ModeloRelacional:
                     "requisito": lambda a: True,
                     "efecto": "Edificio experimental con efectos únicos.",
                 }
+                config = config_edificios[tipo]
+                tipo_final = tipo
             else:
                 return (
                     False,
-                    "Tipo de edificio no válido o requisitos de invención no cumplidos.",
+                    f"Tipo de edificio '{tipo}' no válido o requisitos de invención no cumplidos.",
                 )
 
+        tipo = tipo_final # Usar el nombre canónico
+
+
         tile = self.mapa[agente.x][agente.y]
-        if tile.buildings:
-            return False, "Ya hay un edificio en esta ubicación."
 
-        if tile.terrain_type == TerrainType.WATER and tipo != "Puerto":
-            return False, "No se puede construir en agua (requiere Puerto)."
-        if tile.terrain_type == TerrainType.MOUNTAIN and tipo != "Mina":
-            return False, "En las montañas solo se pueden construir Minas."
+        # Comprobar y ejecutar la construcción de forma atómica para evitar race-conditions
+        with self.lock:
+            ok, msg = self.puede_construir(agente, tipo)
+            if not ok:
+                return False, msg
 
-        config = config_edificios[tipo]
-        if not config["requisito"](agente):
-            return (
-                False,
-                f"No cumples los requisitos (XP/Profesión) para construir {tipo}.",
-            )
+            # Las comprobaciones preventivas de Centros de Descanso (proximidad y límite)
+            # ya se realizaron en self.puede_construir(agente, tipo) arriba.
+            # Se elimina este bloque redundante para evitar conflictos y aplicar el nuevo límite de 5.
 
-        costo = config["costo"]
 
-        # Validación de inventario real
-        tiene_dinero = agente.dinero >= costo.get("dinero", 0)
-        tiene_recursos = agente.recursos >= costo.get("recursos", 0)
-        tiene_materiales = True
-        missing_material = ""
+            if tile.buildings:
+                return False, "Ya hay un edificio en esta ubicación."
 
-        for mat, req_cant in costo.items():
-            if mat not in ["dinero", "recursos"]:
-                if agente.inventario.get(mat, 0) < req_cant:
-                    tiene_materiales = False
-                    missing_material = mat
-                    break
+            if tile.terrain_type == TerrainType.WATER and tipo != "Puerto":
+                return False, "No se puede construir en agua (requiere Puerto)."
+            if tile.terrain_type == TerrainType.MOUNTAIN and tipo != "Mina":
+                return False, "En las montañas solo se pueden construir Minas."
 
-        if tiene_dinero and tiene_recursos and tiene_materiales:
-            agente.dinero -= costo.get("dinero", 0)
-            agente.recursos -= costo.get("recursos", 0)
-            # Consumir materiales
-            for mat, req_cant in costo.items():
-                if mat not in ["dinero", "recursos"]:
-                    agente.inventario[mat] -= req_cant
+            config = config_edificios[tipo]
+            if not config["requisito"](agente):
+                return (
+                    False,
+                    f"No cumples los requisitos (XP/Profesión) para construir {tipo}.",
+                )
 
-            nuevo_edif = {
-                "id": f"EDIF-{len(self.infraestructura) + 1}",
-                "tipo": tipo,
-                "grupo_id": agente.grupo_id,
-                "constructor": agente.unique_id,
-                "paso_creacion": self.paso_actual,
-                "x": agente.x,
-                "y": agente.y,
-            }
-            self.infraestructura.append(nuevo_edif)
-            tile.buildings.append(nuevo_edif)  # Add to tile
-            self._map_dirty = True
+            costo = config["costo"]
+            # Si el agente tiene acciones de control pendientes, es un "Decreto Divino" y sale gratis
+            es_decreto = getattr(agente, "_bajo_control_directo", False) or getattr(agente, "_ejecutando_decreto", False)
 
-            self.log(
-                f"🏗️ [CONSTRUCCION] Agente {agente.unique_id} ha construido un {tipo} en ({agente.x}, {agente.y})!",
-                categoria="sistema",
-            )
-            self.notificar_cambio_estado()
-            return True, f"¡{tipo} construido con éxito!"
+            if es_decreto:
+                tiene_dinero = True
+                tiene_recursos = True
+                tiene_materiales = True
+            else:
+                tiene_dinero = agente.dinero >= costo.get("dinero", 0)
+                tiene_recursos = agente.recursos >= costo.get("recursos", 0)
+                tiene_materiales = True
+                missing_material = ""
 
-        return False, "No tienes suficientes recursos o dinero."
+                for mat, req_cant in costo.items():
+                    if mat not in ["dinero", "recursos"]:
+                        if agente.inventario.get(mat, 0) < req_cant:
+                            tiene_materiales = False
+                            missing_material = mat
+                            break
+
+            if tiene_dinero and tiene_recursos and tiene_materiales:
+                if not es_decreto:
+                    agente.dinero -= costo.get("dinero", 0)
+                    agente.recursos -= costo.get("recursos", 0)
+                    # Consumir materiales
+                    for mat, req_cant in costo.items():
+                        if mat not in ["dinero", "recursos"]:
+                            agente.inventario[mat] -= req_cant
+
+                nuevo_edif = {
+                    "id": f"EDIF-{len(self.infraestructura) + 1}",
+                    "tipo": tipo,
+                    "grupo_id": agente.grupo_id,
+                    "constructor": agente.unique_id,
+                    "paso_creacion": self.paso_actual,
+                    "x": agente.x,
+                    "y": agente.y,
+                }
+                self.infraestructura.append(nuevo_edif)
+                tile.buildings.append(nuevo_edif)  # Add to tile
+                self._map_dirty = True
+
+                self.log(
+                    f"🏗️ [CONSTRUCCION] Agente {agente.unique_id} ha construido un {tipo} en ({agente.x}, {agente.y})!",
+                    categoria="sistema",
+                )
+                self.notificar_cambio_estado()
+                return True, f"¡{tipo} construido con éxito!"
+
+        missing_msg = "No tienes suficientes recursos o dinero."
+        if not tiene_materiales:
+            missing_msg = f"Faltan materiales: {missing_material} (Necesitas {costo.get(missing_material, 0)})"
+        elif not tiene_dinero:
+            missing_msg = f"Dinero insuficiente (Necesitas {costo.get('dinero', 0)} MC)"
+        elif not tiene_recursos:
+            missing_msg = f"Energía/Recursos insuficientes (Necesitas {costo.get('recursos', 0)})"
+
+        return False, missing_msg
 
     def enviar_mensaje_arquitecto(self, mensaje, agente_id=None):
         """Envía un mensaje del Arquitecto (usuario) a uno o todos los agentes."""
@@ -4890,11 +3394,48 @@ class ModeloRelacional:
 
         # Guardar en DB si está activa
         if self.db_active:
-            query = "INSERT INTO eventos_globales (tipo, descripcion, paso_inicio, duracion, impacto) VALUES (%s, %s, %s, %s, %s)"
+            query = "INSERT INTO eventos_globales (user_id, tipo, descripcion, paso_inicio, duracion, impacto) VALUES (%s, %s, %s, %s, %s, %s)"
             self.db.execute(
                 query,
-                (tipo, descripcion, self.paso_actual, duracion, Json(impacto or {})),
+                (self.user_id, tipo, descripcion, self.paso_actual, duracion, Json(impacto or {})),
             )
+
+    def buscar_edificio_para_necesidad(self, x, y, necesidad, radio=10):
+        """
+        Busca el edificio más cercano que supla una necesidad específica.
+        Retorna (distancia, edificio_info, pos_x, pos_y) o None.
+        """
+        # Mapeo de necesidades a tipos de edificios
+        mapa_necesidad_edificio = {
+            "descanso": ["Centro de Descanso"],
+            "salud": ["Hospital"],
+            "alimento": ["Granja", "Mercado"],
+            "social": ["Centro Comunitario", "Mercado"],
+            "dinero": ["Mercado", "Banco"],
+        }
+        
+        tipos_objetivo = mapa_necesidad_edificio.get(necesidad, [])
+        if not tipos_objetivo:
+            return None
+            
+        mejor = None
+        min_dist = float('inf')
+        
+        # Buscar en el mapa dentro del radio
+        for dx in range(-radio, radio + 1):
+            for dy in range(-radio, radio + 1):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < len(self.mapa) and 0 <= ny < len(self.mapa[0]):
+                    tile = self.mapa[nx][ny]
+                    if hasattr(tile, 'buildings') and tile.buildings:
+                        for edif in tile.buildings:
+                            if edif.get("tipo") in tipos_objetivo:
+                                dist = abs(dx) + abs(dy)
+                                if dist < min_dist:
+                                    min_dist = dist
+                                    mejor = (dist, edif, nx, ny)
+        
+        return mejor
 
     def spawn_agent(self, config=None):
         """Crea un nuevo agente con posición y atributos aleatorios."""
@@ -4956,7 +3497,15 @@ class ModeloRelacional:
 
         return agente
 
-    def crear_mision(self, titulo, descripcion, tipo, objetivo, recompensa):
+    def crear_mision(
+        self,
+        titulo,
+        descripcion,
+        tipo="social",
+        objetivo=None,
+        recompensa=500,
+        global_mission=True,
+    ):
         """Crea una misión personalizada desde el modo Arquitecto."""
         mision_id = f"DIVINA-{random.randint(1000, 9999)}"
 
@@ -5051,7 +3600,6 @@ class ModeloRelacional:
                 )
                 self.relaciones_grupos[rel_key] = max(0.0, afinidad - 0.02)
 
-    @synchronized
     def log(
         self,
         mensaje,
@@ -5063,62 +3611,86 @@ class ModeloRelacional:
         agente_id=None,
     ):
         """Envía un log al callback o a la terminal y lo guarda en el historial."""
-        log_entry = {
-            "paso": self.paso_actual,
-            "mensaje": mensaje,
-            "categoria": categoria,
-            "subtitulos": subtitulos,
-            "tts_text": tts_text,
-            "pensamiento": pensamiento,
-            "privado_para": privado_para,
-            "agente_id": agente_id,
-        }
-        with self.lock:
-            self.historial_logs.append(log_entry)
-            if (
-                len(self.historial_logs) > 1000
-            ):  # Mantener los últimos 1000 en RAM para sincronización inicial
-                self.historial_logs.pop(0)
+        # Evitar recursividad infinita si el callback genera otro log
+        if getattr(self, "_is_logging", False):
+            return
+        self._is_logging = True
+        try:
+            log_entry = {
+                "paso": self.paso_actual,
+                "mensaje": mensaje,
+                "categoria": categoria,
+                "subtitulos": subtitulos,
+                "tts_text": tts_text,
+                "pensamiento": pensamiento,
+                "privado_para": privado_para,
+                "agente_id": agente_id,
+            }
+            with self.lock:
+                self.historial_logs.append(log_entry)
+                if len(self.historial_logs) > 1000:
+                    self.historial_logs.pop(0)
 
-        # PERSISTENCIA EN DB
-        if self.db_active and self.user_id:
-            try:
-                self.db.save_log(
-                    self.user_id,
-                    self.paso_actual,
-                    mensaje,
-                    categoria,
-                    pensamiento,
-                    privado_para,
-                    subtitulos,
-                    tts_text,
-                    agente_id,
-                )
-            except Exception as e:
-                logger.error(f"Error guardando log en DB: {e}")
-        else:
-            logger.warning(
-                f"[LOG] No se guardó en DB: db_active={self.db_active}, user_id={self.user_id}"
-            )
+            # PERSISTENCIA EN DB (intentar) — si falla, persistir localmente
+            saved_in_db = False
+            if self.db_active and self.user_id:
+                try:
+                    self.db.save_log(
+                        self.user_id,
+                        self.paso_actual,
+                        mensaje,
+                        categoria,
+                        pensamiento,
+                        privado_para,
+                        subtitulos,
+                        tts_text,
+                        agente_id,
+                    )
+                    saved_in_db = True
+                except Exception as e:
+                    logger.error(f"Error guardando log en DB: {e}")
 
-        print(f"[LOG DEBUG] categoria={categoria}, mensaje={mensaje[:80]}...")
+            # Si no se pudo guardar en la DB, intentar persistir localmente
+            if not saved_in_db and self.user_id:
+                try:
+                    self._save_log_local(log_entry)
+                except Exception as e:
+                    logger.error(f"Error guardando log localmente: {e}")
 
-        if self.log_callback:
-            # El callback puede no ser thread-safe (especialmente si encola en asyncio),
-            # pero ya lo manejamos con run_coroutine_threadsafe en api.py
-            self.log_callback(
-                mensaje,
-                categoria,
-                subtitulos,
-                tts_text,
-                pensamiento,
-                privado_para,
-                agente_id,
-            )
-        else:
-            print(mensaje)
-            if subtitulos:
-                print(f"             └─ [Subtítulos: {subtitulos}]")
+            print(f"[LOG DEBUG] categoria={categoria}, mensaje={mensaje[:80]}...")
+
+            if self.log_callback:
+                try:
+                    ritmo = float(getattr(self, "ritmo", 0) or 0)
+                except Exception:
+                    ritmo = 0
+
+                # Si el ritmo es alto (modo SLOW), programar el callback con un pequeño delay
+                if ritmo and ritmo >= 0.5:
+                    delay = min(2.0, ritmo * 0.6)
+                    threading.Timer(
+                        delay,
+                        lambda m=mensaje, c=categoria, s=subtitulos, t=tts_text, p=pensamiento, priv=privado_para, a=agente_id: self.log_callback(m, c, s, t, p, priv, a),
+                    ).start()
+                else:
+                    try:
+                        self.log_callback(
+                            mensaje,
+                            categoria,
+                            subtitulos,
+                            tts_text,
+                            pensamiento,
+                            privado_para,
+                            agente_id,
+                        )
+                    except Exception:
+                        pass
+            else:
+                print(mensaje)
+                if subtitulos:
+                    print(f"             └─ [Subtítulos: {subtitulos}]")
+        finally:
+            self._is_logging = False
 
     def notificar_cambio_estado(self):
         """Notifica al frontend que ha habido un cambio de estado importante."""
@@ -5127,6 +3699,37 @@ class ModeloRelacional:
                 self.state_change_callback()
             except Exception as e:
                 logger.error(f"Error en state_change_callback: {e}")
+
+    def _emit_realtime_event(self, event_type: str, payload: dict):
+        """Emite eventos en tiempo real al frontend, opcionalmente con un pequeño retraso
+        proporcional a `self.ritmo` para hacer el flujo más lento en modos como SLOW.
+        """
+        cb = getattr(self, "realtime_event_callback", None)
+        if not cb:
+            return
+
+        try:
+            ritmo = float(getattr(self, "ritmo", 0) or 0)
+        except Exception:
+            ritmo = 0
+
+        # Ajustar multiplicador según tipo de evento (actions deberían sentirse más lentas)
+        mult = 0.5
+        if event_type == "action_event":
+            mult = 0.8
+        elif event_type == "llm_stream":
+            mult = 0.15
+        elif event_type == "social_event":
+            mult = 0.5
+
+        if ritmo and ritmo >= 0.4:
+            delay = min(2.0, ritmo * mult)
+            threading.Timer(delay, lambda cb=cb, et=event_type, pl=payload: cb(et, pl)).start()
+        else:
+            try:
+                cb(event_type, payload)
+            except Exception:
+                pass
 
     def actualizar_relacion_grupal(self, g1, g2, cambio):
         """Actualiza la afinidad entre dos facciones."""
@@ -5286,8 +3889,23 @@ class ModeloRelacional:
                         agente.grupo_id = nuevo_id
                         agente.civilizacion_id = nuevo_id
 
-                        # Registrar como Civilización oficial para el frontend
-                        nombre_clan = f"Clan de {agente.unique_id}"
+                        # Unir a los amigos y conocidos
+                        todos = amigos + conocidos
+                        nombres_miembros = [
+                            self.get_agent_by_id(aid).identidad.nombre
+                            for aid in todos
+                            if self.get_agent_by_id(aid)
+                        ]
+
+                        # Generar nombre e identidad DESCRIPTIVA (Requerimiento de Memoria)
+                        if hasattr(self, "cerebro_llm") and self.cerebro_llm:
+                            nombre_clan, desc_clan = self.cerebro_llm.generar_identidad_grupo(
+                                agente, nombres_miembros
+                            )
+                        else:
+                            nombre_clan = f"Clan de {agente.identidad.nombre}"
+                            desc_clan = f"Un grupo fundado por {agente.identidad.nombre}."
+
                         color_clan = self.colores_paleta[
                             hash(nuevo_id) % len(self.colores_paleta)
                         ]
@@ -5297,13 +3915,10 @@ class ModeloRelacional:
                             nombre=nombre_clan,
                             color=color_clan,
                             user_id=self.user_id,
+                            descripcion=desc_clan,
                         )
-                        self.objetivos_grupos[nuevo_id] = (
-                            f"Cooperación de {nombre_clan}"
-                        )
+                        self.objetivos_grupos[nuevo_id] = f"Propósito: {desc_clan}"
 
-                        # Unir a los amigos y conocidos
-                        todos = amigos + conocidos
                         for id_rel in todos[:5]:  # Máximo 5 miembros iniciales
                             rel_obj = self.get_agent_by_id(id_rel)
                             if rel_obj:
@@ -5311,7 +3926,7 @@ class ModeloRelacional:
                                 rel_obj.civilizacion_id = nuevo_id
 
                         self.log(
-                            f"🚩 [CLAN] Se ha formado un nuevo clan: '{nombre_clan}' liderado por {agente.unique_id}.",
+                            f"🚩 [CLAN] Se ha formado un nuevo clan: '{nombre_clan}' representado por {agente.unique_id}.",
                             categoria="consenso",
                         )
                         self.notificar_cambio_estado()
@@ -5399,10 +4014,10 @@ class ModeloRelacional:
 
     def imprimir_resumen_social(self):
         print("\n--- RESUMEN SOCIAL FINAL ---")
-        # Líderes por rango
-        lideres = sorted(self.agentes, key=lambda a: a.rango, reverse=True)[:3]
+        # Voceroes por rango
+        voceros = sorted(self.agentes, key=lambda a: a.rango, reverse=True)[:3]
         print("\nTop 3 Agentes con mayor Rango (Estatus):")
-        for l in lideres:
+        for l in voceros:
             print(
                 f"  - Agente {l.unique_id}: Rango {l.rango:.2f}, Recursos {l.recursos:.2f}, Grupo: {l.grupo_id}"
             )
@@ -5433,6 +4048,10 @@ class ModeloRelacional:
         # 1. Guardar en PostgreSQL (Si está activo)
         if self.db_active and self.user_id and self.user_id != "USER-DEFAULT":
             try:
+                # Asegurar que el user_id (o slot_id) existe en la tabla usuarios para evitar errores de FK
+                if hasattr(self.db, "ensure_user_exists"):
+                    self.db.ensure_user_exists(self.user_id)
+
                 logger.debug(
                     "Guardando estado para user_id=%s, paso=%s",
                     self.user_id,
@@ -5558,17 +4177,23 @@ class ModeloRelacional:
                         self.db.save_proposal(ley_copy, self.user_id)
                 for asamblea in self.asambleas_globales:
                     prop = {
-                        "proponente_id": asamblea["proponente_id"],
-                        "texto": asamblea["tema"],
+                        "db_id": asamblea.get("db_id"),
+                        "proponente_id": asamblea.get("proponente_id", "SISTEMA"),
+                        "texto": asamblea.get("tema", "Asamblea sin título"),
                         "tipo": "asamblea",
                         "votos": {
-                            "si": asamblea["votos_si"],
-                            "no": asamblea["votos_no"],
+                            "si": asamblea.get("votos_si", 0),
+                            "no": asamblea.get("votos_no", 0),
+                            "participantes": asamblea.get("participantes_votos", {}),
+                            "turno_idx": asamblea.get("agente_turno_idx", 0),
+                            "ley_id": asamblea.get("ley_id")
                         },
-                        "estado": asamblea["estado"],
-                        "paso_creacion": asamblea["paso_inicio"],
+                        "estado": asamblea.get("estado", "DEBATE"),
+                        "paso_creacion": asamblea.get("paso_inicio", self.paso_actual),
                     }
-                    self.db.save_proposal(prop, self.user_id)
+                    new_id = self.db.save_proposal(prop, self.user_id)
+                    if new_id and not asamblea.get("db_id"):
+                        asamblea["db_id"] = new_id
 
                 # Guardar Misiones y Puntajes (NUEVO)
                 for mision in self.sistema_misiones.misiones_activas:
@@ -5588,6 +4213,30 @@ class ModeloRelacional:
                 )
             except Exception as e:
                 logger.error(f"❌ Error guardando en DB: {e}")
+
+    def _save_log_local(self, log_entry):
+        """Guardar un log localmente en data/logs_<user_id>.json cuando la DB no esté disponible."""
+        try:
+            import json as _json
+            if not self.user_id:
+                return False
+            os.makedirs("data", exist_ok=True)
+            path = os.path.join("data", f"logs_{self.user_id}.json")
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    existing = _json.load(f)
+            except Exception:
+                existing = []
+            existing.append(log_entry)
+            # Mantener un límite razonable de logs locales
+            if len(existing) > 5000:
+                existing = existing[-5000:]
+            with open(path, "w", encoding="utf-8") as f:
+                _json.dump(existing, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            logger.error(f"Error guardando log local: {e}")
+            return False
 
     def cargar_estado(self):
         """Carga el estado desde PostgreSQL (prioridad) o JSON (fallback)."""
@@ -5794,6 +4443,7 @@ class ModeloRelacional:
                                 social_feed_data,
                                 db=self.db,
                                 user_id=target_user_id,
+                                modelo=self,
                             )
                             num_posts = len(self.social_recsys.interest_recsys.posts)
                             num_seguidos = len(self.social_recsys.seguidos)
@@ -6065,7 +4715,7 @@ class ModeloRelacional:
                             {
                                 "id": target_id,
                                 "data": {
-                                    "tipo": tipo,
+                                    "tipo": "conocido", # El nodo siempre es un conocido
                                     "recursos_vistos": rec_v,
                                     "grupo": grp_v,
                                 },
@@ -6075,12 +4725,65 @@ class ModeloRelacional:
                             {
                                 "u": a_id,
                                 "v": target_id,
-                                "data": {"tipo": tipo, "fuerza": fuerza},
+                                "data": {
+                                    "tipo": tipo, 
+                                    "fuerza": fuerza,
+                                    "recursos_vistos": rec_v,
+                                    "grupo": grp_v
+                                },
                             }
                         )
 
                     a.memoria.cargar_datos(mem_dict)
                     self.agentes.append(a)
+
+                # NORMALIZAR: Asegurar que sólo exista un `Historiador` activo.
+                # Si la libreta de historia ya tiene un historiador registrado, forzar
+                # que ese agente tenga la profesión/rol correctos y limpiar el resto.
+                try:
+                    if hasattr(self, "historia") and getattr(self.historia, "historiador_id", None):
+                        hist_id = self.historia.historiador_id
+                        for ag in self.agentes:
+                            try:
+                                if getattr(ag, "unique_id", None) == hist_id:
+                                    ag.profesion = "Historiador"
+                                    ag.rol = "Historiador"
+                                    if hasattr(ag, "identidad") and ag.identidad:
+                                        ag.identidad.titulo = "el Historiador"
+                                else:
+                                    if getattr(ag, "profesion", None) == "Historiador":
+                                        ag.profesion = None
+                                        ag.rol = "Ciudadano"
+                            except Exception:
+                                continue
+                    else:
+                        # Si no existe historiador pero hay agentes marcados como Historiador,
+                        # elegir el primero y limpiar los demás.
+                        candidatos = [a for a in self.agentes if getattr(a, "profesion", None) == "Historiador"]
+                        if candidatos:
+                            elegido = candidatos[0]
+                            try:
+                                # Asegurar la libreta de historia existe
+                                if not hasattr(self, "historia") or self.historia is None:
+                                    from systems.historia import LibretaHistoria
+
+                                    self.historia = LibretaHistoria()
+                                self.historia.historiador_id = elegido.unique_id
+                                elegido.profesion = "Historiador"
+                                elegido.rol = "Historiador"
+                                if hasattr(elegido, "identidad") and elegido.identidad:
+                                    elegido.identidad.titulo = "el Historiador"
+                            except Exception:
+                                pass
+                            for other in candidatos[1:]:
+                                try:
+                                    other.profesion = None
+                                    other.rol = "Ciudadano"
+                                except Exception:
+                                    pass
+                except Exception:
+                    # No queremos que un fallo aquí impida la carga del resto del estado
+                    pass
 
                 # 4. Cargar Leyes y Propuestas
                 proposals = self.db.get_proposals(target_user_id)
@@ -6126,14 +4829,29 @@ class ModeloRelacional:
                             "db_id": p_id,
                         }
 
-                        if p_tipo == "asamblea" and estado != "FINALIZADA":
+                        if "propuestas" not in self.facciones_leyes:
+                            self.facciones_leyes["propuestas"] = []
+                        self.facciones_leyes["propuestas"].append(prop)
+
+                        if p_tipo == "asamblea" and estado not in ["FINALIZADA", "APROBADA", "RECHAZADA"]:
+                            l_id = votos.get("ley_id")
+                            # Deduplicación: Evitar duplicados por ley_id o por combinación de tema y proponente
+                            if l_id and any(a.get("ley_id") == l_id for a in self.asambleas_globales):
+                                continue
+                            if any(a.get("tema") == texto and a.get("proponente_id") == prop_id and a.get("estado") == estado for a in self.asambleas_globales):
+                                continue
+
                             asamblea = {
                                 "id": f"ASAMBLEA-{p_id}",
+                                "db_id": p_id,
                                 "proponente_id": prop_id,
                                 "tema": texto,
                                 "moderador_id": prop_id,
                                 "votos_si": votos.get("si", 0),
                                 "votos_no": votos.get("no", 0),
+                                "participantes_votos": votos.get("participantes", {}),
+                                "agente_turno_idx": votos.get("turno_idx", 0),
+                                "ley_id": l_id,
                                 "votantes": [],
                                 "estado": estado,
                                 "paso_inicio": paso_p,
@@ -6157,20 +4875,35 @@ class ModeloRelacional:
                 self.instituciones = {}
                 if instituciones_db:
                     for i_row in instituciones_db:
-                        # id, nombre, tipo, fundador_id, lider_id, miembros, x, y, recursos, nivel, descripcion
-                        (
-                            i_id,
-                            i_nom,
-                            i_tipo,
-                            i_fund,
-                            i_lid,
-                            i_miem,
-                            i_x,
-                            i_y,
-                            i_rec,
-                            i_niv,
-                            i_desc,
-                        ) = i_row
+                        # Soportar esquemas con o sin la columna 'puntos'.
+                        # Posibles órdenes de columnas:
+                        # - Con 'puntos': id, nombre, tipo, fundador_id, vocero_id, miembros, x, y, recursos, puntos, nivel, descripcion
+                        # - Sin 'puntos': id, nombre, tipo, fundador_id, vocero_id, miembros, x, y, recursos, nivel, descripcion
+                        if not i_row:
+                            continue
+                        if len(i_row) == 12:
+                            i_id, i_nom, i_tipo, i_fund, i_lid, i_miem, i_x, i_y, i_rec, i_puntos, i_niv, i_desc = i_row
+                        elif len(i_row) == 11:
+                            i_id, i_nom, i_tipo, i_fund, i_lid, i_miem, i_x, i_y, i_rec, i_niv, i_desc = i_row
+                            i_puntos = 0.0
+                        else:
+                            logger.warning(f"Institución: fila inesperada (len={len(i_row)}): {i_row}")
+                            # Intentar asignar por seguridad si hay suficientes campos
+                            try:
+                                i_id = i_row[0]
+                                i_nom = i_row[1] if len(i_row) > 1 else "?"
+                                i_tipo = i_row[2] if len(i_row) > 2 else None
+                                i_fund = i_row[3] if len(i_row) > 3 else None
+                                i_lid = i_row[4] if len(i_row) > 4 else i_fund
+                                i_miem = i_row[5] if len(i_row) > 5 else [i_fund]
+                                i_x = i_row[6] if len(i_row) > 6 else 0
+                                i_y = i_row[7] if len(i_row) > 7 else 0
+                                i_rec = i_row[8] if len(i_row) > 8 else 0.0
+                                i_puntos = i_row[9] if len(i_row) > 9 else 0.0
+                                i_niv = i_row[10] if len(i_row) > 10 else 1
+                                i_desc = i_row[11] if len(i_row) > 11 else ""
+                            except Exception:
+                                continue
 
                         # Asegurar miembros sea lista
                         if isinstance(i_miem, str):
@@ -6182,9 +4915,10 @@ class ModeloRelacional:
                         inst = Institucion(
                             i_id, i_nom, i_tipo, i_fund, i_x, i_y, target_user_id
                         )
-                        inst.lider_id = i_lid
+                        inst.vocero_id = i_lid
                         inst.miembros = i_miem
                         inst.recursos = i_rec
+                        inst.puntos = i_puntos if i_puntos is not None else 0.0
                         inst.nivel = i_niv
                         inst.descripcion = i_desc or ""
                         self.instituciones[i_id] = inst
@@ -6232,61 +4966,75 @@ class ModeloRelacional:
                 )
                 return
             except Exception as e:
-                logger.error(f"❌ Error cargando desde DB: {e}")
+                import traceback
+                logger.error(f"❌ Error cargando desde DB: {e}\n{traceback.format_exc()}")
 
         else:
-            logger.info(
-                "⚠️ [DB] No se cargó la simulación desde Postgres o db inactiva."
-            )
+            logger.info("⚠️ [DB] No se cargó la simulación desde Postgres o db inactiva. Intentando cargar logs locales...")
             self.agentes_cargados = False
+            # Intentar cargar logs desde archivo local si existe (fallback cuando no hay DB)
+            if self.user_id:
+                local_path = f"data/logs_{self.user_id}.json"
+                if os.path.exists(local_path):
+                    try:
+                        import json as _json
+                        with open(local_path, "r", encoding="utf-8") as _f:
+                            local_logs = _json.load(_f)
+                        self.historial_logs = local_logs[-2000:]
+                        logger.info(f"📜 [LOCAL] {len(self.historial_logs)} logs cargados desde {local_path}")
+                    except Exception as e:
+                        logger.warning(f"📜 [LOCAL] Error cargando logs locales: {e}")
 
     def asignar_roles_consenso(self):
-        """Los grupos negocian roles internos basados en méritos y personalidad."""
-        grupos = {}
-        for a in self.agentes:
-            if a.grupo_id is not None:
-                if a.grupo_id not in grupos:
-                    grupos[a.grupo_id] = []
-                grupos[a.grupo_id].append(a)
+        """Los grupos negocian roles internos. Optimizado: un grupo por turno para evitar sobrecarga LLM."""
+        grupos_ids = list(set(a.grupo_id for a in self.agentes if a.grupo_id is not None))
+        if not grupos_ids:
+            return
 
-        for g_id, miembros in grupos.items():
-            if len(miembros) < 2:
-                continue
+        # Usar el paso actual para elegir un grupo de forma rotativa
+        idx_grupo = (self.paso_actual // 5) % len(grupos_ids)
+        g_id = grupos_ids[idx_grupo]
+        miembros = [a for a in self.agentes if a.grupo_id == g_id and a.esta_vivo]
 
-            # --- FASE DE ASAMBLEA ---
+        if len(miembros) < 2:
+            return
+
+        # --- FASE DE ASAMBLEA ---
+        self.log(
+            f"🏛️ [ASAMBLEA FACCIÓN {g_id}] Los miembros se reúnen para debatir el futuro...",
+            categoria="consenso",
+        )
+
+        # Verificar si hay propuestas de vocería activas o si no hay vocero
+        vocero_actual = next((m for m in miembros if m.rol == "Vocero"), None)
+
+        if not vocero_actual:
             self.log(
-                f"🏛️ [ASAMBLEA FACCIÓN {g_id}] Los miembros se reúnen para debatir el futuro...",
+                f"🔸 [ASAMBLEA] La Facción {g_id} no tiene un vocero claro. Se anima a los miembros a presentar sus programas.",
                 categoria="consenso",
             )
 
-            # Verificar si hay propuestas de liderazgo activas o si no hay líder
-            lider_actual = next((m for m in miembros if m.rol == "Líder"), None)
-
-            if not lider_actual:
-                self.log(
-                    f"🔸 [ASAMBLEA] La Facción {g_id} no tiene un líder claro. Se anima a los miembros a presentar sus programas (PROPONER_LEY:local:LIDERAZGO:Nombre:Plan).",
-                    categoria="consenso",
+        ids_miembros = [m.unique_id for m in miembros]
+        vocero_id = vocero_actual.unique_id if vocero_actual else "Ninguno"
+        
+        # En lugar de todos, solo 2 miembros aleatorios expresan su opinión para no saturar
+        habladores = random.sample(miembros, min(len(miembros), 2))
+        
+        for m in habladores:
+            ctx = (
+                f"El vocero actual es {vocero_id}. La facción busca consolidar su poder."
+                if vocero_actual
+                else "No hay vocero. Es momento de proponerse o buscar consensos para elegir uno."
+            )
+            argumento, pensamiento = cerebro_llm.generar_debate_consenso(
+                m, ids_miembros, fase="asamblea", contexto_extra=ctx
+            )
+            if argumento:
+                m.decir(
+                    f"🗣️ [OPINION ASAMBLEA] {argumento}",
+                    pensamiento=pensamiento,
+                    para_grupo=True,
                 )
-                # El cerebro LLM decidirá proponerse como líder en su turno si tiene la ambición
-
-            ids_miembros = [m.unique_id for m in miembros]
-            lider_id = lider_actual.unique_id if lider_actual else "Ninguno"
-            for m in miembros:
-                ctx = (
-                    f"El líder actual es {lider_id}. La facción busca consolidar su poder."
-                    if lider_actual
-                    else "No hay líder. Es momento de proponerse o buscar consensos para elegir uno."
-                )
-                # Los agentes aprovechan la asamblea para expresar pensamientos generales
-                argumento, pensamiento = cerebro_llm.generar_debate_consenso(
-                    m, ids_miembros, fase="asamblea", contexto_extra=ctx
-                )
-                if argumento:
-                    m.decir(
-                        f"🗣️ [OPINION ASAMBLEA] {argumento}",
-                        pensamiento=pensamiento,
-                        para_grupo=True,
-                    )
 
     def generar_mapa(self):
         """Genera el mapa inicial 20x20 delegando en WorldSystem."""
@@ -6307,29 +5055,33 @@ class ModeloRelacional:
             return False, "Sistema de mundo no inicializado"
 
         # 1. Sistema de Costos y Verificación de Fondos
-        costo_base_por_casilla = 500
+        # El coste base se deriva de la constante general `COSTO_EXPANSION` y
+        # se reduce mediante `EXPANSION_COST_DIVISOR` para facilitar pruebas/ajustes.
+        costo_base_por_casilla = int(getattr(self, "COSTO_EXPANSION", 1000.0) / max(1, getattr(self, "EXPANSION_COST_DIVISOR", 10)))
         num_direcciones = 4 if direccion is None else 1
         num_casillas_estimadas = cantidad * self.mapa_size * num_direcciones
-        costo_total = (
-            costo_override
-            if costo_override is not None
-            else (costo_base_por_casilla * num_casillas_estimadas)
-        )
+        costo_total = costo_override if costo_override is not None else (costo_base_por_casilla * num_casillas_estimadas)
 
+        # Soportar comprador como 'arquitecto', id de grupo/civilización, o id de agente
+        comprador_es_grupo = False
         if comprador_id:
-            # Fondos del Arquitecto o del Grupo
             if comprador_id == "arquitecto":
-                fondos = self.economia.get("total_dinero", 0)
+                try:
+                    fondos = sum(getattr(a, "dinero", 0) for a in self.agentes)
+                except Exception:
+                    fondos = self.economia.get("total_dinero", 0)
                 tipo = "Arquitecto"
             else:
-                # Buscar si el comprador es un grupo o civilización
-                grupo = self.civilizaciones.get(
-                    comprador_id
-                ) or self.grupos_dinamicos.get(comprador_id)
-                if not grupo:
-                    return False, f"Comprador {comprador_id} no encontrado"
-                fondos = grupo.get("dinero", 0)
-                tipo = "Grupo"
+                # Intentar tratar comprador_id como id de grupo/civilización primero
+                grupo = self.civilizaciones.get(comprador_id) or self.grupos_dinamicos.get(comprador_id)
+                if grupo:
+                    # Aceptar varias claves posibles ('fondos','dinero','recursos')
+                    fondos = grupo.get("fondos", grupo.get("dinero", grupo.get("recursos", 0)))
+                    tipo = "Grupo"
+                    comprador_es_grupo = True
+                else:
+                    # Tratar comprador_id como id de agente y usar helpers existentes
+                    fondos, tipo = self._verificar_fondos_expansion(comprador_id)
 
             if fondos < costo_total:
                 return (
@@ -6337,17 +5089,14 @@ class ModeloRelacional:
                     f"Fondos insuficientes para {tipo}: {fondos} MC disponibles, {costo_total} MC requeridos",
                 )
 
-            # Verificar permisos (líderes o arquitecto)
-            if comprador_id != "arquitecto":
-                es_lider = any(
-                    a.unique_id == comprador_id and a.rol == "Líder"
-                    for a in self.agentes
-                )
-                if not es_lider:
-                    return (
-                        False,
-                        f"{comprador_id} no tiene permisos de líder para expandir",
-                    )
+            # Verificar permisos solo si la configuración lo exige
+            if not getattr(self, "ALLOW_NON_LEADER_EXPANSION", True):
+                if comprador_id != "arquitecto":
+                    if not self._verificar_permisos_expansion(comprador_id):
+                        return (
+                            False,
+                            f"{comprador_id} no tiene permisos de vocero para expandir",
+                        )
         else:
             self.log(
                 "⚠️ [EXPANSIÓN] Expansión gratuita activada (modo desarrollo)",
@@ -6369,6 +5118,9 @@ class ModeloRelacional:
             self.mapa = self.world.mapa
             self.mapa_size = len(self.mapa)
 
+            # Marcar que el mapa cambió estructuralmente para forzar envío en el broadcast
+            self._map_dirty = True
+
             # IMPORTANTE: Reasignar todos los edificios de infraestructura al nuevo mapa expandido
             for edif in self.infraestructura:
                 x = edif["x"]
@@ -6385,10 +5137,19 @@ class ModeloRelacional:
                 if comprador_id == "arquitecto":
                     self.economia["total_dinero"] -= costo_total
                 else:
-                    grupo = self.civilizaciones.get(
-                        comprador_id
-                    ) or self.grupos_dinamicos.get(comprador_id)
-                    grupo["dinero"] -= costo_total
+                    # Si el comprador fue un grupo identificado previamente, descontar ahí
+                    if comprador_es_grupo and grupo:
+                        if "fondos" in grupo:
+                            grupo["fondos"] = max(0, grupo.get("fondos", 0) - costo_total)
+                        elif "dinero" in grupo:
+                            grupo["dinero"] = max(0, grupo.get("dinero", 0) - costo_total)
+                        else:
+                            grupo["recursos"] = max(0, grupo.get("recursos", 0) - costo_total)
+                    else:
+                        # Intentar descontar desde el agente/grupo mediante helper
+                        ok, msg = self._descontar_costo_expansion(comprador_id, costo_total)
+                        if not ok:
+                            self.log(f"⚠️ [EXPANSIÓN] No se pudo descontar costo: {msg}", categoria="sistema")
 
             self.log(
                 f"🌎 [EXPANSIÓN] Mundo expandido ({direccion or 'uniforme'}) por {comprador_id or 'sistema'}. Costo: {costo_total} MC",
@@ -6427,10 +5188,10 @@ class ModeloRelacional:
         if comprador_id == "arquitecto":
             return True  # Arquitecto siempre puede
 
-        # Solo líderes de grupo pueden comprar terreno para su grupo
+        # Solo voceroes de grupo pueden comprar terreno para su grupo
         for agente in self.agentes:
             if agente.unique_id == comprador_id:
-                return agente.rol == "Líder" and agente.grupo_id is not None
+                return agente.rol == "Vocero" and agente.grupo_id is not None
 
         return False
 
@@ -6473,23 +5234,25 @@ class ModeloRelacional:
     def comprar_terreno_grupo(self, grupo_id, direccion=None, cantidad=5):
         """
         Método para que un grupo compre terreno adicional.
-        Requiere que el líder del grupo tenga fondos suficientes.
+        Requiere que el vocero del grupo tenga fondos suficientes.
         """
         if grupo_id not in self.grupos_dinamicos:
             return False, f"Grupo {grupo_id} no encontrado"
 
-        # Encontrar líder del grupo
-        lider = None
+        # Encontrar vocero del grupo
+        vocero = None
         for agente in self.agentes:
-            if agente.grupo_id == grupo_id and agente.rol == "Líder":
-                lider = agente
+            if agente.grupo_id == grupo_id and agente.rol == "Vocero":
+                vocero = agente
                 break
 
-        if not lider:
-            return False, f"No se encontró líder para el grupo {grupo_id}"
+        if not vocero:
+            # Si no hay vocero, permitir que el grupo intente comprar directamente
+            # (relaja el requisito de que haya un vocero presente)
+            return self.expandir_mundo(direccion, cantidad, comprador_id=grupo_id)
 
-        # Intentar expansión con el líder como comprador
-        return self.expandir_mundo(direccion, cantidad, lider.unique_id)
+        # Intentar expansión con el vocero como comprador
+        return self.expandir_mundo(direccion, cantidad, comprador_id=vocero.unique_id)
 
     def _generar_terrain_type_random(self):
         """Genera un tipo de terreno aleatorio con distribución realista."""
@@ -6595,6 +5358,84 @@ class ModeloRelacional:
 
         # Si no hay construcciones en bordes, expansión uniforme
         return None
+
+    def fundar_institucion(self, fundador_id, nombre, tipo):
+        """Funda una nueva institución formal en el mundo."""
+        fundador = next((a for a in self.agentes if a.unique_id == fundador_id), None)
+        if not fundador:
+            return False, "Fundador no encontrado."
+        
+        if fundador.dinero < 100:
+            return False, f"Recursos insuficientes (100 MC requeridos, tienes {fundador.dinero:.1f})."
+            
+        inst_id = f"INST-{random.randint(1000, 9999)}"
+        nueva_inst = Institucion(
+            inst_id,
+            nombre,
+            tipo,
+            fundador_id,
+            fundador.x,
+            fundador.y,
+        )
+        nueva_inst.vocero_id = fundador_id
+        nueva_inst.miembros = [fundador_id]
+        nueva_inst.recursos = 50
+        nueva_inst.nivel = 1
+        nueva_inst.descripcion = f"Institución de tipo {tipo} fundada por {fundador_id}."
+        
+        fundador.dinero -= 100
+        self.instituciones[inst_id] = nueva_inst
+
+        # Dar puntos iniciales por la fundación (avance hacia niveles)
+        try:
+            nueva_inst.puntos = getattr(nueva_inst, "puntos", 0.0) + 50.0
+        except Exception:
+            nueva_inst.puntos = 50.0
+        try:
+            self._maybe_level_institution(nueva_inst)
+        except Exception:
+            pass
+        if getattr(self, "db_active", False) and getattr(self, "db", None):
+            try:
+                self.db.save_institution(nueva_inst, self.user_id)
+            except Exception:
+                pass
+
+        # Crear una entrada de infraestructura/tile para que la institución se distinga en el mapa
+        try:
+            tile = self.mapa[fundador.x][fundador.y] if getattr(self, "mapa", None) else None
+        except Exception:
+            tile = None
+
+        if tile is not None:
+            nuevo_edif = {
+                "id": f"EDIF-{len(self.infraestructura) + 1}",
+                "tipo": tipo,  # Mantener el tipo (ej. 'Universidad', 'Hospital') para compatibilidad
+                "institucion_id": inst_id,
+                "constructor": fundador_id,
+                "paso_creacion": self.paso_actual,
+                "x": fundador.x,
+                "y": fundador.y,
+                "es_institucion": True,
+            }
+            # Registrar en la lista global de infraestructura y en el tile
+            self.infraestructura.append(nuevo_edif)
+            try:
+                tile.buildings.append(nuevo_edif)
+            except Exception:
+                # Si el tile no tiene la propiedad buildings por algún motivo, ignorar sin romper
+                pass
+            # Marcar mapa como sucio para forzar refresco en frontend
+            try:
+                self._map_dirty = True
+            except Exception:
+                pass
+
+        self.log(f"🏛️ [INSTITUCION] {fundador_id} ha fundado la institución '{nombre}' de tipo {tipo} en ({fundador.x}, {fundador.y}).", categoria="sistema")
+        self.notificar_cambio_estado()
+        self.guardar_estado()
+
+        return True, inst_id
 
 
 if __name__ == "__main__":

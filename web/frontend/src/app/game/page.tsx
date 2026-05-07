@@ -4,8 +4,9 @@ import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import useGameStore from "@/store/useGameStore";
 import { getHttpUrl } from "@/utils/apiConfig";
-import { Play, Pause, RefreshCw, LogOut, Map as MapIcon, Share2, Zap, Brain, Users, Box, ChevronDown, ChevronRight, Clock, Activity, BarChart3, Terminal, X, Flag, CircleDashed, Star, Sun, CloudRain, Landmark, MessageCircle, ShieldCheck } from "lucide-react";
+import { Play, Pause, RefreshCw, LogOut, Map as MapIcon, Share2, Zap, Brain, Users, Box, ChevronDown, ChevronRight, Clock, Activity, BarChart3, Terminal, X, Flag, CircleDashed, Star, Sun, CloudRain, Landmark, MessageCircle, ShieldCheck, DollarSign, Home } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { getAgentName, replaceIdsWithNames } from "@/utils/nameUtils";
 
 import WorldViewport from "@/components/WorldViewport";
 import WorldViewport3D from "@/components/WorldViewport3D";
@@ -34,6 +35,7 @@ export default function GamePage() {
     const {
         connect,
         disconnect,
+        reconnect,
         isConnected,
         step,
         agents,
@@ -51,15 +53,34 @@ export default function GamePage() {
         propuestas,
         showThoughts,
         toggleThoughts,
+        enableStreaming,
+        toggleStreaming,
         isAuthenticated,
         userId,
+        gameId,
         username,
         logout,
         _handleSessionExpiredResponse,
         userScore,
         recentCompletedMissions,
-        agentePoseidoId
+        agentePoseidoId,
+        modoControlTotal,
+        setModoControlTotal
     } = useGameStore();
+
+    const uid = gameId || userId;
+
+    const architectMoney = React.useMemo(() => {
+        try {
+            // Preferir suma de dinero de agentes (compatibilidad con backend)
+            const sumAgents = (agents || []).reduce((s: number, a: any) => s + (typeof a.money === 'number' ? a.money : (typeof a.dinero === 'number' ? a.dinero : 0)), 0);
+            // Si existe economy.total_dinero y es un número, usarlo como fallback/override
+            const econTotal = economy && typeof economy.total_dinero === 'number' ? economy.total_dinero : null;
+            return econTotal !== null ? econTotal : sumAgents;
+        } catch (e) {
+            return 0;
+        }
+    }, [economy, agents]);
 
     const [viewMode, setViewMode] = useState<"map" | "3d" | "graph">("map");
     const [activePanel, setActivePanel] = useState<string | null>(null);
@@ -91,7 +112,7 @@ export default function GamePage() {
     }, [isAuthenticated, router, connect, disconnect]);
 
     const handleControl = async (action: "start" | "pause" | "reset", forcedMode?: boolean) => {
-        if (!userId) return;
+        if (!uid) return;
 
         if (action === "reset") {
             const confirmed = window.confirm("¿Estás seguro de que deseas reiniciar la simulación? Se perderán todos los agentes, grupos y leyes actuales.");
@@ -101,11 +122,11 @@ export default function GamePage() {
         try {
             const modeToUse = forcedMode !== undefined ? forcedMode : useGameStore.getState().modoControlTotal;
             
-            const response = await fetch(getHttpUrl("/game/control"), {
+            const response = await fetch(getHttpUrl('/game/control'), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ 
-                    user_id: userId, 
+                    user_id: uid,
                     action, 
                     modo_control_total: modeToUse 
                 }),
@@ -139,8 +160,9 @@ export default function GamePage() {
     };
 
     const fetchSavedGames = async () => {
-        if (!userId) return;
+        if (!uid) return;
         try {
+            // Utilizamos el userId base para listar todos los slots guardados
             const res = await fetch(getHttpUrl(`/games/list/${userId}`));
             if (res.ok) {
                 const data = await res.json();
@@ -150,20 +172,22 @@ export default function GamePage() {
     };
 
     const handleOperation = async (type: 'continue' | 'new' | 'quick') => {
-        if (!userId) return;
+        if (!uid) return;
         setLoading(true);
         try {
             if (type === 'continue') {
                 await fetch(getHttpUrl('/games/load'), {
-                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ user_id: userId })
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ user_id: uid })
                 });
             } else if (type === 'new') {
                 await fetch(getHttpUrl('/game/control'), {
-                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ user_id: userId, action: 'reset' })
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'}, 
+                    body: JSON.stringify({ user_id: uid, action: 'reset' })
                 });
             } else if (type === 'quick') {
                 await fetch(getHttpUrl('/games/quickplay'), {
-                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ user_id: userId, num_agents: 12, save: true })
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ user_id: uid, num_agents: 12, save: true })
                 });
             }
             setShowModeSelection(false);
@@ -176,12 +200,12 @@ export default function GamePage() {
     };
 
     const handleSave = async () => {
-        if (!userId) return;
+        if (!uid) return;
         try {
             const response = await fetch(getHttpUrl("/games/save"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id: userId }),
+                body: JSON.stringify({ user_id: uid }),
             });
             if (await _handleSessionExpiredResponse(response)) return;
             if (!response.ok) throw new Error('Save failed');
@@ -192,6 +216,60 @@ export default function GamePage() {
             alert('No se pudo guardar la partida');
         }
     };
+
+    // === Auto-save: periodically POST /games/save and attempt sendBeacon on unload ===
+    React.useEffect(() => {
+        const autosaveSec = parseInt(process.env.NEXT_PUBLIC_AUTOSAVE_INTERVAL || '60', 10);
+        const autosaveMs = Math.max(5, autosaveSec) * 1000; // mínimo 5s
+        if (!isClient || !isAuthenticated || !uid) return;
+
+        const tick = async () => {
+            try {
+                await fetch(getHttpUrl('/games/save'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: uid }),
+                });
+            } catch (err) {
+                console.error('Autosave failed:', err);
+            }
+        };
+
+        const id = setInterval(tick, autosaveMs);
+
+        const onBeforeUnload = () => {
+            try {
+                const payload = JSON.stringify({ user_id: uid });
+                const url = getHttpUrl('/games/save');
+                if (navigator && typeof navigator.sendBeacon === 'function') {
+                    const blob = new Blob([payload], { type: 'application/json' });
+                    navigator.sendBeacon(url, blob);
+                } else {
+                    // best-effort final save
+                    fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true });
+                }
+            } catch (e) {
+                console.warn('beforeunload autosave failed', e);
+            }
+        };
+
+        window.addEventListener('beforeunload', onBeforeUnload);
+
+        // kick an immediate save when opening the page
+        tick();
+
+        return () => {
+            clearInterval(id);
+            window.removeEventListener('beforeunload', onBeforeUnload);
+        };
+    }, [isClient, isAuthenticated, uid]);
+
+    // === Auto-scroll para la Terminal de Eventos ===
+    useEffect(() => {
+        if (autoScrollEnabled && showLogs && lastLogRef.current) {
+            lastLogRef.current.scrollIntoView({ behavior: "smooth" });
+        }
+    }, [logs, autoScrollEnabled, showLogs]);
 
     if (!isClient || !isAuthenticated) {
         return <div className="h-screen w-full flex items-center justify-center bg-[#0a0b10] text-white font-mono uppercase tracking-[0.4em] animate-pulse">Inicializando Realidad...</div>;
@@ -210,7 +288,16 @@ export default function GamePage() {
                 }}
                 showThoughts={showThoughts}
                 toggleThoughts={toggleThoughts}
+                enableStreaming={enableStreaming}
+                toggleStreaming={toggleStreaming}
                 onControl={handleControl}
+                modoControlTotal={modoControlTotal}
+                onToggleMode={() => {
+                    const newMode = !modoControlTotal;
+                    setModoControlTotal(newMode);
+                    handleControl("start", newMode);
+                }}
+                userId={uid || ""}
             />
 
             <div className="flex-1 min-w-0 flex flex-col relative overflow-hidden">
@@ -240,6 +327,8 @@ export default function GamePage() {
                             <div className="w-px h-4 bg-white/5" />
                             <HeaderStat icon={weather === 'sunny' ? Sun : CloudRain} label="Clima" value={weather === 'sunny' ? 'Despejado' : 'Tormenta'} />
                             <div className="w-px h-4 bg-white/5" />
+                            <HeaderStat icon={DollarSign} label="Dinero" value={(Math.round(architectMoney) || 0).toString() + ' MC'} />
+                            <div className="w-px h-4 bg-white/5" />
                             <HeaderStat icon={Star} label="Puntos" value={userScore.toString()} highlight />
                         </div>
 
@@ -250,12 +339,29 @@ export default function GamePage() {
                             </div>
                             <div className="flex items-center gap-3">
                                 <button
+                                    onClick={() => router.push('/start')}
+                                    className="p-3 bg-white/5 hover:bg-indigo-500/20 text-white/40 hover:text-indigo-400 rounded-2xl transition-all border border-white/5 active:scale-90 group"
+                                    title="Volver al Inicio"
+                                >
+                                    <Home className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" />
+                                </button>
+
+                                <button
                                     onClick={handleSave}
                                     className="p-3 bg-white/5 hover:bg-white/10 text-white rounded-2xl transition-all border border-white/5"
                                     title="Guardar partida"
                                 >
                                     <Share2 className="w-4 h-4" />
                                 </button>
+
+                                <button
+                                    onClick={() => reconnect()}
+                                    className="p-3 bg-white/5 hover:bg-white/10 text-white rounded-2xl transition-all border border-white/5"
+                                    title="Reconectar WebSocket"
+                                >
+                                    <RefreshCw className={`w-4 h-4 ${isConnected ? '' : 'animate-spin'}`} />
+                                </button>
+
                                 <button
                                     onClick={logout}
                                     className="p-3 bg-white/5 hover:bg-red-500/20 text-white/40 hover:text-red-400 rounded-2xl transition-all border border-white/5 active:scale-90 group"
@@ -305,7 +411,7 @@ export default function GamePage() {
                                             <span className="text-[9px] font-mono text-white/50">Auto-Scroll</span>
                                         </div>
                                     </div>
-                                    <LogList logs={logs} showThoughts={showThoughts} step={step} logsContainerRef={logsContainerRef} lastLogRef={lastLogRef} />
+                                    <LogList agents={agents} showThoughts={showThoughts} step={step} logsContainerRef={logsContainerRef} lastLogRef={lastLogRef} />
                                 </motion.div>
                             )}
                         </AnimatePresence>
@@ -316,7 +422,7 @@ export default function GamePage() {
                     activePanel={activePanel}
                     onClose={() => setActivePanel(null)}
                     selectedAgentId={selectedAgentId}
-                    userId={userId || ""}
+                    userId={uid || ""}
                 />
 
                 <AnimatePresence>
@@ -568,8 +674,9 @@ const HeaderStat = React.memo(({ icon: Icon, label, value, highlight }: any) => 
     );
 });
 
-const LogList = React.memo(({ logs, showThoughts, step, logsContainerRef, lastLogRef }: any) => {
-    const visibleLogs = logs.slice(-200);
+const LogList = React.memo(({ agents, showThoughts, step, logsContainerRef, lastLogRef }: any) => {
+    const logs = useGameStore((state) => state.logs);
+    const visibleLogs = logs.slice(-1000);
 
     return (
         <div
@@ -577,8 +684,11 @@ const LogList = React.memo(({ logs, showThoughts, step, logsContainerRef, lastLo
             className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar font-mono text-xs"
         >
             {visibleLogs.map((log: any, i: number) => {
-                const logText = typeof log === 'string' ? log : (log.message || '');
+                let logText = typeof log === 'string' ? log : (log.message || '');
                 if (logText.includes('🧠') && !showThoughts) return null;
+
+                // Reemplazar IDs por nombres
+                logText = replaceIdsWithNames(logText, agents);
 
                 let borderColor = 'border-[#7c4dff]/40';
                 const isGlobal = (
@@ -603,7 +713,7 @@ const LogList = React.memo(({ logs, showThoughts, step, logsContainerRef, lastLo
 
                 const isLastLog = i === visibleLogs.length - 1;
                 return (
-                    <div key={log.timestamp || i} ref={isLastLog ? lastLogRef : null} className={`p-2 rounded bg-white/5 border-l-2 ${borderColor} animate-in fade-in slide-in-from-bottom-1`}>
+                    <div key={`${log.timestamp ?? ''}_${i}`} ref={isLastLog ? lastLogRef : null} className={`p-2 rounded bg-white/5 border-l-2 ${borderColor} animate-in fade-in slide-in-from-bottom-1`}>
                         <span className="text-[8px] text-white/30 block mb-0.5 uppercase tracking-tighter">Turno {log.step || step}</span>
                         <span className="text-white/80 leading-relaxed font-sans">{logText}</span>
                     </div>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Psique Artificial - Arquitectura Cognitiva MundoIA</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --primary: #64ffda;
+            --bg: #0a192f;
+            --card-bg: #112240;
+            --text: #ccd6f6;
+            --text-dim: #8892b0;
+        }
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: auto;
+        }
+        h1, h2, h3 {
+            color: var(--primary);
+            border-bottom: 1px solid #233554;
+            padding-bottom: 10px;
+        }
+        .mermaid {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 30px 0;
+        }
+        .concept-block {
+            background: var(--card-bg);
+            padding: 25px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            border-left: 5px solid var(--primary);
+        }
+        .highlight { color: var(--primary); font-weight: bold; }
+        code { background: #000; padding: 2px 5px; border-radius: 4px; color: #f472b6; }
+        ul { list-style-type: square; }
+        .footer { margin-top: 50px; text-align: center; color: var(--text-dim); font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Tratado de la Psique Artificial</h1>
+        <p>Este documento detalla la arquitectura multidimensional que permite a los agentes de MundoIA desarrollar personalidades emergentes, coherencia narrativa y evolución ética a largo plazo.</p>
+
+        <h2>1. El Núcleo de la Personalidad: El Sistema de Alma</h2>
+        <div class="concept-block">
+            <p>La personalidad no es un conjunto estático de variables; es un <b>sistema dinámico</b> gestionado por el componente <code>Alma</code>. Se basa en una adaptación del modelo Big Five (OCEAN), pero extendido con vectores de moralidad y estados emocionales volátiles.</p>
+            <ul>
+                <li><span class="highlight">Rasgos Base:</span> Amabilidad, Valentía, Curiosidad, Neuroticismo y Ambición.</li>
+                <li><span class="highlight">Vectores Éticos:</span> Altruismo vs. Egoísmo, Orden vs. Caos.</li>
+                <li><span class="highlight">Evolución:</span> El Alma registra "Experiencias Clave". Si un agente vive repetidos actos de traición, su rasgo de <i>Amabilidad</i> sufre una atenuación permanente, modificando su probabilidad de cooperar en el futuro.</li>
+            </ul>
+        </div>
+
+        <div class="mermaid">
+        graph LR
+            E[Experiencia Externa] --> F{Filtro de Importancia}
+            F -- >0.8 --> AC[Alma: Cambio de Rasgos]
+            F -- <0.8 --> ME[Memoria Efímera]
+            AC --> P[Nueva Personalidad]
+            P --> B[Sesgo de Decisión BDI]
+        </div>
+
+        <h2>2. La Memoria Tripartita: El Filtro de la Realidad</h2>
+        <div class="concept-block">
+            <p>La memoria en MundoIA actúa como el <b>contexto histórico</b> que justifica la personalidad. Sin memoria, la personalidad es solo un algoritmo; con memoria, es una biografía.</p>
+            <h3>A. Memoria Episódica (El "Yo" Narrativo)</h3>
+            <p>Almacena eventos con carga emocional. Cada recuerdo tiene un <code>score_importancia</code> calculado por el Alma. Los recuerdos con alto impacto emocional son recuperados con prioridad mediante <b>Embeddings Vectoriales</b> cuando el agente enfrenta situaciones similares.</p>
+            
+            <h3>B. Memoria Semántica (El "Mundo" Conocido)</h3>
+            <p>Es el repositorio de hechos. "El fuego quema", "El Agente X es el líder". Esta memoria construye el <b>Sistema de Creencias (Beliefs)</b> del agente. Si la memoria semántica es alterada (por desinformación o chismes), el agente actuará sobre una realidad falsa con total convicción.</p>
+
+            <h3>C. Memoria Procedimental (El "Cómo" Actuar)</h3>
+            <p>Define la maestría técnica. Un agente puede tener la <i>intención</i> de construir una casa, pero su memoria procedimental dicta si tiene el <i>conocimiento</i> para hacerlo con éxito.</p>
+        </div>
+
+        <h2>3. El Ciclo BDI (Beliefs-Desires-Intentions)</h2>
+        <div class="concept-block">
+            <p>Es el motor de razonamiento que unifica la personalidad y la memoria:</p>
+            <ol>
+                <li><span class="highlight">Beliefs (Creencias):</span> Lo que el agente cree que es verdad (Percepción + Memoria Semántica).</li>
+                <li><span class="highlight">Desires (Deseos):</span> Impulsos generados por la personalidad y necesidades vitales (Hambre, Ambición, Socialización).</li>
+                <li><span class="highlight">Intentions (Intenciones):</span> El plan de acción elegido. El agente filtra sus deseos según sus creencias y capacidades (Memoria Procedimental).</li>
+            </ol>
+        </div>
+
+        <div class="mermaid">
+        graph TD
+            subgraph "Cerebro LangGraph"
+                M[Memoria Tripartita] --> B[Beliefs]
+                P[Personalidad/Alma] --> D[Desires]
+                B & D --> I[Intentions/Plan]
+                I --> A[Acción en el Mundo]
+                A --> R[Resultado]
+                R --> M
+            end
+        </div>
+
+        <h2>4. Interacción y Socialización Compleja</h2>
+        <div class="concept-block">
+            <p>La forma en que un agente interactúa se ve moldeada por el <b>Grafo Social</b> y la <b>Fuerza de Relación</b>:</p>
+            <ul>
+                <li><span class="highlight">Fuerza de Relación:</span> Un valor de -1.0 a 1.0 que determina la confianza.</li>
+                <li><span class="highlight">Social Force Action:</span> En cada turno, el agente está obligado a realizar una acción social (mensaje, post, chisme). El tono de esta acción es destilado por el LLM cruzando su <i>Personalidad</i> con la <i>Historia de Mensajes</i> en la memoria episódica.</li>
+                <li><span class="highlight">Dinámica de Grupos:</span> Los agentes buscan coherencia. Se unirán a grupos cuyos miembros tengan memorias semánticas compatibles (mismas creencias) o alta afinidad de alma.</li>
+            </ul>
+        </div>
+
+        <div class="footer">
+            Documento generado para el Proyecto MundoIA - Arquitectura de Agentes de Nueva Generación.
+        </div>
+    </div>
+    <script>mermaid.initialize({startOnLoad:true, theme:'dark'});</script>
+</body>
+</html>

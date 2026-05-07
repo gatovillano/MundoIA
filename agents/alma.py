@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Any
 from enum import Enum
 import random
 import json
+import re
 
 
 class Arquetipo(Enum):
@@ -108,6 +109,7 @@ class Alma:
     narrativa_personal: str = ""  # "Soy un explorador que..."
     traumas: List[ExperienciaClave] = field(default_factory=list)
     epifanias: List[ExperienciaClave] = field(default_factory=list)
+    reflexiones: List[ExperienciaClave] = field(default_factory=list)
     triunfos: List[ExperienciaClave] = field(default_factory=list)
 
     # Relación con el mundo
@@ -165,20 +167,30 @@ class Alma:
         # Reintegrar narrativa personal
         self._reintegrar_narrativa(experiencia)
 
-        # Reintegrar narrativa personal
-        self._reintegrar_narrativa(experiencia)
-
         # Actualizar valores según la lección
         if experiencia.leccion:
             self._actualizar_valores_desde_leccion(experiencia)
 
     def _reintegrar_narrativa(self, experiencia: ExperienciaClave):
         """Reescribe la narrativa personal incorporando la nueva experiencia."""
+        # Evitar integrar reflexiones por cada mensaje: generan ruido en la narrativa de `Alma`.
+        if getattr(experiencia, "tipo", "").lower() == "reflexion":
+            return
+
         base = f"Soy {self.nombre_propio or 'un agente'}, un {self.arquetipo.value}."
 
         if self.narrativa_personal:
             # Ya tiene narrativa, agregar capítulo
-            self.narrativa_personal += f" Luego, {experiencia.descripcion.lower()}."
+            # Añadir solo la parte significativa de la descripción para legibilidad
+            desc = experiencia.descripcion or ""
+            desc = desc.strip()
+            lower = desc.lower()
+            if lower.startswith("emitió o procesó un mensaje:"):
+                # conservar solo el contenido tras los dos puntos
+                contenido = desc.split(":", 1)[1].strip() if ":" in desc else desc
+                self.narrativa_personal += f" Luego, {contenido.lower()}."
+            else:
+                self.narrativa_personal += f" Luego, {desc.lower()}."
         else:
             # Primera narrativa
             self.narrativa_personal = base
@@ -299,6 +311,7 @@ class Alma:
             "narrativa_personal": self.narrativa_personal,
             "traumas": [t.to_dict() for t in self.traumas],
             "epifanias": [e.to_dict() for e in self.epifanias],
+            "reflexiones": [r.to_dict() for r in self.reflexiones],
             "triunfos": [t.to_dict() for t in self.triunfos],
             "relacion_con_arquitecto": self.relacion_con_arquitecto,
             "filosofia_existencial": self.filosofia_existencial,
@@ -318,8 +331,23 @@ class Alma:
         alma.valores = {k: ValorPersonal.from_dict(v) for k, v in data.get("valores", {}).items()}
         alma.tabues = data.get("tabues", [])
         alma.narrativa_personal = data.get("narrativa_personal", "")
+        # Limpiar narrativa antigua que contenga logs tipo "emitió o procesó un mensaje"
+        if alma.narrativa_personal:
+            # Separar en oraciones y filtrar aquellas que parecen sólo logs de mensaje
+            partes = re.split(r'(?<=[.!?])\s+', alma.narrativa_personal)
+            filtradas = []
+            for p in partes:
+                pl = p.lower()
+                # Detectar variantes con/without acentos buscando raíces
+                if ("emit" in pl and "proces" in pl and "mensaje" in pl) or (
+                    "emitió o procesó" in pl or "emitio o proceso" in pl
+                ):
+                    continue
+                filtradas.append(p.strip())
+            alma.narrativa_personal = " ".join(filtradas).strip()
         alma.traumas = [ExperienciaClave.from_dict(t) for t in data.get("traumas", [])]
         alma.epifanias = [ExperienciaClave.from_dict(e) for e in data.get("epifanias", [])]
+        alma.reflexiones = [ExperienciaClave.from_dict(r) for r in data.get("reflexiones", [])]
         alma.triunfos = [ExperienciaClave.from_dict(t) for t in data.get("triunfos", [])]
         alma.relacion_con_arquitecto = data.get("relacion_con_arquitecto", "neutral")
         alma.filosofia_existencial = data.get("filosofia_existencial", "")

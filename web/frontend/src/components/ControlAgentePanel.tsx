@@ -9,10 +9,11 @@ import {
     Coffee, Compass, Crosshair, Book, Microscope,
     Shield, TrendingUp, Handshake, Play, Trash2,
     Search, Code, Layout, Hammer, Sword, GraduationCap,
-    Target, Wallet, Swords, Brain
+    Target, Wallet, Swords, Brain, CheckCircle2
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import useGameStore from "@/store/useGameStore";
+import { getHttpUrl } from "@/utils/apiConfig";
 import { Agent } from "@/types/agent";
 
 interface ActionOption {
@@ -25,7 +26,7 @@ interface ActionDefinition {
     name: string;
     description: string;
     icon: any;
-    category: 'survival' | 'social' | 'construction' | 'knowledge' | 'political' | 'technical' | 'movement' | 'conflict';
+    category: 'survival' | 'social' | 'construction' | 'knowledge' | 'political' | 'technical' | 'movement' | 'conflict' | 'social_net';
     options?: ActionOption[];
     paramName?: string;
 }
@@ -41,7 +42,8 @@ const ALL_ACTIONS: ActionDefinition[] = [
     
     // SOCIAL (Sin inputs, el LLM decide el mensaje)
     { id: 'decir', name: 'Comunicar', description: 'Hablar con otros', icon: MessageSquare, category: 'social' },
-    { id: 'socializar', name: 'Socializar', description: 'Mejorar relación', icon: Handshake, category: 'social' },
+    { id: 'susurrar', name: 'Susurrar', description: 'Mensaje privado a otro', icon: Target, category: 'social', paramName: 'target_id' },
+    { id: 'socializar', name: 'Socializar', description: 'Mejorar relación', icon: Handshake, category: 'social', paramName: 'target_id' },
     { id: 'formar_alianza', name: 'Alianza', description: 'Pacto cooperación', icon: Users, category: 'social' },
     { id: 'opinar', name: 'Opinar', description: 'Hablar en asamblea', icon: MessageSquare, category: 'social' },
     
@@ -58,7 +60,7 @@ const ALL_ACTIONS: ActionDefinition[] = [
             { label: 'C. Comunitario', value: 'Centro Comunitario' }
         ]
     },
-    { id: 'comerciar', name: 'Comerciar', description: 'Intercambiar recursos', icon: Wallet, category: 'construction' },
+    { id: 'comerciar', name: 'Comerciar', description: 'Intercambiar recursos', icon: Wallet, category: 'construction', paramName: 'target_id' },
     { id: 'consultar_mercado', name: 'Ver Precios', description: 'Consultar mercado', icon: Search, category: 'construction' },
     
     // KNOWLEDGE
@@ -89,6 +91,7 @@ const ALL_ACTIONS: ActionDefinition[] = [
     
     // POLITICAL
     { id: 'fundar_grupo', name: 'Fundar Grupo', description: 'Crear facción', icon: Users2, category: 'political' },
+    { id: 'fundar_pueblo', name: 'Fundar Pueblo', description: 'Asentar grupo', icon: Globe, category: 'political' },
     { 
         id: 'votar', name: 'Votar', description: 'Votación de ley', icon: Vote, category: 'political',
         paramName: 'voto',
@@ -128,7 +131,7 @@ const ALL_ACTIONS: ActionDefinition[] = [
     { id: 'social_like', name: 'Like', description: 'Reaccionar positivamente', icon: Heart, category: 'social_net' },
     
     // CONFLICT
-    { id: 'atacar', name: 'Atacar', description: 'Combatir rival', icon: Sword, category: 'conflict' },
+    { id: 'atacar', name: 'Atacar', description: 'Combatir rival', icon: Sword, category: 'conflict', paramName: 'target_id' },
     { id: 'competir', name: 'Competir', description: 'Rivalidad recursos', icon: Target, category: 'conflict' },
 ];
 
@@ -143,16 +146,38 @@ const CATEGORIES = [
     { id: 'conflict', label: 'War', icon: Sword },
 ];
 
+const ALL_ACTIONS_BASE = [...ALL_ACTIONS];
+
 export default function ControlAgentePanel({ agent, onClose }: { agent: Agent, onClose: () => void }) {
-    const { sendGodAction, modoControlTotal } = useGameStore();
+    const { sendGodAction, modoControlTotal, userId, agents } = useGameStore();
     const [queue, setQueue] = useState<any[]>([]);
     const [activeCat, setActiveCat] = useState('survival');
     const [sending, setSending] = useState(false);
     const [selectingArgsFor, setSelectingArgsFor] = useState<ActionDefinition | null>(null);
+    const [feedback, setFeedback] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
+
+    const agentOptions = useMemo(() => {
+        return agents
+            .filter(a => a.id !== agent.id)
+            .map(a => ({
+                label: a.identidad?.nombre || a.id.substring(0, 8),
+                value: a.id
+            }))
+            .slice(0, 15);
+    }, [agents, agent.id]);
+
+    const actions = useMemo(() => {
+        return ALL_ACTIONS_BASE.map(a => {
+            if (['susurrar', 'atacar', 'comerciar', 'socializar'].includes(a.id)) {
+                return { ...a, options: agentOptions };
+            }
+            return a;
+        });
+    }, [agentOptions]);
 
     const filteredActions = useMemo(() => {
-        return ALL_ACTIONS.filter(a => a.category === activeCat);
-    }, [activeCat]);
+        return actions.filter(a => a.category === activeCat);
+    }, [activeCat, actions]);
 
     const addToQueue = (action: ActionDefinition, paramValue?: any) => {
         if (queue.length >= 3) return;
@@ -186,17 +211,35 @@ export default function ControlAgentePanel({ agent, onClose }: { agent: Agent, o
     const sendPlan = async () => {
         if (queue.length === 0) return;
         setSending(true);
-        
+
         if (modoControlTotal) {
             // En modo Control Total, ejecutar inmediatamente una tras otra
             for (const q of queue) {
-                await sendGodAction("AGENT_EXECUTE_ACTION", {
-                    agent_id: agent.id,
-                    action: q.tipo,
-                    payload: q.parametros
-                });
+                try {
+                    const res = await fetch(getHttpUrl(`/game/god-mode/${userId}`), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            action_type: "AGENT_EXECUTE_ACTION",
+                            params: {
+                                agent_id: agent.id,
+                                action: q.tipo,
+                                payload: q.parametros
+                            }
+                        })
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        setFeedback({ type: 'success', msg: data.message || 'Acción ejecutada con éxito' });
+                    } else {
+                        setFeedback({ type: 'error', msg: data.detail || data.message || 'Error al ejecutar acción' });
+                    }
+                } catch (e) {
+                    setFeedback({ type: 'error', msg: 'Error de red al ejecutar acción' });
+                }
             }
             setQueue([]);
+            setTimeout(() => setFeedback(null), 3500);
             onClose();
         } else {
             // En modo Observador, enviar el plan para el próximo turno
@@ -212,9 +255,12 @@ export default function ControlAgentePanel({ agent, onClose }: { agent: Agent, o
 
             if (success) {
                 setQueue([]);
+                setFeedback({ type: 'success', msg: 'Plan enviado para el próximo turno' });
+                setTimeout(() => setFeedback(null), 3500);
                 onClose();
             } else {
-                alert("Error al enviar el plan de control.");
+                setFeedback({ type: 'error', msg: 'Error al enviar el plan de control.' });
+                setTimeout(() => setFeedback(null), 3500);
             }
         }
         setSending(false);
@@ -222,6 +268,13 @@ export default function ControlAgentePanel({ agent, onClose }: { agent: Agent, o
 
     return (
         <div className="flex flex-col h-full bg-[#0a0b10] text-white">
+            {/* Feedback visual de acción */}
+            {feedback && (
+                <div className={`fixed top-8 right-8 px-6 py-4 rounded-2xl border flex items-center gap-4 shadow-2xl z-[100] animate-in slide-in-from-right fade-in ${feedback.type === 'success' ? 'bg-green-500/20 border-green-500/30 text-green-400' : 'bg-red-500/20 border-red-500/30 text-red-400'}`}>
+                    {feedback.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <X className="w-5 h-5" />}
+                    <span className="text-[10px] font-black uppercase tracking-widest">{feedback.msg}</span>
+                </div>
+            )}
             {/* Header */}
             <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
                 <div className="flex items-center gap-3">

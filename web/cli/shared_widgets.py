@@ -6,6 +6,7 @@ Componentes visuales comunes para las TUIs Local y Remota.
 import random
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+from textual.app import ComposeResult
 from textual.widgets import Static, Button, Label, RichLog, Input
 from textual.containers import Vertical, Horizontal
 from textual.reactive import reactive
@@ -160,6 +161,14 @@ class ArchitectPanel(Static):
             with Horizontal(classes="architect_row"):
                 yield Button("🌍 EXPANSIÓN", id="arc_expand")
                 yield Button("📜 LORE", id="arc_lore")
+
+            yield Label("[bold cyan]⏱️ CONTROL TEMPORAL[/bold cyan]")
+            with Horizontal(classes="architect_row"):
+                yield Button("⚡ MAX", id="speed_max", variant="primary")
+                yield Button("⏩ RAPID", id="speed_rapid", variant="primary")
+            with Horizontal(classes="architect_row"):
+                yield Button("📊 NORM", id="speed_norm", variant="primary")
+                yield Button("⏳ SLOW", id="speed_slow", variant="primary")
 
 class SharedStyles:
     """CSS común para inyectar en las Apps de Textual."""

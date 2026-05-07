@@ -7,12 +7,13 @@ class Institucion:
         self.nombre = nombre
         self.tipo = tipo  # "EDUCATIVA", "FINANCIERA", "SANITARIA", "CIENTIFICA", "RELIGIOSA"
         self.fundador_id = fundador_id
-        self.lider_id = fundador_id
+        self.vocero_id = fundador_id
         self.miembros = [fundador_id]
         self.x = x
         self.y = y
         self.recursos = 0.0
         self.nivel = 1
+        self.puntos = 0.0
         self.user_id = user_id
         self.descripcion = ""
 
@@ -23,11 +24,12 @@ class Institucion:
             "nombre": self.nombre,
             "tipo": self.tipo,
             "fundador_id": self.fundador_id,
-            "lider_id": self.lider_id,
+            "vocero_id": self.vocero_id,
             "miembros": self.miembros,
             "x": self.x,
             "y": self.y,
             "recursos": self.recursos,
+            "puntos": getattr(self, "puntos", 0.0),
             "nivel": self.nivel,
             "user_id": self.user_id,
             "descripcion": self.descripcion,
@@ -47,9 +49,10 @@ class Institucion:
             y=data.get("y", 0),
             user_id=data.get("user_id"),
         )
-        inst.lider_id = data.get("lider_id", inst.fundador_id)
+        inst.vocero_id = data.get("vocero_id", inst.fundador_id)
         inst.miembros = data.get("miembros", [inst.fundador_id])
         inst.recursos = data.get("recursos", 0.0)
+        inst.puntos = data.get("puntos", 0.0)
         inst.nivel = data.get("nivel", 1)
         inst.descripcion = data.get("descripcion", "")
         return inst

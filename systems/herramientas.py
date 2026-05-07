@@ -39,6 +39,7 @@ class HerramientasAgente:
             return "No tengo configurada la llave de búsqueda web (Tavily)."
         
         try:
+            from tavily import TavilyClient
             tavily = TavilyClient(api_key=self.tavily_key)
             response = tavily.search(query=query, search_depth="basic", max_results=5)
             
@@ -81,60 +82,45 @@ class HerramientasAgente:
             return f"Error al scrapear {url}: {str(e)}"
 
     def ejecutar_codigo_seguro(self, codigo, agente_id=None):
-        """Ejecuta código Python de forma persistente y potente para el agente."""
+        """Ejecuta código Python de forma SEGURA usando RestrictedPython sandbox."""
         self._log(f"💻 [PROGRAMMABLE REALITY] Agente {agente_id} ejecutando código...", "herramienta")
         
-        # Preparar entorno de ejecución más capaz
-        import sys
-        import os
-        import json
-        import requests
-        from io import StringIO
-        
-        # Directorio de apps del agente
-        apps_dir = os.path.join("apps", str(agente_id))
-        os.makedirs(apps_dir, exist_ok=True)
-        
-        # Sandbox temporal para ejecución
-        sandbox_dir = os.path.join("sandbox", str(agente_id))
-        os.makedirs(sandbox_dir, exist_ok=True)
-
-        # Globals con acceso a librerías comunes y utilidades
-        execution_globals = {
-            "os": os, "sys": sys, "json": json, "requests": requests,
-            "agente_id": agente_id, "apps_dir": apps_dir, "sandbox_dir": sandbox_dir,
-            "print": print, "len": len, "range": range, "list": list, "dict": dict,
-            "open": open, # Permitir I/O en su sandbox
-        }
-        
         try:
+            from RestrictedPython import compile_restricted, safe_builtins
+            import sys
+            from io import StringIO
+            
+            # 1. Compilación restringida (valida sintaxis y restringe builtins)
+            bytecode = compile_restricted(codigo, '<string>', 'exec')
+            
+            # 2. Entorno seguro: solo builtins seguros + funciones matemáticas
+            safe_globals = safe_builtins.copy()
+            safe_globals.update({
+                "abs": abs, "min": min, "max": max, "sum": sum, "round": round,
+                "len": len, "list": list, "dict": dict, "set": set, "range": range,
+                "int": int, "float": float, "str": str, "bool": bool, "any": any, "all": all,
+                "sorted": sorted, "type": type, "isinstance": isinstance, "zip": zip,
+                "enumerate": enumerate,
+            })
+            
+            # 3. Redirigir stdout para capturar prints
             old_stdout = sys.stdout
             redirected_output = sys.stdout = StringIO()
             
-            # Ejecutar con el directorio del agente como contexto de trabajo
-            # Capturamos el resultado si el código termina con una expresión
-            # Para scripts, es mejor que definan una variable 'result' o similar.
-            # O simplemente exec el código y ver si 'result' existe en locales.
-            exec_locals = {}
-            exec(codigo, execution_globals, exec_locals)
+            # 4. Ejecución en sandbox (sin acceso a os, open, requests, etc.)
+            exec_globals = {"__builtins__": safe_globals}
+            exec(bytecode, exec_globals, {})
             
+            # 5. Restaurar stdout
             sys.stdout = old_stdout
-            std_output = redirected_output.getvalue()
+            result = redirected_output.getvalue()
             
-            # El agente puede dejar su resultado en la variable 'resultado' del script
-            resultado_script = exec_locals.get("resultado")
-            
-            if len(std_output) > 2000:
-                std_output = std_output[:2000] + "\n... [Resultado truncado]"
+            if len(result) > 2000:
+                result = result[:2000] + "\n... [Resultado truncado]"
             
             self._log(f"✅ [PROGRAMMABLE REALITY] Ejecución exitosa.", "herramienta")
+            return result if result else "Código ejecutado sin salida."
             
-            if isinstance(resultado_script, dict):
-                if std_output:
-                    resultado_script["_stdout"] = std_output
-                return resultado_script
-            
-            return f"{resultado_script if resultado_script is not None else 'Ejecución exitosa.'}\n\n[Salida]:\n{std_output}" if std_output else str(resultado_script)
         except Exception as e:
             if 'sys' in locals() and 'old_stdout' in locals():
                 sys.stdout = old_stdout

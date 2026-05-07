@@ -86,6 +86,16 @@ def validar_accion(agente, accion_nombre, accion_data, modelo):
         if agente.dinero < 20 or agente.recursos < 15:
             return False, f"Recursos insuficientes para construcción básica (mínimo 20 MC y 15 rec). Tienes: {agente.dinero:.1f} MC, {agente.recursos:.1f} rec."
 
+        # Comprobaciones a nivel de modelo (ej: límites globales / proximidad)
+        try:
+            if hasattr(modelo, "puede_construir"):
+                ok, msg = modelo.puede_construir(agente, tipo_edificio)
+                if not ok:
+                    return False, msg
+        except Exception:
+            # Si falla la comprobación del modelo, no bloquear por seguridad (se validará al ejecutar)
+            pass
+
         return True, ""
 
     elif accion_nombre == "CURARSE":
@@ -106,6 +116,47 @@ def validar_accion(agente, accion_nombre, accion_data, modelo):
             return False, "Debes estar en una Universidad (edificio) para usar la acción ESTUDIAR."
         return True, ""
 
+    elif accion_nombre == "UNIRSE_INSTITUCION":
+        inst_id = argumentos.get("institucion_id") or argumentos.get("institucion") or argumentos.get("id") or argumentos.get("nombre")
+        # Buscar por id o nombre o por ubicación
+        if inst_id:
+            if hasattr(modelo, "instituciones"):
+                # Buscar por id exacto
+                if str(inst_id) in modelo.instituciones:
+                    return True, ""
+                # Buscar por nombre
+                for iid, inst in modelo.instituciones.items():
+                    if getattr(inst, "nombre", "").lower() == str(inst_id).lower():
+                        return True, ""
+                return False, f"Institución '{inst_id}' no encontrada."
+            return False, "No hay instituciones en el modelo."
+        else:
+            # Si no se especifica, validar que exista una institución en tu casilla
+            if hasattr(modelo, "instituciones"):
+                for iid, inst in modelo.instituciones.items():
+                    if getattr(inst, "x", None) == agente.x and getattr(inst, "y", None) == agente.y:
+                        return True, ""
+            return False, "No especificaste institución y no hay ninguna en tu ubicación."
+
+    elif accion_nombre == "USAR_INSTITUCION":
+        inst_id = argumentos.get("institucion_id") or argumentos.get("institucion") or argumentos.get("id") or argumentos.get("nombre")
+        if inst_id:
+            if hasattr(modelo, "instituciones"):
+                if str(inst_id) in modelo.instituciones:
+                    return True, ""
+                for iid, inst in modelo.instituciones.items():
+                    if getattr(inst, "nombre", "").lower() == str(inst_id).lower():
+                        return True, ""
+                return False, f"Institución '{inst_id}' no encontrada."
+            return False, "No hay instituciones en el modelo."
+        else:
+            # Debes estar en la misma casilla que una institución para usarla sin especificar id
+            if hasattr(modelo, "instituciones"):
+                for iid, inst in modelo.instituciones.items():
+                    if getattr(inst, "x", None) == agente.x and getattr(inst, "y", None) == agente.y:
+                        return True, ""
+            return False, "No hay una institución aquí para usar."
+
     elif accion_nombre == "EXPLORAR":
         if agente.necesidades["descanso"] < 2.0:
             return False, "Estás demasiado agotado para explorar."
@@ -114,6 +165,22 @@ def validar_accion(agente, accion_nombre, accion_data, modelo):
     elif accion_nombre == "INVESTIGAR":
         if agente.necesidades["alimento"] < 3.0:
             return False, "Tienes demasiado hambre para concentrarte en investigar."
+        return True, ""
+
+    elif accion_nombre in ["COMMENT", "social_comment", "SOCIAL_COMMENT"]:
+        post_id = argumentos.get("post_id")
+        contenido = argumentos.get("contenido")
+        if not post_id or not contenido:
+            return False, "Faltan argumentos: post_id y contenido son requeridos para comentar."
+        # Opcional: validar que el post existe (si el modelo tiene social_recsys)
+        if hasattr(modelo, "social_recsys") and modelo.social_recsys:
+            try:
+                if hasattr(modelo.social_recsys, "interest_recsys"):
+                    posts = modelo.social_recsys.interest_recsys.posts
+                    if post_id not in posts:
+                        return False, f"El post {post_id} no existe."
+            except AttributeError:
+                pass  # Si no se puede validar, continuar
         return True, ""
 
     return True, "" # Acciones genéricas como HABLAR, MOVER, RECOLECTAR, DESCANSAR son siempre válidas

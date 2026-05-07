@@ -14,7 +14,7 @@ import { synthesizer } from "@/utils/SoundSynthesizer";
 
 export default function StartPage() {
   const router = useRouter();
-  const { isAuthenticated, userId, username, connect, modoControlTotal } = useGameStore();
+  const { isAuthenticated, userId, username, connect, modoControlTotal, setGameId } = useGameStore();
   const [loading, setLoading] = useState(false);
   const [savedGames, setSavedGames] = useState<any[]>([]);
   const [quickAgents, setQuickAgents] = useState<number>(12);
@@ -41,15 +41,19 @@ export default function StartPage() {
     }
   };
 
-  const handleLoad = async () => {
+  const handleLoad = async (gameIdToLoad?: string) => {
     if (!userId) return;
+    const targetGameId = gameIdToLoad || (savedGames.length > 0 ? savedGames[0].id : null);
+    if (!targetGameId) return;
+
     setLoading(true);
     synthesizer.playSelect();
     try {
+      setGameId(targetGameId);
       const res = await fetch(getHttpUrl('/games/load'), {
         method: 'POST', 
         headers: {'Content-Type': 'application/json'}, 
-        body: JSON.stringify({ user_id: userId })
+        body: JSON.stringify({ user_id: targetGameId })
       });
       if (res.ok) router.push('/game');
     } catch (e) {
@@ -59,26 +63,27 @@ export default function StartPage() {
 
   const handleNew = async () => {
     if (!userId) return;
-    const confirmed = window.confirm("¿Colapsar realidad actual? Se perderán todos los datos no guardados.");
+    const confirmed = window.confirm("¿Iniciar nueva realidad en un slot nuevo?");
     if (!confirmed) return;
 
     setLoading(true);
     synthesizer.playSelect();
     try {
-      const res = await fetch(getHttpUrl('/game/control'), {
-        method: 'POST', 
-        headers: {'Content-Type': 'application/json'}, 
-        body: JSON.stringify({ 
-            user_id: userId, 
-            action: 'reset',
-            modo_control_total: modoControlTotal 
-        })
-      });
-            if (res.ok) {
-                // Indicar al juego que la operación ya fue ejecutada desde aquí
-                useGameStore.setState({ startupOperationDone: true });
-                router.push('/game');
-            }
+        const newGameId = `${userId}_${Date.now().toString(36)}`;
+        setGameId(newGameId);
+
+        const res = await fetch(getHttpUrl(`/game/god-mode/${newGameId}`), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'reset',
+                modo_control_total: modoControlTotal
+            })
+        });
+        if (res.ok) {
+            useGameStore.setState({ startupOperationDone: true });
+            router.push('/game');
+        }
     } catch (e) {
       alert('Error creando nueva realidad');
     } finally { setLoading(false); }
@@ -89,11 +94,14 @@ export default function StartPage() {
     setLoading(true);
     synthesizer.playSelect();
     try {
+      const newGameId = `${userId}_${Date.now().toString(36)}`;
+      setGameId(newGameId);
+
       const res = await fetch(getHttpUrl('/games/quickplay'), {
         method: 'POST', 
         headers: {'Content-Type': 'application/json'}, 
         body: JSON.stringify({ 
-            user_id: userId, 
+            user_id: newGameId, 
             num_agents: quickAgents, 
             save: quickSave 
         })
@@ -154,7 +162,7 @@ export default function StartPage() {
                 {/* Main Operations */}
                 <div className="lg:col-span-7 space-y-4">
                     <OperationCard 
-                        onClick={handleLoad}
+                        onClick={() => handleLoad()}
                         disabled={savedGames.length === 0}
                         icon={Play}
                         title="Continuar Simulación"
@@ -166,7 +174,7 @@ export default function StartPage() {
                         onClick={handleNew}
                         icon={RefreshCw}
                         title="Nueva Partida"
-                        desc="Colapsar la línea de tiempo actual y generar un nuevo universo desde la semilla original."
+                        desc="Crear un nuevo universo persistente en un nuevo slot de guardado."
                         variant="danger"
                     />
 
@@ -185,21 +193,30 @@ export default function StartPage() {
                         ) : (
                             <div className="space-y-3">
                                 {savedGames.map((g, i) => (
-                                    <div key={i} className="p-5 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between">
+                                    <button 
+                                        key={i} 
+                                        onClick={() => handleLoad(g.id)}
+                                        className="w-full text-left p-5 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between hover:bg-white/[0.05] hover:border-indigo-500/30 transition-all group"
+                                    >
                                         <div className="flex items-center gap-4">
-                                            <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
+                                            <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400 group-hover:bg-indigo-500/20">
                                                 <Clock className="w-4 h-4" />
                                             </div>
                                             <div>
-                                                <p className="text-[10px] text-gray-500 uppercase font-mono">Turno Registrado</p>
+                                                <p className="text-[10px] text-gray-500 uppercase font-mono">
+                                                    Turno Registrado - {g.id.split('_')[1] || g.id}
+                                                </p>
                                                 <p className="text-sm font-black text-white">{g.paso_actual}</p>
                                             </div>
                                         </div>
-                                        <div className="text-right">
-                                            <p className="text-[10px] text-gray-500 uppercase font-mono">Misiones</p>
-                                            <p className="text-sm font-black text-[#00e676]">{g.score} PTS</p>
+                                        <div className="flex items-center gap-6">
+                                            <div className="text-right">
+                                                <p className="text-[10px] text-gray-500 uppercase font-mono">Misiones</p>
+                                                <p className="text-sm font-black text-[#00e676]">{g.score} PTS</p>
+                                            </div>
+                                            <ChevronRight className="w-5 h-5 text-indigo-500 opacity-0 group-hover:opacity-100 transition-all translate-x-[-10px] group-hover:translate-x-0" />
                                         </div>
-                                    </div>
+                                    </button>
                                 ))}
                             </div>
                         )}

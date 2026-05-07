@@ -126,7 +126,19 @@ def analizar_situacion(state: AgentState):
         contexto += f"\n  Tu Rol en la facción: {agente_yo.rol}. "
     else:
         contexto += "\n  No perteneces a ninguna facción. Puedes elegir prosperar solo o buscar aliados. "
+
+    # Simpatías con otras facciones
+    simpatias = getattr(agente_yo, "simpatizante_de", [])
+    if simpatias:
+        nombres_simpatias = []
+        for gid in simpatias:
+            civ = modelo.civilizaciones.get(gid)
+            nombres_simpatias.append(civ.nombre if civ else gid)
+        contexto += f"\n  Eres SIMPATIZANTE de: {', '.join(nombres_simpatias)} → puedes entrar en su territorio libremente. "
+
     contexto += "\n============================\n"
+
+
 
     # --- GUÍA DE CONSTRUCCIÓN Y EVOLUCIÓN ---
     contexto += "\n=== GUÍA DE PROGRESO ===\n"
@@ -152,8 +164,11 @@ def analizar_situacion(state: AgentState):
     # Info del terreno
     tile = modelo.mapa[agente_yo.x][agente_yo.y]
     contexto += f"Terreno actual: {tile.terrain_type}. "
+    if tile.buildings:
+        tipos_edif = [b.get("tipo", "Desconocido") for b in tile.buildings]
+        contexto += f"EDIFICIOS AQUÍ: {', '.join(tipos_edif)}. "
     if tile.resource_node:
-        contexto += f"Recursos aquí: {tile.resource_node['amount']} de {tile.resource_node['type']}. "
+        contexto += f"RECURSOS EN ESTA CASILLA: {tile.resource_node['amount']} de {tile.resource_node['type']}. "
 
     # Detectar órdenes directas del usuario (Personal y Global)
     contexto_arquitecto = ""
@@ -183,24 +198,31 @@ def analizar_situacion(state: AgentState):
                 contexto += f"  {rol}: {msg['content']}\n"
             contexto += "===================================================\n"
 
+    # --- HISTORIAL DE MENSAJES RECIENTES (Percepción de diálogos cercanos) ---
+    historial_mensajes = agente_yo.memoria.obtener_contexto_mensajes()
+    if historial_mensajes and historial_mensajes != "No hay diálogos previos recientes.":
+        contexto += f"\n=== {historial_mensajes} ===\n"
+
+    # --- ÚLTIMO MENSAJE DIRECTO RECIBIDO ---
+    if hasattr(agente_yo, "ultimo_mensaje_recibido") and agente_yo.ultimo_mensaje_recibido:
+        msg_rec = agente_yo.ultimo_mensaje_recibido
+        contexto += "\n=== 📬 ÚLTIMO MENSAJE RECIBIDO (DIRECTO O CERCANO) ===\n"
+        contexto += f"De: Agente {msg_rec['emisor']} | Tipo: {msg_rec.get('tipo', 'DIRECTO')}\n"
+        contexto += f"Contenido: \"{msg_rec['contenido']}\"\n"
+        contexto += "REACCIÓN SUGERIDA: Si te hablan directamente, es de buena educación responder. Usa SUSURRAR para una respuesta privada o el campo 'mensaje' para hablar en voz alta.\n"
+        contexto += "======================================================\n"
+
     # --- CONVERSACIONES ACTIVAS (Contexto profundo) ---
     conversaciones_activas = agente_yo.memoria.obtener_conversaciones_activas()
     if conversaciones_activas:
         contexto += "\n=== CONVERSACIONES ACTIVAS ===\n"
-        for otro_id in conversaciones_activas[
-            :2
-        ]:  # Máximo 2 conversaciones activas en contexto
-            hist = agente_yo.memoria.obtener_contexto_conversacion_activa(
-                otro_id, max_mensajes=8
-            )
+        for otro_id in conversaciones_activas[:2]:
+            hist = agente_yo.memoria.obtener_contexto_conversacion_activa(otro_id, max_mensajes=8)
             if hist:
                 contexto += hist
-                # Sugerir profundización si la profundidad es baja
-                conv = gestor_conversaciones.obtener_conversacion_activa(
-                    agente_yo.unique_id, otro_id
-                )
+                conv = gestor_conversaciones.obtener_conversacion_activa(agente_yo.unique_id, otro_id)
                 if conv and conv.profundidad < 0.3:
-                    contexto += f"\n[SUGERENCIA] Esta conversación es superficial. Considera hacer preguntas más profundas sobre los temas tratados o compartir experiencias personales.\n"
+                    contexto += f"\n[SUGERENCIA] Esta conversación es superficial. Haz preguntas más profundas.\n"
         contexto += "================================\n"
 
     # --- TEMAS DE INTERÉS RECIENTES ---
@@ -272,26 +294,22 @@ def analizar_situacion(state: AgentState):
             f"💰 CAPITAL OCIOSO: Tienes {agente_yo.dinero:.0f} MC sin invertir. Considera INVERTIR (retorno en 5 turnos)."
         )
 
-    if agente_yo.dinero < 15 and agente_yo.recursos > 50:
+    if agente_yo.dinero < 10 and agente_yo.recursos > 70:
         urgencias.append(
-            f"💸 POBREZA CON RECURSOS: Tienes {agente_yo.dinero:.0f} MC pero {agente_yo.recursos:.0f} recursos. COMERCIA para obtener dinero."
+            f"💸 POBREZA CON RECURSOS: Tienes {agente_yo.dinero:.0f} MC pero {agente_yo.recursos:.0f} recursos. Considera COMERCIAR para obtener liquidez si lo necesitas."
         )
 
-    # Oportunidades de comercio con vecinos
-    agentes_ricos_en_recursos = [
-        a
-        for a in modelo.agentes
-        if a.unique_id != agente_yo.unique_id
-        and a.recursos > 80
-        and agente_yo.dinero > 15
-        and abs(a.x - agente_yo.x) <= 3
-        and abs(a.y - agente_yo.y) <= 3
-    ]
-    if agentes_ricos_en_recursos:
-        t = agentes_ricos_en_recursos[0]
-        urgencias.append(
-            f"🤝 OPORTUNIDAD COMERCIAL: {t.identidad.nombre or t.unique_id} está cerca con {t.recursos:.0f} recursos. Puedes COMERCIAR."
-        )
+    # Oportunidades de comercio con vecinos (solo sugerir si realmente necesitas recursos)
+    if agente_yo.recursos < 30 and agente_yo.dinero > 30:
+        agentes_ricos_en_recursos = [
+            a for a in modelo.agentes
+            if a.unique_id != agente_yo.unique_id and a.recursos > 50 and abs(a.x - agente_yo.x) <= 3 and abs(a.y - agente_yo.y) <= 3
+        ]
+        if agentes_ricos_en_recursos:
+            t = agentes_ricos_en_recursos[0]
+            urgencias.append(
+                f"🤝 NECESITAS MATERIALES: {t.identidad.nombre or t.unique_id} está cerca con suficientes recursos. Puedes COMERCIAR con él."
+            )
 
     # Amenazas de enemigos cercanos
     enemigos_cercanos = []
@@ -341,16 +359,25 @@ def analizar_situacion(state: AgentState):
     amabilidad = agente_yo.personalidad.get("amabilidad", 0.5)
     hostilidad = agente_yo.personalidad.get("hostilidad", 0.5)
 
-    # Solo sugerir crear habilidades si tiene curiosidad alta y está bien de salud/comida
+    # Solo sugerir crear habilidades/apps si tiene curiosidad media/alta y está estable
     if (
-        not agente_yo.skills
-        and curiosidad > 0.7
-        and agente_yo.necesidades["alimento"] > 7
-        and agente_yo.necesidades["salud"] > 7
+        curiosidad > 0.5
+        and agente_yo.necesidades["alimento"] > 5
+        and agente_yo.necesidades["salud"] > 5
     ):
-        urgencias.append(
-            "🧠 CURIOSIDAD INSACIABLE: Sientes que puedes mejorar tu entorno. Considera CREAR_HABILIDAD (Python) para automatizar una ventaja única."
-        )
+        if not agente_yo.skills:
+            urgencias.append(
+                "🧠 POTENCIAL EVOLUTIVO: Sientes que tu mente puede ir más allá. Considera CREAR_HABILIDAD (Python) para desarrollar una capacidad única."
+            )
+        
+        if not agente_yo.apps:
+            urgencias.append(
+                "💻 INGENIO TÉCNICO: Tienes ideas que podrían convertirse en herramientas. Considera CREAR_APP para programar una solución persistente."
+            )
+        elif len(agente_yo.apps) < 3:
+             urgencias.append(
+                "🚀 AMBICIÓN TECNOLÓGICA: Tus creaciones actuales son solo el principio. Considera CREAR_APP para expandir tu arsenal de software."
+            )
 
     # Incitar a la socialización si es amable
     if amabilidad > 0.7 and len(agente_yo.memoria.grafo.nodes) < 5:
@@ -454,7 +481,11 @@ def actuar(state: AgentState):
         }
         stream_started["value"] = True
         try:
-            cb("llm_stream", payload)
+            # Usar helper del modelo para respetar posible ritmo lento
+            if hasattr(modelo, "_emit_realtime_event"):
+                modelo._emit_realtime_event("llm_stream", payload)
+            else:
+                cb("llm_stream", payload)
         except Exception:
             pass
 
@@ -509,14 +540,19 @@ def actuar(state: AgentState):
             "accion", {"nombre": "HABLAR", "argumentos": {"mensaje": "..."}}
         )
 
+    # Extraer destinatario si es una acción de SUSURRAR
+    dest_id = decision.get("destinatario_id")
+    if not dest_id and accion_dict and (accion_dict.get("nombre") == "SUSURRAR" or accion_dict.get("tipo") == "susurrar"):
+        dest_id = accion_dict.get("argumentos", {}).get("target_id")
+
     return {
         "pensamiento_actual": decision.get("pensamiento", "No pude pensar."),
         "accion_elegida": accion_dict,
         "mensaje_generado": decision.get("mensaje", ""),
         "es_global": decision.get("es_global", False),
         "es_grupal": decision.get("es_grupal", False),
-        "privado": bool(decision.get("destinatario_id")),
-        "destinatario_id": decision.get("destinatario_id"),
+        "privado": bool(dest_id),
+        "destinatario_id": dest_id,
         "beliefs": nuevas_creencias,
         "desires": nuevos_deseos,
         "intentions": nuevas_intenciones,
@@ -573,37 +609,89 @@ def ejecutar_herramientas(state: AgentState):
     if nombre_accion == "reflexionar":
         tema = argumentos.get("tema", "la vida y mi propósito")
         profundidad = argumentos.get("profundidad", "media")
-        intensidad = {"superficial": 0.3, "media": 0.5, "profunda": 0.8}.get(
-            profundidad, 0.5
-        )
+        intensidad = {"superficial": 0.3, "media": 0.5, "profunda": 0.8}.get(profundidad, 0.5)
+
+        # Generar reflexión y conclusión con LLM
+        reflexion_texto, conclusion = cerebro_llm.generar_reflexion_conclusion(agente_yo, tema, profundidad)
 
         exp = ExperienciaClave(
-            descripcion=f"Reflexioné profundamente sobre {tema}",
+            descripcion=reflexion_texto,
             turno=modelo.paso_actual,
             intensidad=intensidad,
             tipo="epifania",
-            leccion=f"La reflexión sobre '{tema}' me ha aportado nueva perspectiva.",
+            leccion=conclusion,
             emociones_asociadas=["reflexivo", "claro"],
         )
         agente_yo.alma.evolucionar(exp)
 
-        # Registrar en memoria conversacional si hay una conversación activa con alguien
+        # Guardar también en lista de reflexiones del Alma
+        try:
+            if not hasattr(agente_yo.alma, "reflexiones"):
+                agente_yo.alma.reflexiones = []
+            reflex_exp = ExperienciaClave(
+                descripcion=reflexion_texto,
+                turno=modelo.paso_actual,
+                intensidad=intensidad,
+                tipo="reflexion",
+                leccion=conclusion,
+                emociones_asociadas=["reflexivo"],
+            )
+            agente_yo.alma.reflexiones.append(reflex_exp)
+        except Exception as e:
+            print(f"⚠️ No se pudo guardar reflexión en lista: {e}")
+
+        # Registrar en memoria conversacional si hay conversación activa
         if state.get("agente_otro_id"):
             agente_yo.memoria.agregar_mensaje_a_conversacion(
                 state["agente_otro_id"],
-                f"[REFLEXIÓN] He estado pensando en {tema}...",
+                f"[REFLEXIÓN] {reflexion_texto}",
                 modelo.paso_actual,
                 tipo="reflexion",
-                metadata={"tema": tema, "profundidad": profundidad},
+                metadata={"tema": tema, "profundidad": profundidad, "conclusion": conclusion},
             )
 
-        mensaje_res = f"Mi reflexión sobre '{tema}' ha enriquecido mi Alma. Me siento más consciente."
+        mensaje_res = f"Mi reflexión sobre '{tema}' me llevó a: {conclusion}"
         modelo.log(
-            f"🧠 [REFLEXIÓN] Agente {agente_yo.unique_id} reflexiona sobre '{tema}' (intensidad: {intensidad})",
+            f"🧠 [REFLEXIÓN] Agente {agente_yo.unique_id} reflexiona sobre '{tema}' (intensidad: {intensidad}). Conclusión: {conclusion}",
             categoria="sistema",
         )
         modelo.notificar_cambio_estado()
         return {"info_externa": mensaje_res}
+
+    # === ACCIÓN: COMMENT (COMENTAR EN OASIS) ===
+    if nombre_accion == "comment":
+        post_id = argumentos.get("post_id", "")
+        contenido = argumentos.get("contenido", "")
+        if not post_id or not contenido:
+            resultado = "Error: COMMENT requiere 'post_id' y 'contenido'."
+        else:
+            modelo = state.get("modelo_instance")
+            if modelo and hasattr(modelo, "social_recsys") and modelo.social_recsys:
+                try:
+                    comentario_obj = modelo.social_recsys.agregar_comentario(
+                        post_id, agente_yo.unique_id, contenido
+                    )
+                    resultado = f"Comentario añadido al post {post_id}: {contenido[:50]}..."
+                    # Registrar en memoria conversacional del agente
+                    if hasattr(agente_yo, "memoria") and agente_yo.memoria:
+                        agente_yo.memoria.agregar_mensaje_a_conversacion(
+                            state.get("agente_otro_id", "OASIS"),
+                            f"[COMENTARIO] {contenido}",
+                            modelo.paso_actual,
+                            tipo="social_comment",
+                            metadata={"post_id": post_id, "comentario_id": comentario_obj.id if comentario_obj else None},
+                        )
+                    modelo.log(
+                        f"💬 [COMMENT] Agente {agente_yo.unique_id} comentó en post {post_id}: {contenido[:30]}...",
+                        categoria="social",
+                    )
+                    modelo.notificar_cambio_estado()
+                except Exception as e:
+                    resultado = f"Error al comentar: {e}"
+            else:
+                resultado = "Error: Sistema social no disponible."
+        return {"info_externa": resultado}
+
 
     # === ALIAS: WEB_SEARCH -> web_search ===
     if nombre_accion == "web_search":
@@ -682,7 +770,14 @@ def ejecutar_herramientas(state: AgentState):
             if isinstance(resultado, dict) and resultado.get("status") == "success":
                 new_skill_data = resultado.get("new_skill")
                 agente_yo.skills[new_skill_data["name"]] = new_skill_data
-                mensaje_res = f"Habilidad '{new_skill_data['name']}' creada con éxito. ¡Ahora puedo usarla!"
+                
+                # RECOMPENSA: Prestigio e Intelecto
+                agente_yo.reputacion = min(1.0, agente_yo.reputacion + 0.05)
+                if hasattr(agente_yo, "necesidades_intelectuales"):
+                    agente_yo.necesidades_intelectuales["curiosidad"] = min(10.0, agente_yo.necesidades_intelectuales["curiosidad"] + 2.0)
+                    agente_yo.necesidades_intelectuales["aprendizaje"] = min(10.0, agente_yo.necesidades_intelectuales["aprendizaje"] + 2.0)
+                
+                mensaje_res = f"Habilidad '{new_skill_data['name']}' creada con éxito. Mi reputación aumenta."
                 modelo.log(
                     f"🧠 [EVOLUCIÓN] Agente {agente_yo.unique_id} ha desarrollado la habilidad: {new_skill_data['name']}",
                     categoria="sistema",
@@ -695,7 +790,15 @@ def ejecutar_herramientas(state: AgentState):
             if isinstance(resultado, dict) and resultado.get("status") == "success":
                 app_data = resultado.get("app")
                 agente_yo.apps[app_data["name"]] = app_data
-                mensaje_res = f"Aplicación '{app_data['name']}' creada y guardada. Ahora puedo invocarla."
+                
+                # RECOMPENSA: Capital Social y Trascendencia
+                if hasattr(agente_yo, "capital_social"):
+                    agente_yo.capital_social = min(100.0, agente_yo.capital_social + 5.0)
+                agente_yo.reputacion = min(1.0, agente_yo.reputacion + 0.08)
+                if hasattr(agente_yo, "necesidades_intelectuales"):
+                    agente_yo.necesidades_intelectuales["expresion"] = min(10.0, agente_yo.necesidades_intelectuales["expresion"] + 3.0)
+                
+                mensaje_res = f"Aplicación '{app_data['name']}' creada y guardada. Me siento más poderoso y reconocido."
                 modelo.log(
                     f"💻 [APP CREATED] Agente {agente_yo.unique_id} ha creado una nueva App: {app_data['name']}",
                     categoria="sistema",

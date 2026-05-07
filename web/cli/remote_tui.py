@@ -205,6 +205,14 @@ class MundoRemoteTUI(App):
                 await session.post(f"{self.http_url}/game/god-mode/{self.user_id}", json=payload)
         except Exception as e: self.write_log(f"☢ Error de envío: {e}", "error")
 
+    async def set_speed(self, ritmo: float):
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.post(f"{self.http_url}/game/speed", json={"user_id": self.user_id, "ritmo": ritmo})
+                self.write_log(f"⏱️ Ritmo temporal ajustado a {ritmo}s", "system")
+        except Exception as e:
+            self.write_log(f"☢ Error ajustando velocidad: {e}", "error")
+
     # --- HANDLERS ---
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -213,8 +221,15 @@ class MundoRemoteTUI(App):
             "arc_storm": "set_weather:storm", "arc_spawn": "spawn_agent",
             "arc_money": "economy_boost", "arc_virus": "trigger_plague"
         }
+        speed_mapping = {
+            "speed_max": 0.0, "speed_rapid": 0.1,
+            "speed_norm": 0.5, "speed_slow": 1.5
+        }
+
         if event.button.id in mapping:
             await self.send_god_action(mapping[event.button.id])
+        elif event.button.id in speed_mapping:
+            await self.set_speed(speed_mapping[event.button.id])
 
     async def action_step(self):
         try:

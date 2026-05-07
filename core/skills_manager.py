@@ -70,6 +70,11 @@ class SkillManager:
             description="Realiza una búsqueda general en la web usando la API de Tavily.",
             code="""
 def execute(query, agente_id=None, **kwargs):
+    # Registrar la query para que llegue al frontend (Terminal de Eventos)
+    try:
+        log(f"🔍 [WEB SEARCH] Agente {agente_id} busca: '{query}'", "herramienta")
+    except Exception:
+        pass
     from tavily import TavilyClient
     from agents.cerebro_llm import cerebro_llm
     tavily_key = cerebro_llm.tavily_api_key
@@ -339,6 +344,22 @@ def execute(conocimiento=None, destinatario_id=None, agente_id=None, **kwargs):
             efecto_necesidades={"social": 0.3},
         )
 
+        self.base_skills["declarar_simpatia"] = Skill(
+            name="declarar_simpatia",
+            description="Se declara simpatizante de un grupo para poder entrar en su territorio. Requiere 'grupo_id' o 'nombre'.",
+            code="""
+def execute(grupo_id=None, nombre=None, agente_id=None, **kwargs):
+    # Esta skill es procesada por el motor físico (Agente.ejecutar_accion_final)
+    # pero aquí devolvemos un mensaje de confirmación para el cerebro LLM.
+    if not grupo_id and not nombre:
+        return "Error: Debes especificar el 'grupo_id' o el 'nombre' del grupo."
+    return {"status": "success", "grupo_id": grupo_id, "nombre": nombre, "mensaje": f"Procesando declaración de simpatía..."}
+""",
+            experiencia_ganada={"social": 0.5},
+            efecto_necesidades={"social": 0.2},
+        )
+
+
     def ejecutar_skill(self, skill_name, argumentos, agente_id=None, agent_skills=None):
         self._log(
             f"🛠️ [SKILL] Agente {agente_id} ejecutando skill: {skill_name}", "skill"
@@ -388,13 +409,31 @@ def execute(conocimiento=None, destinatario_id=None, agente_id=None, **kwargs):
             os.makedirs(sandbox_dir, exist_ok=True)
 
             # Entorno de ejecución con acceso a librerías
+            # Exponer `log` para que los skills puedan enviar mensajes al sistema de logs
+            def _skill_log(mensaje, categoria="skill"):
+                try:
+                    # Preferir pasar agent_id estructurado si hay un callback configurado
+                    if getattr(self, 'log_callback', None):
+                        try:
+                            # Intentar llamar con el parámetro agente_id al final
+                            self.log_callback(mensaje, categoria, None, None, None, None, agente_id)
+                            return
+                        except TypeError:
+                            # Fallback si la callback no acepta ese orden
+                            pass
+                    # Último recurso: usar _log que pasa por log_callback sin agent_id
+                    self._log(mensaje, categoria)
+                except Exception:
+                    pass
+
             exec_globals = {
                 "os": os, "sys": sys, "json": json, "requests": requests,
                 "agente_id": agente_id, "apps_dir": apps_dir, "sandbox_dir": sandbox_dir,
                 "print": print, "len": len, "range": range, "list": list, "dict": dict,
                 "set": set, "open": open,
                 "math": __import__("math"),
-                "requests": requests
+                "requests": requests,
+                "log": _skill_log,
             }
             exec_locals = {}
 

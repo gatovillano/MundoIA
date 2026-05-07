@@ -132,12 +132,16 @@ class WorldTile:
         self.terrain = value
 
     def to_dict(self) -> Dict[str, Any]:
+        terrain_value = (
+            self.terrain.value if isinstance(self.terrain, TerrainType) else self.terrain
+        )
+        # Si la casilla está marcada como sitio arqueológico, forzar el terrain
+        if self.is_archaeological_site:
+            terrain_value = TerrainType.ARCHAEOLOGICAL_SITE.value
         return {
             "x": self.x,
             "y": self.y,
-            "terrain": self.terrain.value
-            if isinstance(self.terrain, TerrainType)
-            else self.terrain,
+            "terrain": terrain_value,
             "resource": self.resource_node,
             "owner": self.owner_civ_id,
             "buildings": self.buildings,
@@ -185,6 +189,43 @@ class WorldSystem:
 
         return TerrainType.GRASS
 
+    def get_region_name(self, x: int, y: int) -> str:
+        """Retorna un nombre descriptivo para la región basado en el terreno y la posición."""
+        try:
+            tile = self.mapa[x][y]
+            terrain = tile.terrain if isinstance(tile.terrain, str) else tile.terrain.value
+            
+            # Nombres basados en cuadrantes y terreno
+            # Dividir el mapa en 3x3 macro-regiones
+            sector_x = x // (self.size // 3 + 1)
+            sector_y = y // (self.size // 3 + 1)
+            
+            nombres_x = ["Norte", "Centro", "Sur"]
+            nombres_y = ["Oeste", "Central", "Este"]
+            
+            ubicacion = f"{nombres_x[min(2, sector_x)]} {nombres_y[min(2, sector_y)]}"
+            
+            nombres_terreno = {
+                "grass": "Praderas",
+                "forest": "Bosques",
+                "mountain": "Cumbres",
+                "water": "Aguas",
+                "desert": "Dunas",
+                "archaeological_site": "Ruinas",
+                "path": "Senderos",
+                "void": "Vacío"
+            }
+            
+            prefijo = nombres_terreno.get(terrain, "Tierras")
+            
+            # Añadir un "sabor" único basado en la semilla para que sea consistente pero variado
+            sabor = ["Antiguas", "Olvidadas", "Brillantes", "Oscuras", "Vivas", "Silenciosas", "Vastas", "Sagradas"]
+            idx_sabor = (x + y + (self.size * sector_x)) % len(sabor)
+            
+            return f"{prefijo} {sabor[idx_sabor]} del {ubicacion}"
+        except Exception:
+            return f"Región ({x}, {y})"
+
     def generar_inicial(self):
         """Genera el mapa con la nueva lógica de biomas coherentes."""
         self.mapa.clear()
@@ -196,6 +237,13 @@ class WorldSystem:
                 self._asignar_recurso_coherente(tile)
                 row.append(tile)
             self.mapa.append(row)
+        # Plantar sitios arqueológicos tras la generación de biomas
+        try:
+            self._plant_archaeological_sites()
+        except Exception:
+            # No crítico; si falla la plantación, devolvemos el mapa normal
+            pass
+
         return self.mapa
 
     def expandir(self, direccion: str, cantidad: int = 5):
@@ -242,10 +290,16 @@ class WorldSystem:
                     "amount": random.randint(80, 250),
                 }
         elif tile.terrain == TerrainType.FOREST:
+            # Madera frecuente, pequeñas probabilidades de encontrar hierbas medicinales
             if rv < 0.35:
                 tile.resource_node = {
                     "type": "madera",
                     "amount": random.randint(60, 180),
+                }
+            elif rv < 0.41:  # baja proporción de hierbas en el bosque
+                tile.resource_node = {
+                    "type": "hierbas",
+                    "amount": random.randint(6, 24),
                 }
         elif tile.terrain == TerrainType.WATER:
             if rv < 0.45:  # Más abundante
@@ -254,14 +308,51 @@ class WorldSystem:
                     "amount": random.randint(30, 120),
                 }
         elif tile.terrain == TerrainType.GRASS:
-            if rv < 0.40:  # Mucho más frecuente por petición del usuario
+            # Reducir spawn de comida en praderas y añadir pequeñas probabilidades de hierbas
+            if rv < 0.25:  # menos comida que antes
                 tile.resource_node = {
                     "type": "comida",
                     "amount": random.randint(40, 140),
                 }
+            elif rv < 0.28:  # muy baja probabilidad de hierbas en praderas
+                tile.resource_node = {
+                    "type": "hierbas",
+                    "amount": random.randint(4, 12),
+                }
         elif tile.terrain == TerrainType.DESERT:
             if rv < 0.1:  # Raro pero valioso
                 tile.resource_node = {"type": "oro", "amount": random.randint(100, 300)}
+
+    def _plant_archaeological_sites(self, count: Optional[int] = None):
+        """Distribuye sitios arqueológicos en el mapa.
+
+        - Por defecto coloca unos pocos sitios (≈ tamaño^2 / 40).
+        - Evita agua y montañas, y evita tiles con recursos o edificios.
+        """
+        total = self.size * self.size
+        if count is None:
+            count = max(1, total // 40)
+
+        candidates = [(x, y) for x in range(self.size) for y in range(self.size)]
+        random.shuffle(candidates)
+        placed = 0
+        for (x, y) in candidates:
+            tile = self.mapa[x][y]
+            # Evitar tipos inapropiados
+            if tile.terrain == TerrainType.WATER or tile.terrain == TerrainType.MOUNTAIN:
+                continue
+            if tile.resource_node is not None:
+                continue
+            if tile.buildings:
+                continue
+
+            tile.is_archaeological_site = True
+            tile.artifact_type = random.choice(["ceramica", "herramienta", "joya", "inscripcion", "escultura"])
+            tile.artifact_value = random.randint(10, 150)
+
+            placed += 1
+            if placed >= count:
+                break
 
     def get_serializable(self):
         return [[t.to_dict() for t in row] for row in self.mapa]

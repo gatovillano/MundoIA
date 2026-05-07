@@ -5,20 +5,30 @@ import { motion } from "framer-motion";
 import { Globe, TrendingUp, Users, MessageCircle, Heart, Share2, Award, Crown, Star, MessageSquare, UserPlus, UserMinus, ArrowBigUp, ArrowBigDown, LayoutList } from "lucide-react";
 import useGameStore from "@/store/useGameStore";
 import { getHttpUrl } from "@/utils/apiConfig";
+import { getAgentName } from "@/utils/nameUtils";
 
 export default function SocialPanel() {
-    const { agents, socialFeed, userId, socialMode, gruposDinamicos, selectAgent } = useGameStore();
+    const { agents, socialFeed, userId: storeUserId, gameId, socialMode, gruposDinamicos, selectAgent } = useGameStore();
+    const userId = gameId || storeUserId;
+
+    // Filtrar posts para mostrar únicamente los de la partida activa
+    // Mostrar solo posts que tengan partida_id igual a la partida activa.
+    // Si no hay `userId` (modo local), mostramos todo.
+    const activeSocialFeed = (socialFeed || []).filter((p: any) => {
+        if (!userId) return true;
+        // El backend usa el ID de la simulación (gameId o userId) como partida_id
+        if (p && p.partida_id) return p.partida_id === userId;
+        // Si falta `partida_id`, excluir para evitar mostrar posts de partidas anteriores.
+        return false;
+    });
     const [activeTab, setActiveTab] = useState<"feed" | "perfil" | "ranking" | "trending">("feed");
 
-    const getApiHost = React.useCallback(() => {
-        return getHttpUrl("");
-    }, []);
 
     // Obtener métricas sociales de los agentes
     const agentsWithMetrics = agents
         .map(a => ({
             id: a.id,
-            nombre: a.id,
+            nombre: a.identidad?.nombre || a.alma?.nombre_propio || a.id,
             capital_social: a.social_metrics?.capital_social || 10,
             nivel_influencia: a.social_metrics?.nivel_influencia || "Desconocido",
             seguidores: a.social_metrics?.seguidores || 0,
@@ -51,6 +61,9 @@ export default function SocialPanel() {
                     <span className="text-[10px] bg-[#00e5ff]/10 border border-[#00e5ff]/10 px-2 py-0.5 rounded-lg text-[#00e5ff] font-mono">
                         {totalSeguidores} Seguidores
                     </span>
+                    <span className="text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded-lg text-white font-mono">
+                        Partida: {userId ? userId.slice(0, 8) : 'local'}
+                    </span>
                 </div>
             </div>
 
@@ -66,12 +79,12 @@ export default function SocialPanel() {
             <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
                 {activeTab === "feed" && (
                     socialMode === 'reddit' 
-                        ? <RedditFeedTab posts={socialFeed} userId={userId || ""} grupos={gruposDinamicos} getApiHost={getApiHost} />
-                        : <FeedTab posts={socialFeed} userId={userId || ""} getApiHost={getApiHost} />
+                        ? <RedditFeedTab posts={activeSocialFeed} userId={userId || ""} grupos={gruposDinamicos} onOpenProfile={(id: string|null) => { if (id) { selectAgent(id); setActiveTab('perfil'); } }} />
+                        : <FeedTab posts={activeSocialFeed} userId={userId || ""} onOpenProfile={(id: string|null) => { if (id) { selectAgent(id); setActiveTab('perfil'); } }} />
                 )}
-                {activeTab === "perfil" && <PerfilTab userId={userId || ""} posts={socialFeed} />}
-                {activeTab === "ranking" && <RankingTab agentes={topAgentes} onSelectAgent={selectAgent} />}
-                {activeTab === "trending" && <TrendingTab agentes={agentsWithMetrics} onSelectAgent={selectAgent} />}
+                {activeTab === "perfil" && <PerfilTab userId={userId || ""} posts={activeSocialFeed} />}
+                {activeTab === "ranking" && <RankingTab agentes={topAgentes} onSelectAgent={(id: string|null) => { if (id) { selectAgent(id); setActiveTab('perfil'); } }} />}
+                {activeTab === "trending" && <TrendingTab agentes={agentsWithMetrics} onSelectAgent={(id: string|null) => { if (id) { selectAgent(id); setActiveTab('perfil'); } }} />}
             </div>
         </div>
     );
@@ -94,6 +107,7 @@ function TabButton({ active, onClick, label, icon: Icon }: { active: boolean; on
 }
 
 function RankingTab({ agentes, onSelectAgent }: { agentes: any[], onSelectAgent: (id: string) => void }) {
+    const { agents } = useGameStore();
     const getNivelColor = (nivel: string) => {
         switch (nivel) {
             case "Legendario": return "text-yellow-400";
@@ -118,23 +132,23 @@ function RankingTab({ agentes, onSelectAgent }: { agentes: any[], onSelectAgent:
             {agentes.length >= 3 && (
                 <div className="flex justify-center items-end gap-2 pb-4 border-b border-white/10">
                     <div className="flex flex-col items-center">
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-gray-400 to-gray-600 flex items-center justify-center text-xs font-bold">
-                            {agentes[1].id.replace("A", "")}
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-gray-400 to-gray-600 flex items-center justify-center text-[10px] font-bold px-1 text-center leading-tight">
+                            {getAgentName(agentes[1]?.id, agents)}
                         </div>
                         <div className="mt-2 text-[10px] text-gray-400">{agentes[1].capital_social.toFixed(0)}</div>
                         <div className="w-8 h-6 bg-gray-500/30 rounded-t" />
                     </div>
                     <div className="flex flex-col items-center -mt-2">
                         <Crown className="w-4 h-4 text-yellow-400 mb-1" />
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-yellow-400/30 to-yellow-600/30 flex items-center justify-center text-sm font-bold border border-yellow-400/50">
-                            {agentes[0].id.replace("A", "")}
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-yellow-400/30 to-yellow-600/30 flex items-center justify-center text-[10px] font-bold border border-yellow-400/50 px-1 text-center leading-tight">
+                            {getAgentName(agentes[0]?.id, agents)}
                         </div>
                         <div className="mt-2 text-[10px] text-yellow-400">{agentes[0].capital_social.toFixed(0)}</div>
                         <div className="w-10 h-10 bg-yellow-500/30 rounded-t" />
                     </div>
                     <div className="flex flex-col items-center">
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center text-xs font-bold">
-                            {agentes[2].id.replace("A", "")}
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center text-[10px] font-bold px-1 text-center leading-tight">
+                            {getAgentName(agentes[2]?.id, agents)}
                         </div>
                         <div className="mt-2 text-[10px] text-gray-400">{agentes[2].capital_social.toFixed(0)}</div>
                         <div className="w-8 h-4 bg-orange-500/30 rounded-t" />
@@ -155,8 +169,8 @@ function RankingTab({ agentes, onSelectAgent }: { agentes: any[], onSelectAgent:
                                 <span className={`text-[10px] font-bold w-4 ${index < 3 ? 'text-yellow-400' : 'text-gray-500'}`}>
                                     #{index + 1}
                                 </span>
-                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#7c4dff] to-[#00e676] flex items-center justify-center text-[10px] font-bold">
-                                    {agente.id.replace("A", "")}
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#7c4dff] to-[#00e676] flex items-center justify-center text-[8px] font-bold px-0.5 text-center leading-tight overflow-hidden">
+                                    {getAgentName(agente.id, agents)}
                                 </div>
                                 <div className="flex flex-col">
                                     <span className="text-xs font-bold text-white group-hover:text-[#00e5ff] transition-colors">{agente.profesion}</span>
@@ -203,7 +217,9 @@ function RankingTab({ agentes, onSelectAgent }: { agentes: any[], onSelectAgent:
 }
 
 function PerfilTab({ userId, posts }: { userId: string, posts: any[] }) {
-    const arquitectoPosts = posts.filter(p => p.autor_id === `arquitecto_${userId}`);
+    const arquitectoPosts = (posts || [])
+        .filter(p => p.autor_id === `arquitecto_${userId}`)
+        .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     const totalPosts = arquitectoPosts.length;
     const totalLikes = arquitectoPosts.reduce((sum, p) => sum + (p.likes || 0), 0);
     const totalComments = arquitectoPosts.reduce((sum, p) => sum + (p.comentarios || 0), 0);
@@ -266,7 +282,8 @@ function PerfilTab({ userId, posts }: { userId: string, posts: any[] }) {
     );
 }
 
-function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], userId: string, grupos: Record<string, any>, getApiHost: () => string }) {
+function RedditFeedTab({ posts, userId, grupos, onOpenProfile }: { posts: any[], userId: string, grupos: Record<string, any>, onOpenProfile?: (id: string | null) => void }) {
+    const { agents } = useGameStore();
     const [expandedPost, setExpandedPost] = useState<string | null>(null);
     const [newPostContent, setNewPostContent] = useState("");
     const [isPosting, setIsPosting] = useState(false);
@@ -275,14 +292,15 @@ function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], us
     const [isLiking, setIsLiking] = useState<{[key: string]: boolean}>({});
     const [isCommenting, setIsCommenting] = useState<{[key: string]: boolean}>({});
 
-    // Usar los posts reales del backend (Ordenados por LIKES para Reddit)
+    // Ordenar por interacción (likes + comentarios):Los más interactivos primero
     const postsReales = (posts && posts.length > 0 ? [...posts] : [])
         .sort((a, b) => {
-            // Prioridad a los likes
-            if ((b.likes || 0) !== (a.likes || 0)) {
-                return (b.likes || 0) - (a.likes || 0);
+            const interactionA = (a.likes || 0) + (a.comentarios || 0);
+            const interactionB = (b.likes || 0) + (b.comentarios || 0);
+            if (interactionB !== interactionA) {
+                return interactionB - interactionA; // Más interacción primero
             }
-            // Si tienen mismos likes, el más reciente primero
+            // Tie-breaker: timestamp (más recientes primero)
             return (b.timestamp || 0) - (a.timestamp || 0);
         });
     
@@ -293,12 +311,13 @@ function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], us
 
     const subreddits = Array.from(new Set(postsReales.flatMap(p => p.temas || [])));
     const dynamicGroups = Object.values(grupos).map(g => g.nombre || g.id);
+    const allCommunities = Array.from(new Set([...dynamicGroups, ...subreddits])).filter(Boolean).sort();
 
     const handlePost = async () => {
         if (!newPostContent.trim() || !userId) return;
         setIsPosting(true);
         try {
-            const response = await fetch(`${getApiHost()}/social/post/${userId}`, {
+            const response = await fetch(getHttpUrl(`/social/post/${userId}`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content: newPostContent.trim() })
@@ -317,7 +336,7 @@ function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], us
         if (isLiking[postId]) return;
         setIsLiking(prev => ({ ...prev, [postId]: true }));
         try {
-            await fetch(`${getApiHost()}/social/like/${userId}`, {
+            await fetch(getHttpUrl(`/social/like/${userId}`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ post_id: postId })
@@ -334,7 +353,7 @@ function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], us
         if (!content || isCommenting[postId]) return;
         setIsCommenting(prev => ({ ...prev, [postId]: true }));
         try {
-            const response = await fetch(`${getApiHost()}/social/comment/${userId}`, {
+            const response = await fetch(getHttpUrl(`/social/comment/${userId}`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ post_id: postId, content })
@@ -356,7 +375,7 @@ function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], us
     };
 
     const handleAward = (post: any) => {
-        alert(`¡Has otorgado un Award de Platino a u/${post.autor_id}!`);
+        alert(`¡Has otorgado un Award de Platino a u/${getAgentName(post.autor_id, agents)}!`);
     };
 
     const handleDownvote = (post: any) => {
@@ -373,13 +392,13 @@ function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], us
                 >
                     r/all
                 </button>
-                {dynamicGroups.map(name => (
+                {allCommunities.map(name => (
                     <button 
                         key={name}
                         onClick={() => setSelectedSubreddit(name)}
                         className={`px-3 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-all ${selectedSubreddit === name ? 'bg-[#ff4500] text-white shadow-[0_0_10px_rgba(255,69,0,0.3)]' : 'bg-white/5 text-gray-500 hover:bg-white/10'}`}
                     >
-                        r/{name.toLowerCase().replace(/\s+/g, '_')}
+                        r/{(name || "unknown").toLowerCase().replace(/\s+/g, '_')}
                     </button>
                 ))}
             </div>
@@ -441,12 +460,18 @@ function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], us
                                     <div className="w-4 h-4 rounded-full bg-[#ff4500] flex items-center justify-center text-[8px] font-bold text-white">
                                         r/
                                     </div>
-                                    <span className="font-bold text-white hover:underline cursor-pointer">
+                                    <span 
+                                        onClick={() => setSelectedSubreddit(post.temas?.[0] || post.tipo || "all")}
+                                        className="font-bold text-white hover:underline cursor-pointer"
+                                    >
                                         r/{(post.temas?.[0] || post.tipo || "all").toLowerCase().replace(/\s+/g, '_')}
                                     </span>
                                     <span className="text-gray-500">• Posted by</span>
-                                    <span className="text-gray-500 hover:underline cursor-pointer">
-                                        u/{post.autor_id?.startsWith("arquitecto_") ? "architect" : post.autor_id}
+                                    <span
+                                        onClick={() => onOpenProfile && onOpenProfile(post.autor_id)}
+                                        className="text-gray-500 hover:underline cursor-pointer"
+                                    >
+                                        u/{getAgentName(post.autor_id, agents)}
                                     </span>
                                 </div>
 
@@ -457,7 +482,11 @@ function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], us
                                 {post.temas && post.temas.length > 1 && (
                                     <div className="flex gap-1 mb-3">
                                         {post.temas.slice(1).map((tema: string, i: number) => (
-                                            <span key={i} className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-gray-400">
+                                            <span 
+                                                key={i} 
+                                                onClick={() => setSelectedSubreddit(tema)}
+                                                className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white cursor-pointer transition-colors"
+                                            >
                                                 #{tema}
                                             </span>
                                         ))}
@@ -507,16 +536,19 @@ function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], us
 
                                         {/* Comments List */}
                                         <div className="space-y-4">
-                                            {post.comentarios_detalle && post.comentarios_detalle.length > 0 ? (
-                                                post.comentarios_detalle.map((com: any) => (
+                                            {post.comentarios_detalle && post.comentarios_detalle.filter((c: any) => c.contenido?.trim()).length > 0 ? (
+                                                post.comentarios_detalle.filter((c: any) => c.contenido?.trim()).map((com: any) => (
                                                     <div key={com.id} className="ml-2 flex gap-2">
                                                         <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-bold ${com.autor_id?.startsWith("arquitecto_") ? 'bg-yellow-400 text-black' : 'bg-white/10 text-white'}`}>
                                                             {com.autor_id?.substring(0, 2).toUpperCase()}
                                                         </div>
                                                         <div className="flex-1">
                                                             <div className="flex items-center gap-2 text-[10px] mb-1">
-                                                                <span className={`font-bold ${com.autor_id?.startsWith("arquitecto_") ? 'text-yellow-400' : 'text-gray-300'}`}>
-                                                                    u/{com.autor_id?.startsWith("arquitecto_") ? "architect" : com.autor_id}
+                                                                <span
+                                                                    onClick={() => onOpenProfile && onOpenProfile(com.autor_id)}
+                                                                    className={`font-bold ${com.autor_id?.startsWith("arquitecto_") ? 'text-yellow-400' : 'text-gray-300'}`}
+                                                                >
+                                                                    u/{getAgentName(com.autor_id, agents)}
                                                                 </span>
                                                                 <span className="text-gray-500">• 1h ago</span>
                                                             </div>
@@ -545,7 +577,8 @@ function RedditFeedTab({ posts, userId, grupos, getApiHost }: { posts: any[], us
     );
 }
 
-function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, getApiHost: () => string }) {
+function FeedTab({ posts, userId, onOpenProfile }: { posts: any[], userId: string, onOpenProfile?: (id: string | null) => void }) {
+    const { agents } = useGameStore();
     const [expandedPost, setExpandedPost] = useState<string | null>(null);
     const [newPostContent, setNewPostContent] = useState("");
     const [isPosting, setIsPosting] = useState(false);
@@ -553,16 +586,23 @@ function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, 
     const [isLiking, setIsLiking] = useState<{[key: string]: boolean}>({});
     const [isCommenting, setIsCommenting] = useState<{[key: string]: boolean}>({});
 
-    // Usar los posts reales del backend
+    // Usar los posts reales del backend (Priorizar por interacción, luego por fecha)
     const postsReales = (posts && posts.length > 0 ? [...posts] : [])
-        .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        .sort((a, b) => {
+            const interactionA = (a.likes || 0) + (a.comentarios || 0);
+            const interactionB = (b.likes || 0) + (b.comentarios || 0);
+            if (interactionB !== interactionA) {
+                return interactionB - interactionA;
+            }
+            return (b.timestamp || 0) - (a.timestamp || 0);
+        });
 
     const handlePost = async () => {
         if (!newPostContent.trim() || !userId) return;
 
         setIsPosting(true);
         try {
-            const response = await fetch(`${getApiHost()}/social/post/${userId}`, {
+            const response = await fetch(getHttpUrl(`/social/post/${userId}`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content: newPostContent.trim() })
@@ -584,7 +624,7 @@ function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, 
     const handleLike = async (postId: string) => {
         setIsLiking(prev => ({ ...prev, [postId]: true }));
         try {
-            const response = await fetch(`${getApiHost()}/social/like/${userId}`, {
+            const response = await fetch(getHttpUrl(`/social/like/${userId}`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ post_id: postId })
@@ -607,7 +647,7 @@ function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, 
 
         setIsCommenting(prev => ({ ...prev, [postId]: true }));
         try {
-            const response = await fetch(`${getApiHost()}/social/comment/${userId}`, {
+            const response = await fetch(getHttpUrl(`/social/comment/${userId}`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ post_id: postId, content })
@@ -627,14 +667,14 @@ function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, 
     };
 
     const handleShare = (post: any) => {
-        const text = `Mira este post de ${post.autor_id} en MundoIA: "${post.contenido}"`;
+        const text = `Mira este post de ${getAgentName(post.autor_id, agents)} en MundoIA: "${post.contenido}"`;
         navigator.clipboard.writeText(text);
         // Podríamos añadir un toast aquí si existiera
         alert("¡Enlace copiado al portapapeles!");
     };
 
     const handleAward = (post: any) => {
-        alert(`Has otorgado un Premio Divino a ${post.autor_id}. ¡Su capital social ha aumentado!`);
+        alert(`Has otorgado un Premio Divino a ${getAgentName(post.autor_id, agents)}. ¡Su capital social ha aumentado!`);
         // Opcionalmente llamar a un god-mode action que suba el capital social
     };
 
@@ -690,12 +730,14 @@ function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, 
                                 A
                             </div>
                         ) : (
-                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#7c4dff] to-[#00e676] flex items-center justify-center text-[8px] font-bold">
-                                {post.autor_id?.replace("A", "") || "?"}
+                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#7c4dff] to-[#00e676] flex items-center justify-center text-[6px] font-bold px-0.5 text-center leading-tight">
+                                {getAgentName(post.autor_id, agents)}
                             </div>
                         )}
-                        <span className={`text-xs ${post.autor_id?.startsWith("arquitecto_") ? 'text-yellow-400 font-bold' : 'text-gray-400'}`}>
-                            {post.autor_id?.startsWith("arquitecto_") ? "Arquitecto" : post.autor_id}
+                        <span
+                            onClick={() => onOpenProfile && onOpenProfile(post.autor_id)}
+                            className={`cursor-pointer text-xs ${post.autor_id?.startsWith("arquitecto_") ? 'text-yellow-400 font-bold' : 'text-gray-400'}`}>
+                            {getAgentName(post.autor_id, agents)}
                         </span>
                         <span className="text-[9px] text-gray-600">• {post.tipo || "post"}</span>
                     </div>
@@ -719,9 +761,11 @@ function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, 
                         >
                             <Heart className={`w-3 h-3 ${isLiking[post.id] ? 'text-gray-500' : 'text-[#ec4899]'}`} />
                             {post.likes || 0}
-                            {post.likes_por && post.likes_por.length > 0 && (
+                                        {post.likes_por && post.likes_por.length > 0 && (
                                 <span className="text-[8px] text-gray-600">
-                                    ({post.likes_por.slice(0, 3).join(", ")}{post.likes_por.length > 3 ? "..." : ""})
+                                    ({post.likes_por.slice(0, 3).map((lid: string) => (
+                                        <span key={lid} onClick={() => onOpenProfile && onOpenProfile(lid)} className="cursor-pointer">{getAgentName(lid, agents)}</span>
+                                    )).reduce((prev: any, curr: any) => [prev, ', ', curr])}{post.likes_por.length > 3 ? "..." : ""})
                                 </span>
                             )}
                         </button>
@@ -756,7 +800,7 @@ function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, 
                                     <div className="flex flex-wrap gap-1">
                                         {post.likes_por.map((autorId: string, i: number) => (
                                             <span key={i} className="text-[9px] px-1.5 py-0.5 rounded bg-[#ec4899]/10 text-[#ec4899]/80">
-                                                {autorId}
+                                                {getAgentName(autorId, agents)}
                                             </span>
                                         ))}
                                     </div>
@@ -764,27 +808,30 @@ function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, 
                             )}
 
                             {/* Lista de comentarios */}
-                            {post.comentarios_detalle && post.comentarios_detalle.length > 0 && (
+                                        {post.comentarios_detalle && post.comentarios_detalle.filter((c: any) => c.contenido?.trim()).length > 0 && (
                                 <div>
                                     <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1">
                                         <MessageSquare className="w-2.5 h-2.5 text-[#ffa000]" /> Comentarios:
                                     </div>
                                     <div className="space-y-2">
-                                        {post.comentarios_detalle.map((comentario: any) => (
-                                            <div key={comentario.id} className="bg-white/[0.03] rounded-lg p-2">
-                                                <div className="flex items-center gap-1.5 mb-1">
-                                                    {comentario.autor_id?.startsWith("arquitecto_") ? (
-                                                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center text-[6px] font-bold text-black">
-                                                            A
-                                                        </div>
-                                                    ) : (
-                                                        <div className="w-4 h-4 rounded-full bg-gradient-to-br from-[#ffa000]/50 to-[#ff6f00]/50 flex items-center justify-center text-[6px] font-bold">
-                                                            {comentario.autor_id?.replace("A", "") || "?"}
-                                                        </div>
-                                                    )}
-                                                    <span className={`text-[9px] font-medium ${comentario.autor_id?.startsWith("arquitecto_") ? 'text-yellow-400' : 'text-[#ffa000]'}`}>
-                                                        {comentario.autor_id?.startsWith("arquitecto_") ? "Arquitecto" : comentario.autor_id}
-                                                    </span>
+                                                {post.comentarios_detalle.filter((c: any) => c.contenido?.trim()).map((comentario: any) => (
+                                                    <div key={comentario.id} className="bg-white/[0.03] rounded-lg p-2">
+                                                        <div className="flex items-center gap-1.5 mb-1">
+                                                            {comentario.autor_id?.startsWith("arquitecto_") ? (
+                                                                <div className="w-4 h-4 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center text-[6px] font-bold text-black">
+                                                                    A
+                                                                </div>
+                                                            ) : (
+                                                            <div className={`w-4 h-4 rounded-full bg-gradient-to-br from-[#ffa000]/50 to-[#ff6f00]/50 flex items-center justify-center text-[5px] font-bold px-0.5 text-center leading-tight`}>
+                                                                {getAgentName(comentario.autor_id, agents)}
+                                                            </div>
+                                                        )}
+                                                <span
+                                                    onClick={() => onOpenProfile && onOpenProfile(comentario.autor_id)}
+                                                    className={`cursor-pointer text-[9px] font-medium ${comentario.autor_id?.startsWith("arquitecto_") ? 'text-yellow-400' : 'text-[#ffa000]'}`}
+                                                > 
+                                                    {getAgentName(comentario.autor_id, agents)}
+                                                </span>
                                                 </div>
                                                 <p className="text-[10px] text-gray-300 ml-5.5">{comentario.contenido}</p>
                                             </div>
@@ -815,8 +862,8 @@ function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, 
                                 </div>
                             </div>
 
-                            {/* Si no hay likes ni comentarios */}
-                            {(!post.likes_por || post.likes_por.length === 0) && (!post.comentarios_detalle || post.comentarios_detalle.length === 0) && (
+                            {/* Si no hay likes ni comentarios válidos */}
+                            {(!post.likes_por || post.likes_por.length === 0) && (!post.comentarios_detalle || post.comentarios_detalle.filter((c: any) => c.contenido?.trim()).length === 0) && (
                                 <p className="text-[9px] text-gray-600 italic">Sin interacciones aún</p>
                             )}
                         </motion.div>
@@ -828,6 +875,7 @@ function FeedTab({ posts, userId, getApiHost }: { posts: any[], userId: string, 
 }
 
 function TrendingTab({ agentes, onSelectAgent }: { agentes: any[], onSelectAgent: (id: string) => void }) {
+    const { agents } = useGameStore();
     // Calcular tendencias basadas en crecimiento de capital social
     const trending = agentes
         .map(a => ({
@@ -855,7 +903,7 @@ function TrendingTab({ agentes, onSelectAgent }: { agentes: any[], onSelectAgent
                     </div>
                     <div className="flex-1">
                         <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-white group-hover:text-[#00e676] transition-colors">{agente.id}</span>
+                            <span className="text-xs font-bold text-white group-hover:text-[#00e676] transition-colors">{getAgentName(agente.id, agents)}</span>
                             <span className="text-[10px] text-[#00e5ff]">+{agente.crecimiento} pts</span>
                         </div>
                         <div className="flex gap-2 text-[9px] text-gray-500">

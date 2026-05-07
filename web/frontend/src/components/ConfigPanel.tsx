@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { X, Settings, Key, Cpu, RefreshCw, Save, CheckCircle2, AlertCircle, ExternalLink, Search, Info } from "lucide-react";
 import useGameStore from "@/store/useGameStore";
+import { getHttpUrl, getApiBase } from "@/utils/apiConfig";
 
 interface ConfigPanelProps {
     isOpen: boolean;
@@ -41,9 +42,7 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
         setIsLoadingModels(true);
         setStatus({ type: 'loading', msg: 'Cargando...' });
         try {
-            const host = window.location.hostname === 'localhost' ? 'localhost:8005' : 'api-mundoia.cuerpolibre.cl';
-            const protocol = window.location.protocol;
-            const url = new URL(`${protocol}//${host}/config/models/${prov}`);
+            const url = new URL(getHttpUrl(`/config/models/${prov}`));
             if (currentApiKey) url.searchParams.append('api_key', currentApiKey);
             if (currentBaseUrl) url.searchParams.append('base_url', currentBaseUrl);
 
@@ -67,9 +66,7 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
 
     const fetchCurrentConfig = async () => {
         try {
-            const host = window.location.hostname === 'localhost' ? 'localhost:8005' : 'api-mundoia.cuerpolibre.cl';
-            const protocol = window.location.protocol;
-            const res = await fetch(`${protocol}//${host}/config/ai`);
+            const res = await fetch(getHttpUrl("/config/ai"));
             if (res.ok) {
                 const data = await res.json();
                 setApiKey(data.api_key || "");
@@ -110,9 +107,6 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
     const handleSave = async () => {
         setStatus({ type: 'loading', msg: 'Sincronizando...' });
         try {
-            const host = window.location.hostname === 'localhost' ? 'localhost:8005' : 'api-mundoia.cuerpolibre.cl';
-            const protocol = window.location.protocol;
-
             let finalModel = selectedModel || searchTerm; // Try searchTerm as custom input if selected is missing
             if (provider === "OpenRouter" && !finalModel.startsWith("openrouter/")) {
                 finalModel = `openrouter/${finalModel}`;
@@ -120,7 +114,7 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
                 finalModel = `ollama/${finalModel}`;
             }
 
-            const res = await fetch(`${protocol}//${host}/config/ai`, {
+            const res = await fetch(getHttpUrl("/config/ai"), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

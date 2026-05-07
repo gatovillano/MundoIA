@@ -53,7 +53,7 @@ Sistema de simulación multiagente con visualización en tiempo real de interacc
 
 ### 1. Crear entorno virtual
 ```bash
-cd /home/gato/Proyectos/MundoIA/multiagent_simulation
+cd /home/gato/Proyectos/MundoIA
 python3 -m venv venv
 source venv/bin/activate
 ```
@@ -83,7 +83,7 @@ TTS_URL=http://localhost:5050/v1/audio/speech
 ### Iniciar el servidor
 ```bash
 source venv/bin/activate
-python3 api.py
+python3 -m api.api
 ```
 
 El servidor se iniciará en `http://localhost:8005`
@@ -116,11 +116,11 @@ python3 cli_tui_remote.py
 
 ### Backend (Python)
 ```
-api.py              → FastAPI + WebSockets
-modelo.py           → Lógica de simulación multiagente
-memoria.py          → Sistema de memoria basado en grafos
-cerebro_langgraph.py → Razonamiento con LangGraph
-cerebro_llm.py      → Generación de diálogos con LLM
+api/api.py          → FastAPI + WebSockets
+core/modelo.py      → Lógica de simulación multiagente
+agents/memoria.py   → Sistema de memoria basado en grafos (en desarrollo)
+agents/cerebro_langgraph.py → Razonamiento con LangGraph
+agents/cerebro_llm.py      → Generación de diálogos con LLM
 traductor.py        → Idioma emergente
 herramientas.py     → Herramientas para agentes
 cli_tui_remote.py   → Interfaz TUI moderna (Textual)

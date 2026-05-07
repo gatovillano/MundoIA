@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import useGameStore from '../store/useGameStore';
 
 const MobileSettings: React.FC = () => {
-    const { apiHost, setApiHost, isConnected, connect, disconnect } = useGameStore();
+    const { apiHost, setApiHost, isConnected, reconnect } = useGameStore();
     const [isOpen, setIsOpen] = useState(false);
     const [localHost, setLocalHost] = useState(apiHost);
     const [isMounted, setIsMounted] = useState(false);
@@ -24,8 +24,12 @@ const MobileSettings: React.FC = () => {
     };
 
     const handleReconnect = () => {
-        disconnect();
-        setTimeout(() => connect(), 500);
+        try {
+            reconnect();
+        } catch (e) {
+            // Fallback: intentar desconectar y reconectar manualmente
+            console.warn('Reconnect failed, fallback to manual reconnect', e);
+        }
     };
 
     return (

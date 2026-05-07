@@ -71,14 +71,54 @@ class LibretaHistoria:
         self.entradas.append(nueva_entrada)
         return nueva_entrada
 
-    def asignar_historiador(self, agentes: List):
-        """Elige un agente para ser el historiador basado en su personalidad"""
-        if not agentes: return None
-        
-        # Preferir agentes con alta curiosidad o amabilidad (perfil intelectual)
-        candidatos = sorted(agentes, key=lambda a: a.personalidad.get("curiosidad", 0.5) + a.personalidad.get("amabilidad", 0.5), reverse=True)
-        nuevo_historiador = candidatos[0]
+    def asignar_historiador(self, agentes: List, aleatorio: bool = True):
+        """Asigna un agente como historiador.
+
+        Por defecto selecciona aleatoriamente entre los agentes disponibles.
+        Si `aleatorio` es False, se usa una heurística (curiosidad+amabilidad).
+        """
+        if not agentes:
+            return None
+
+        # Limpiar asignación previa (si existe) para asegurar exclusividad
+        try:
+            if self.historiador_id:
+                previo = next((a for a in agentes if a.unique_id == self.historiador_id), None)
+                if previo:
+                    try:
+                        previo.profesion = None
+                        previo.rol = "Ciudadano"
+                        if hasattr(previo, "identidad") and previo.identidad:
+                            # Si tenía el título explícito de historiador, limpiarlo
+                            if getattr(previo.identidad, "titulo", "").strip().lower() == "el historiador":
+                                previo.identidad.titulo = ""
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        if aleatorio:
+            nuevo_historiador = random.choice(agentes)
+        else:
+            # Preferir agentes con alta curiosidad o amabilidad (perfil intelectual)
+            candidatos = sorted(
+                agentes,
+                key=lambda a: a.personalidad.get("curiosidad", 0.5)
+                + a.personalidad.get("amabilidad", 0.5),
+                reverse=True,
+            )
+            nuevo_historiador = candidatos[0]
+
+        # Registrar la nueva asignación y marcar atributos públicos del agente
         self.historiador_id = nuevo_historiador.unique_id
+        try:
+            nuevo_historiador.profesion = "Historiador"
+            nuevo_historiador.rol = "Historiador"
+            if hasattr(nuevo_historiador, "identidad") and nuevo_historiador.identidad:
+                nuevo_historiador.identidad.titulo = "el Historiador"
+        except Exception:
+            pass
+
         return nuevo_historiador
 
     def obtener_resumen_hitos(self) -> str:

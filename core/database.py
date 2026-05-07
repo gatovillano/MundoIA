@@ -9,6 +9,8 @@ from core.utils import Json, logger
 
 class DatabaseManager:
     """Administrador de la persistencia en PostgreSQL para MundoIA."""
+    _initialized = False
+
     def __init__(self):
         self.conn_params = {
             "host": os.getenv("DB_HOST", "localhost"),
@@ -33,123 +35,101 @@ class DatabaseManager:
             return False
 
     def initialize_db(self):
-        """Inicializa las tablas de la base de datos usando schema.sql y create_users_table.sql"""
+        """Inicializa las tablas de la base de datos usando restore_schema.sql"""
         if not self.conn:
             return False
+        
+        if DatabaseManager._initialized:
+            return True
+
         try:
-            # Buscar archivos en el directorio 'data' del proyecto
-            # El directorio base es el padre de 'core'
+            # El directorio base es el que contiene multiagent_simulation
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            for schema_file in ["schema.sql", "create_users_table.sql"]:
-                schema_path = os.path.join(base_dir, "data", schema_file)
-                if os.path.exists(schema_path):
-                    with open(schema_path, "r") as f:
-                        schema_sql = f.read()
+            schema_path = os.path.join(base_dir, "scripts", "restore_schema.sql")
+            
+            if os.path.exists(schema_path):
+                with open(schema_path, "r") as f:
+                    schema_sql = f.read()
 
-                    logger.info(f"📜 Ejecutando esquema desde: {schema_path}")
-                    with self.conn.cursor() as cur:
-                        cur.execute(schema_sql)
-                        # Migraciones BDI
-                        cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS beliefs JSONB DEFAULT '[]';")
-                        cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS desires JSONB DEFAULT '[]';")
-                        cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS intentions JSONB DEFAULT '[]';")
-                    logger.info(f"✅ Esquema {schema_file} verificado/inicializado.")
-                else:
-                    logger.warning(f"⚠️ No se encontró {schema_file} en {schema_path}")
+                logger.info(f"📜 Ejecutando esquema desde: {schema_path}")
+                with self.conn.cursor() as cur:
+                    cur.execute(schema_sql)
+                logger.info("✅ Esquema verificado/inicializado.")
+            else:
+                logger.warning(f"⚠️ No se encontró restore_schema.sql en {schema_path}")
 
-            # Migraciones automáticas adicionales
+            # Migraciones automáticas adicionales para asegurar que todas las columnas existan
             try:
                 with self.conn.cursor() as cur:
-                    # Columnas de los agentes
-                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS memoria_mensajes JSONB DEFAULT '[]';")
-                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS skills JSONB DEFAULT '{}';")
-                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS skill_factor FLOAT DEFAULT 0.3;")
-                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS memoria_persistente_data JSONB DEFAULT '{}';")
                     cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS alma JSONB DEFAULT '{}';")
                     cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS identidad JSONB DEFAULT '{}';")
-                    cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS heartbeat_config JSONB DEFAULT '{}';")
                     cur.execute("ALTER TABLE agentes ADD COLUMN IF NOT EXISTS apps JSONB DEFAULT '{}';")
                     
-                    # Columnas de logs y estado
-                    cur.execute("ALTER TABLE logs_simulacion ADD COLUMN IF NOT EXISTS subtitulos TEXT;")
-                    cur.execute("ALTER TABLE logs_simulacion ADD COLUMN IF NOT EXISTS tts_text TEXT;")
-                    cur.execute("ALTER TABLE estado_mundo ADD COLUMN IF NOT EXISTS social_feed JSONB DEFAULT '{}';")
+                    # Aumentar tamaño de user_id para soportar slots largos
+                    tables_to_alter = [
+                        "agentes", "civilizaciones", "memorias", "chat_mensajes", 
+                        "logs_simulacion", "propuestas", "misiones", "estado_mundo", 
+                        "instituciones", "puntajes_usuarios", "posts_sociales", "eventos_globales"
+                    ]
+                    for table in tables_to_alter:
+                        try:
+                            cur.execute(f"ALTER TABLE {table} ALTER COLUMN user_id TYPE VARCHAR(100);")
+                        except Exception:
+                            pass
+                    
+                    # También en la tabla usuarios por si acaso
+                    try:
+                        cur.execute("ALTER TABLE usuarios ALTER COLUMN id TYPE VARCHAR(100);")
+                    except Exception:
+                        pass
+                    # Añadir columna puntos a instituciones si no existe (migración ligera)
+                    cur.execute("ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS puntos numeric DEFAULT 0;")
 
-                    # Migración de Claves Primarias Compuestas (Asegurar aislamiento total por usuario)
-                    # 1. Agentes
-                    cur.execute("""
-                       DO $$ BEGIN
-                           IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agentes_pkey' AND contype = 'p') THEN
-                               IF NOT EXISTS (
-                                   SELECT 1 FROM information_schema.key_column_usage 
-                                   WHERE table_name = 'agentes' AND constraint_name = 'agentes_pkey' AND column_name = 'user_id'
-                               ) THEN
-                                   DELETE FROM memorias m 
-                                   WHERE NOT EXISTS (SELECT 1 FROM agentes a WHERE a.id = m.agente_fuente AND a.user_id = m.user_id)
-                                   OR NOT EXISTS (SELECT 1 FROM agentes a WHERE a.id = m.agente_objetivo AND a.user_id = m.user_id);
-                                   
-                                   DELETE FROM chat_mensajes c
-                                   WHERE NOT EXISTS (SELECT 1 FROM agentes a WHERE a.id = c.agent_id AND a.user_id = c.user_id);
+                    # Migración Lider -> Vocero
+                    try:
+                        # Si existe lider_id pero no vocero_id, renombrar
+                        cur.execute("""
+                            DO $$ 
+                            BEGIN 
+                                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='instituciones' AND column_name='lider_id') 
+                                AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='instituciones' AND column_name='vocero_id') THEN
+                                    ALTER TABLE instituciones RENAME COLUMN lider_id TO vocero_id;
+                                END IF;
+                            END $$;
+                        """)
+                        # Asegurar que vocero_id existe
+                        cur.execute("ALTER TABLE instituciones ADD COLUMN IF NOT EXISTS vocero_id VARCHAR(50);")
+                    except Exception as e:
+                        logger.warning(f"Error migrando lider_id a vocero_id: {e}")
 
-                                   ALTER TABLE memorias DROP CONSTRAINT IF EXISTS memorias_agente_fuente_fkey;
-                                   ALTER TABLE memorias DROP CONSTRAINT IF EXISTS memorias_agente_objetivo_fkey;
-                                   ALTER TABLE chat_mensajes DROP CONSTRAINT IF EXISTS chat_mensajes_agent_id_fkey;
-                                   
-                                   ALTER TABLE agentes DROP CONSTRAINT agentes_pkey;
-                                   ALTER TABLE agentes ADD PRIMARY KEY (id, user_id);
-                                   
-                                   ALTER TABLE memorias ADD FOREIGN KEY (agente_fuente, user_id) REFERENCES agentes(id, user_id);
-                                   ALTER TABLE memorias ADD FOREIGN KEY (agente_objetivo, user_id) REFERENCES agentes(id, user_id);
-                                   ALTER TABLE chat_mensajes ADD FOREIGN KEY (agent_id, user_id) REFERENCES agentes(id, user_id);
-                               END IF;
-                           END IF;
-                       END $$;
-                    """)
+                    # FIX: Asegurar que propuestas.id tenga un default si no es SERIAL (evita error null value)
+                    try:
+                        cur.execute("""
+                            DO $$ 
+                            BEGIN 
+                                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='propuestas') THEN
+                                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                                   WHERE table_name='propuestas' AND column_name='id' 
+                                                   AND column_default IS NOT NULL) THEN
+                                        CREATE SEQUENCE IF NOT EXISTS propuestas_id_seq;
+                                        ALTER TABLE propuestas ALTER COLUMN id SET DEFAULT nextval('propuestas_id_seq')::text;
+                                    END IF;
+                                END IF;
+                            END $$;
+                        """)
+                    except Exception as e:
+                        logger.warning(f"Error asegurando default en propuestas.id: {e}")
 
-                    # 2. Civilizaciones
-                    cur.execute("""
-                       DO $$ BEGIN
-                           IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'civilizaciones_pkey' AND contype = 'p') THEN
-                               IF NOT EXISTS (
-                                   SELECT 1 FROM information_schema.key_column_usage 
-                                   WHERE table_name = 'civilizaciones' AND constraint_name = 'civilizaciones_pkey' AND column_name = 'user_id'
-                               ) THEN
-                                   ALTER TABLE civilizaciones DROP CONSTRAINT civilizaciones_pkey;
-                                   ALTER TABLE civilizaciones ADD PRIMARY KEY (id, user_id);
-                               END IF;
-                           END IF;
-                       END $$;
-                    """)
-
-                    # 3. Instituciones (Garantizar su existencia)
-                    cur.execute("""
-                       CREATE TABLE IF NOT EXISTS instituciones (
-                           id VARCHAR(100),
-                           user_id VARCHAR(50) REFERENCES usuarios(id),
-                           nombre VARCHAR(100) NOT NULL,
-                           tipo VARCHAR(50),
-                           fundador_id VARCHAR(50),
-                           lider_id VARCHAR(50),
-                           miembros JSONB DEFAULT '[]',
-                           x INTEGER,
-                           y INTEGER,
-                           recursos FLOAT DEFAULT 0.0,
-                           nivel INTEGER DEFAULT 1,
-                           descripcion TEXT,
-                           timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                           PRIMARY KEY (id, user_id)
-                       );
-                    """)
                     self.conn.commit()
+                    DatabaseManager._initialized = True
             except Exception as e:
-                logger.warning(f"Error en migraciones automáticas: {e}")
+                logger.warning(f"Error en migraciones menores: {e}")
                 self.conn.rollback()
 
             return True
         except Exception as e:
             logger.error(f"❌ Error inicializando esquema DB: {e}")
             return False
-
     def execute(self, query, params=None):
         if not self.conn:
             return None
@@ -204,6 +184,8 @@ class DatabaseManager:
                 cur.execute("DELETE FROM logs_simulacion WHERE user_id = %s;", (user_id,))
                 cur.execute("DELETE FROM propuestas WHERE user_id = %s;", (user_id,))
                 cur.execute("DELETE FROM misiones WHERE user_id = %s;", (user_id,))
+                # Eliminar posts sociales pertenecientes a esta partida/usuario
+                cur.execute("DELETE FROM posts_sociales WHERE user_id = %s;", (user_id,))
                 cur.execute("DELETE FROM agentes WHERE user_id = %s;", (user_id,))
                 cur.execute("DELETE FROM civilizaciones WHERE user_id = %s;", (user_id,))
                 cur.execute("DELETE FROM estado_mundo WHERE user_id = %s;", (user_id,))
@@ -267,9 +249,14 @@ class DatabaseManager:
         return self.execute(query, (user_id,))
 
     def save_memory(self, owner_id, target_id, data, user_id):
+        # --- DIAGNÓSTICO: Verificar existencia de agentes antes de guardar memoria ---
         check_query = "SELECT COUNT(*) FROM agentes WHERE id IN (%s, %s) AND user_id = %s;"
         res = self.execute(check_query, (str(owner_id), str(target_id), user_id))
-        if not res or res[0][0] < 2: return
+        
+        expected_count = 2 if str(owner_id) != str(target_id) else 1
+        if not res or res[0][0] < expected_count:
+            # logger.warning(f"⚠️ [DB] No se puede guardar memoria: uno de los agentes ({owner_id}, {target_id}) no existe en la DB para {user_id}")
+            return
 
         query = """
         INSERT INTO memorias (user_id, agente_fuente, agente_objetivo, tipo_relacion, fuerza, recursos_percibidos, grupo_percibido)
@@ -278,7 +265,9 @@ class DatabaseManager:
             tipo_relacion = EXCLUDED.tipo_relacion, fuerza = EXCLUDED.fuerza,
             recursos_percibidos = EXCLUDED.recursos_percibidos, grupo_percibido = EXCLUDED.grupo_percibido;
         """
-        self.execute(query, (user_id, str(owner_id), str(target_id), data.get("tipo"), data.get("fuerza", 0.0), data.get("recursos_vistos"), data.get("grupo")))
+        success = self.execute(query, (user_id, str(owner_id), str(target_id), data.get("tipo"), data.get("fuerza", 0.0), data.get("recursos_vistos"), data.get("grupo")))
+        # if not success:
+        #    logger.error(f"❌ [DB] Error insertando memoria {owner_id} -> {target_id}")
 
     def save_world_state(self, user_id, step, lore, seed, economy, relaciones_grupos=None, objetivos_grupos=None, mapa=None, infraestructura=None, historia=None, social_feed=None):
         query = """
@@ -304,6 +293,32 @@ class DatabaseManager:
         query = "SELECT paso_actual, lore, seed, precio_recurso, indice_bursatil, total_dinero, relaciones_grupos, objetivos_grupos, mapa, infraestructura, historia, social_feed FROM estado_mundo WHERE user_id = %s ORDER BY id DESC LIMIT 1;"
         result = self.execute(query, (user_id,))
         return result[0] if result else None
+
+    def get_user_games(self, base_user_id):
+        # 1. Buscar partidas con prefijo (slots nuevos)
+        query = "SELECT user_id, paso_actual FROM estado_mundo WHERE user_id LIKE %s;"
+        pattern = f"{base_user_id}_%"
+        result = self.execute(query, (pattern,)) or []
+        
+        games = []
+        for r in result:
+            games.append({
+                "id": r[0],
+                "paso_actual": r[1]
+            })
+            
+        # 2. Buscar partida base (legacy o actual si no tiene sufijo)
+        old = self.get_world_state(base_user_id)
+        if old:
+            if not any(g['id'] == base_user_id for g in games):
+                games.append({
+                    "id": base_user_id,
+                    "paso_actual": old[0]
+                })
+        
+        # Ordenar por paso_actual descendente o simplemente devolver
+        return games
+
 
     def get_memories(self, agent_id, user_id):
         query = "SELECT agente_objetivo, tipo_relacion, fuerza, recursos_percibidos, grupo_percibido FROM memorias WHERE agente_fuente = %s AND user_id = %s;"
@@ -365,7 +380,7 @@ class DatabaseManager:
         return rows[::-1] if rows else []
 
     def save_chat_message(self, user_id, agent_id, role, content, timestamp_utc):
-        query = "INSERT INTO chat_mensajes (user_id, agent_id, role, content, timestamp_utc) VALUES (%s, %s, %s, %s, %s);"
+        query = "INSERT INTO chat_mensajes (user_id, agent_id, role, content, timestamp_utc) VALUES (%s, %s, %s, %s, TO_TIMESTAMP(%s));"
         self.execute(query, (user_id, agent_id, role, content, timestamp_utc))
 
     def get_chat_history(self, user_id, agent_id, limit=100):
@@ -375,15 +390,15 @@ class DatabaseManager:
 
     def save_institution(self, inst, user_id):
         query = """
-        INSERT INTO instituciones (id, user_id, nombre, tipo, fundador_id, lider_id, miembros, x, y, recursos, nivel, descripcion)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO instituciones (id, user_id, nombre, tipo, fundador_id, vocero_id, miembros, x, y, recursos, puntos, nivel, descripcion)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (id, user_id) DO UPDATE SET
-            nombre = EXCLUDED.nombre, tipo = EXCLUDED.tipo, lider_id = EXCLUDED.lider_id,
-            miembros = EXCLUDED.miembros, recursos = EXCLUDED.recursos, nivel = EXCLUDED.nivel,
+            nombre = EXCLUDED.nombre, tipo = EXCLUDED.tipo, vocero_id = EXCLUDED.vocero_id,
+            miembros = EXCLUDED.miembros, recursos = EXCLUDED.recursos, puntos = EXCLUDED.puntos, nivel = EXCLUDED.nivel,
             descripcion = EXCLUDED.descripcion;
         """
-        self.execute(query, (inst.id, user_id, inst.nombre, inst.tipo, inst.fundador_id, inst.lider_id, Json(inst.miembros), inst.x, inst.y, inst.recursos, inst.nivel, inst.descripcion))
+        self.execute(query, (inst.id, user_id, inst.nombre, inst.tipo, inst.fundador_id, inst.vocero_id, Json(inst.miembros), inst.x, inst.y, inst.recursos, getattr(inst, 'puntos', 0.0), inst.nivel, inst.descripcion))
 
     def get_institutions(self, user_id):
-        query = "SELECT id, nombre, tipo, fundador_id, lider_id, miembros, x, y, recursos, nivel, descripcion FROM instituciones WHERE user_id = %s;"
+        query = "SELECT id, nombre, tipo, fundador_id, vocero_id, miembros, x, y, recursos, puntos, nivel, descripcion FROM instituciones WHERE user_id = %s;"
         return self.execute(query, (user_id,))

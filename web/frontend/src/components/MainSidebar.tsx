@@ -23,7 +23,16 @@ import {
     TrendingUp
 } from "lucide-react";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
+import { getHttpUrl } from "@/utils/apiConfig";
+
+// Speed presets: [label, ritmo_seconds, icon_symbol, color]
+const SPEED_PRESETS = [
+    { label: "MAX",  ritmo: 0.0, symbol: "⚡", color: "text-cyan-400",   bg: "bg-cyan-400/20",   border: "border-cyan-400/40" },
+    { label: "FAST", ritmo: 0.1, symbol: "⏩", color: "text-indigo-400", bg: "bg-indigo-400/20", border: "border-indigo-400/40" },
+    { label: "NORM", ritmo: 0.5, symbol: "📊", color: "text-green-400",  bg: "bg-green-400/20",  border: "border-green-400/40" },
+    { label: "SLOW", ritmo: 1.5, symbol: "⏳", color: "text-orange-400", bg: "bg-orange-400/20", border: "border-orange-400/40" },
+];
 
 interface MainSidebarProps {
     viewMode: "map" | "3d" | "graph";
@@ -33,6 +42,12 @@ interface MainSidebarProps {
     showThoughts: boolean;
     toggleThoughts: () => void;
     onControl: (action: "start" | "pause" | "reset") => void;
+    modoControlTotal: boolean;
+    onToggleMode: () => void;
+    // Mostrar actualizaciones incrementales (streams)
+    enableStreaming: boolean;
+    toggleStreaming: () => void;
+    userId: string;
 }
 
 export default function MainSidebar({
@@ -42,10 +57,35 @@ export default function MainSidebar({
     setActivePanel,
     showThoughts,
     toggleThoughts,
-    onControl
+    enableStreaming,
+    toggleStreaming,
+    onControl,
+    modoControlTotal,
+    onToggleMode,
+    userId,
 }: MainSidebarProps) {
     const [isPlayingMusic, setIsPlayingMusic] = useState(false);
+    const [speedIdx, setSpeedIdx] = useState(1); // default FAST
+    const [speedStatus, setSpeedStatus] = useState<'idle' | 'ok' | 'err'>('idle');
     const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    const cycleSpeed = useCallback(async () => {
+        const nextIdx = (speedIdx + 1) % SPEED_PRESETS.length;
+        setSpeedIdx(nextIdx);
+        const preset = SPEED_PRESETS[nextIdx];
+        try {
+            await fetch(getHttpUrl('/game/speed'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: userId, ritmo: preset.ritmo })
+            });
+            setSpeedStatus('ok');
+        } catch {
+            setSpeedStatus('err');
+        } finally {
+            setTimeout(() => setSpeedStatus('idle'), 1500);
+        }
+    }, [speedIdx, userId]);
 
     // --- PLAYLIST DE MÚSICA ---
     // Edita esta lista con los nombres de los archivos que pongas en frontend/public/music/
@@ -149,12 +189,45 @@ export default function MainSidebar({
                     <Brain className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${showThoughts ? 'animate-pulse' : ''}`} />
                 </button>
 
+                {/* Streaming Toggle */}
+                <button
+                    onClick={toggleStreaming}
+                    className={`p-1 sm:p-1.5 rounded-lg border transition-all duration-500 shadow-lg flex flex-col items-center ${enableStreaming ? 'bg-[#00e676]/20 border-[#00e676]/40 text-[#00e676]' : 'bg-white/5 border-white/10 text-white/30 hover:text-white/60'}`}
+                    title={enableStreaming ? 'Streaming ON' : 'Streaming OFF'}
+                >
+                    <Activity className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${enableStreaming ? 'animate-pulse' : ''}`} />
+                </button>
+
                 {/* Simulation Controls */}
                 <div className="flex flex-col bg-white/5 border border-white/10 p-1 rounded-xl shadow-lg">
+                    {/* Mode Toggle Button */}
+                    <button
+                        onClick={onToggleMode}
+                        className={`p-1 sm:p-1.5 mb-1 rounded flex justify-center items-center transition-all ${modoControlTotal ? 'text-[#7c4dff] bg-[#7c4dff]/20' : 'text-[#00e676] bg-[#00e676]/20'}`}
+                        title={modoControlTotal ? 'Modo actual: Arquitecto (Control Total)' : 'Modo actual: Observador (Autonomía)'}
+                    >
+                        {modoControlTotal ? <Zap className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
+                    </button>
                     <ControlButton onClick={() => onControl("start")} icon={Play} color="text-green-500" />
                     <ControlButton onClick={() => onControl("pause")} icon={Pause} color="text-yellow-500" />
                     <ControlButton onClick={() => onControl("reset")} icon={RefreshCw} color="text-red-500" />
                 </div>
+
+                {/* Speed Control */}
+                <button
+                    onClick={cycleSpeed}
+                    title={`Velocidad: ${SPEED_PRESETS[speedIdx].label} (${SPEED_PRESETS[speedIdx].ritmo}s) — click para cambiar`}
+                    className={`w-full mt-1 flex flex-col items-center justify-center p-1 sm:p-1.5 rounded-lg border transition-all duration-300 ${
+                        speedStatus === 'ok'  ? 'bg-green-400/10 border-green-400/30' :
+                        speedStatus === 'err' ? 'bg-red-400/10 border-red-400/30' :
+                        `${SPEED_PRESETS[speedIdx].bg} ${SPEED_PRESETS[speedIdx].border}`
+                    }`}
+                >
+                    <span className="text-[9px] leading-none">{SPEED_PRESETS[speedIdx].symbol}</span>
+                    <span className={`text-[6px] sm:text-[7px] font-black uppercase tracking-widest leading-none mt-0.5 ${SPEED_PRESETS[speedIdx].color}`}>
+                        {SPEED_PRESETS[speedIdx].label}
+                    </span>
+                </button>
                 
                 {/* Music Control */}
                 <button

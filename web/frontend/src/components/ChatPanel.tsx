@@ -55,7 +55,7 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                  if (res.ok) {
                      const data = await res.json();
                      console.log('✅ [ChatPanel] Agents data:', data);
-                     const aliveAgents = data.agents.filter((a: AgentChatInfo) => a.esta_vivo);
+                     const aliveAgents = (data?.agents || []).filter((a: AgentChatInfo) => a && a.esta_vivo);
                      console.log('🧬 [ChatPanel] Alive agents count:', aliveAgents.length);
                      setChatAgents(aliveAgents);
                  } else {
@@ -81,7 +81,7 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                     const res = await fetch(getHttpUrl(`/chat/${userId}/agents`));
                     if (res.ok) {
                         const data = await res.json();
-                        const aliveAgents = data.agents.filter((a: AgentChatInfo) => a.esta_vivo);
+                        const aliveAgents = (data?.agents || []).filter((a: AgentChatInfo) => a && a.esta_vivo);
                         setChatAgents(aliveAgents);
                     }
                 } catch (e) { /* silent */ }
@@ -181,22 +181,24 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
 
     const filteredAgents = chatAgents.filter(
         (a) =>
-            a.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            a.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (a.profesion && a.profesion.toLowerCase().includes(searchQuery.toLowerCase())) ||
-            (a.rol && a.rol.toLowerCase().includes(searchQuery.toLowerCase()))
+            (a?.nombre?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+            (a?.id?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+            (a?.profesion?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+            (a?.rol?.toLowerCase() || "").includes(searchQuery.toLowerCase())
     );
 
-    const selectedAgent = chatAgents.find((a) => a.id === selectedAgentId);
+    const selectedAgent = chatAgents.find((a) => a?.id === selectedAgentId);
 
     console.log('🔍 [ChatPanel] Debug:', { userId, selectedAgentId, chatAgentsCount: chatAgents.length, filteredCount: filteredAgents.length });
 
-    const getPersonalityEmoji = (resumen: string) => {
-        if (resumen.includes("amabilidad")) return "";
-        if (resumen.includes("hostilidad")) return "⚔️";
-        if (resumen.includes("curiosidad")) return "";
-        if (resumen.includes("competitividad")) return "";
-        if (resumen.includes("extroversión")) return "";
+    const getPersonalityEmoji = (resumen?: string) => {
+        if (!resumen) return "";
+        const lowerResumen = resumen.toLowerCase();
+        if (lowerResumen.includes("amabilidad")) return "";
+        if (lowerResumen.includes("hostilidad")) return "⚔️";
+        if (lowerResumen.includes("curiosidad")) return "";
+        if (lowerResumen.includes("competitividad")) return "";
+        if (lowerResumen.includes("extroversión")) return "";
         return "";
     };
 
@@ -284,7 +286,7 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                                                     borderColor: `${agent.color}40`,
                                                 }}
                                             >
-                                                {agent.nombre.replace(/[^a-zA-Z0-9]/g, "").slice(0, 3).toUpperCase()}
+                                                {(agent.nombre || "Agent").replace(/[^a-zA-Z0-9]/g, "").slice(0, 3).toUpperCase()}
                                             </div>
                                         </div>
                                         <div className="flex-1 min-w-0">
@@ -298,7 +300,7 @@ export default function ChatPanel({ userId, onClose }: ChatPanelProps) {
                                                 {agent.profesion || agent.rol} — {agent.personalidad_resumen}
                                             </p>
                                             <p className="text-[9px] text-white/20 truncate mt-0.5 italic">
-                                                {agent.pensamiento.slice(0, 60)}...
+                                                {(agent.pensamiento || "").slice(0, 60)}...
                                             </p>
                                         </div>
                                         <div

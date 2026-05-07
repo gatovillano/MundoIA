@@ -15,7 +15,14 @@ import random
 # Añadir raíz del proyecto al path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from core.modelo import ModeloRelacional, TerrainType
+# Evitar importar core.modelo en tiempo de import para que la CLI no arranque
+# los módulos LLM pesados. Se importará ModeloRelacional de forma perezosa
+# dentro de main() tras inyectar stubs ligeros.
+import importlib
+import types
+import getpass
+from core.database import DatabaseManager
+from core.world_system import TerrainType
 
 # ─── COLORES ANSI ─────────────────────────────────────────────────────────────
 
@@ -75,7 +82,7 @@ TERRAIN_SYMBOLS = {
     TerrainType.ARCHAEOLOGICAL_SITE: ("?", C.MAGENTA),
 }
 
-def render_map(modelo: ModeloRelacional):
+def render_map(modelo):
     if not modelo or not modelo.mapa:
         print(warn("Mapa no disponible."))
         return
@@ -110,7 +117,7 @@ def render_map(modelo: ModeloRelacional):
 
 # ─── SECCIONES DEL PANEL DE ARQUITECTO ───────────────────────────────────────
 
-def menu_voz_arquitecto(modelo: ModeloRelacional, selected_agent: list):
+def menu_voz_arquitecto(modelo, selected_agent: list):
     """Voz del Arquitecto — replica ArchitectPanel sección 1"""
     header("VOZ DEL ARQUITECTO")
     print(f"  {C.BOLD}1{C.RESET} Decreto Global  (a toda la creación)")
@@ -142,7 +149,7 @@ def menu_voz_arquitecto(modelo: ModeloRelacional, selected_agent: list):
             print(ok(f"Susurro enviado a {agent_id}"))
 
 
-def menu_lore(modelo: ModeloRelacional, _):
+def menu_lore(modelo, _):
     """Realidad Narrativa — replica sección 1.5"""
     header("REALIDAD NARRATIVA (LORE)")
     actual = getattr(modelo, "lore", "Sin definir")
@@ -154,7 +161,7 @@ def menu_lore(modelo: ModeloRelacional, _):
         print(ok("Realidad narrativa actualizada"))
 
 
-def menu_control_realidad(modelo: ModeloRelacional, _):
+def menu_control_realidad(modelo, _):
     """Control de la Realidad — replica sección 2"""
     header("CONTROL DE LA REALIDAD")
     print(f"  {C.YELLOW}── Clima ──{C.RESET}")
@@ -190,7 +197,7 @@ def menu_control_realidad(modelo: ModeloRelacional, _):
         print(ok(f"Terremoto: {afectados} heridos"))
 
 
-def menu_genesis(modelo: ModeloRelacional, _):
+def menu_genesis(modelo, _):
     """Génesis Artificial — replica sección 3"""
     header("GÉNESIS ARTIFICIAL")
     count = prompt_int("Cantidad de seres a manifestar (1-10)", default=1, lo=1, hi=10)
@@ -202,7 +209,7 @@ def menu_genesis(modelo: ModeloRelacional, _):
     print(ok(f"Creados: {', '.join(ids)}"))
 
 
-def menu_expansion(modelo: ModeloRelacional, _):
+def menu_expansion(modelo, _):
     """Expansión Territorial — replica sección 3.2"""
     header("EXPANSIÓN TERRITORIAL")
     print(f"  Dirección: {C.BOLD}N{C.RESET}orte / {C.BOLD}S{C.RESET}ur / {C.BOLD}E{C.RESET}ste / {C.BOLD}O{C.RESET}este / {C.BOLD}T{C.RESET}odas")
@@ -216,7 +223,7 @@ def menu_expansion(modelo: ModeloRelacional, _):
     print(ok(msg) if ok_flag else err(msg))
 
 
-def menu_compra_terreno(modelo: ModeloRelacional, _):
+def menu_compra_terreno(modelo, _):
     """Compra de Terreno por Grupos — replica sección 3.3"""
     header("COMPRA DE TERRENO (GRUPOS)")
     grupos = list(modelo.civilizaciones.keys())
@@ -240,7 +247,7 @@ def menu_compra_terreno(modelo: ModeloRelacional, _):
     print(ok(msg) if ok_flag else err(msg))
 
 
-def menu_misiones(modelo: ModeloRelacional, _):
+def menu_misiones(modelo, _):
     """Objetivos Colectivos — replica sección 3.5"""
     header("OBJETIVOS COLECTIVOS (MISIONES)")
     titulo = prompt("Título de la misión")
@@ -254,7 +261,7 @@ def menu_misiones(modelo: ModeloRelacional, _):
     print(ok(msg) if ok_flag else err(msg))
 
 
-def menu_gobernanza(modelo: ModeloRelacional, _):
+def menu_gobernanza(modelo, _):
     """Gobernanza Divina — replica sección 4"""
     header("GOBERNANZA DIVINA")
     topic = prompt("Tema de la asamblea ciudadana")
@@ -269,7 +276,7 @@ def menu_gobernanza(modelo: ModeloRelacional, _):
     print(ok(msg) if ok_flag else err(msg))
 
 
-def menu_economia(modelo: ModeloRelacional, _):
+def menu_economia(modelo, _):
     """Arquitectura Económica — replica sección 5"""
     header("ARQUITECTURA ECONÓMICA")
     total = modelo.economia.get("total_dinero", 0)
@@ -290,7 +297,7 @@ def menu_economia(modelo: ModeloRelacional, _):
         print(ok("Mercado colapsado"))
 
 
-def menu_decreto_individual(modelo: ModeloRelacional, selected_agent: list):
+def menu_decreto_individual(modelo, selected_agent: list):
     """Decreto Individual — replica sección 6"""
     header("DECRETO INDIVIDUAL")
     agent_id = selected_agent[0] or prompt("ID del agente")
@@ -332,7 +339,7 @@ def menu_decreto_individual(modelo: ModeloRelacional, selected_agent: list):
 
 # ─── CONTROL DE SIMULACIÓN ────────────────────────────────────────────────────
 
-def menu_simulacion(modelo: ModeloRelacional, running: list, _):
+def menu_simulacion(modelo, running: list, _):
     """Control básico de la simulación"""
     header("CONTROL DE SIMULACIÓN")
     paso = modelo.paso_actual
@@ -379,7 +386,7 @@ def menu_simulacion(modelo: ModeloRelacional, running: list, _):
             print(f"  {dim(f'[{st}]')} {msg}")
 
 
-def menu_seleccionar_agente(modelo: ModeloRelacional, selected_agent: list):
+def menu_seleccionar_agente(modelo, selected_agent: list):
     header("SELECCIONAR AGENTE")
     if modelo.agentes:
         ids = [a.unique_id for a in modelo.agentes[:10]]
@@ -420,7 +427,7 @@ def print_header_bar(modelo, selected_agent):
     print(sep())
 
 
-def main_loop(modelo: ModeloRelacional):
+def main_loop(modelo):
     selected_agent = [None]  # mutable ref
     while True:
         clear()
@@ -463,11 +470,100 @@ def main():
     def cli_log(mensaje, categoria="sistema", *a, **kw):
         pass  # Los logs se ven en el historial, no en tiempo real para no romper la TUI
 
+    # --- Login interactivo ---
+    dbmgr = DatabaseManager()
+    db_connected = False
+    try:
+        db_connected = dbmgr.connect()
+    except Exception:
+        db_connected = False
+
+    user_id = None
+    if db_connected:
+        print(ok("Conexión a la base de datos disponible. Iniciar sesión."))
+        while True:
+            username = prompt("Usuario")
+            try:
+                pw = getpass.getpass(f"{C.YELLOW}Contraseña: {C.RESET}")
+            except Exception:
+                pw = prompt("Contraseña (entrada visible)")
+
+            uid = None
+            try:
+                uid = dbmgr.verify_user(username, pw)
+            except Exception as e:
+                print(warn(f"Error verificando usuario en DB: {e}"))
+                uid = None
+
+            if uid:
+                print(ok(f"Autenticado como '{username}' (id={uid})"))
+                user_id = uid
+                break
+            else:
+                choice = prompt(f"Usuario no encontrado o contraseña incorrecta. ¿Crear usuario '{username}'? (s/n)", "s")
+                if choice.lower().startswith("s"):
+                    try:
+                        new_id = dbmgr.create_user(username, pw)
+                        if new_id:
+                            print(ok(f"Usuario '{username}' creado con id {new_id}"))
+                            user_id = new_id
+                            break
+                        else:
+                            print(err("No se pudo crear el usuario en la base de datos."))
+                    except Exception as e:
+                        print(err(f"Error creando usuario: {e}"))
+                else:
+                    # volver a pedir credenciales
+                    continue
+    else:
+        print(warn("No se pudo conectar a PostgreSQL. Usando modo local (sin verificación de contraseña)."))
+        # Fallback: usar --user o pedir un ID de usuario simple
+        user_id = prompt("ID de usuario para la sesión", args.user or "cli-local")
+
+    # Evitar inicializar módulos LLM pesados al importar core.modelo: inyectar stubs ligeros
+    if os.getenv("MUNDOIA_CLI_ALLOW_LLM", "0") != "1":
+        try:
+            import types as _types
+            # Stub para agents.cerebro_llm
+            _cerebro_mod = _types.ModuleType("agents.cerebro_llm")
+            class _DummyCerebro:
+                def __init__(self):
+                    self.model = None
+                    self.tavily_api_key = None
+                    self.api_key = None
+                    self.base_url = None
+                def __getattr__(self, name):
+                    def _dummy(*a, **kw):
+                        # Métodos generadores devuelven texto simple; otros retornan None
+                        if name.startswith("generar") or name.startswith("get_") or name.startswith("_"):
+                            return ""
+                        return None
+                    return _dummy
+            _cerebro_mod.cerebro_llm = _DummyCerebro()
+            def initialize_cerebro_with_skills(skill_factory):
+                _cerebro_mod.cerebro_llm.skill_factory = skill_factory
+                return _cerebro_mod.cerebro_llm
+            _cerebro_mod.initialize_cerebro_with_skills = initialize_cerebro_with_skills
+            sys.modules["agents.cerebro_llm"] = _cerebro_mod
+
+            # Stub para agents.cerebro_langgraph
+            _lang_mod = _types.ModuleType("agents.cerebro_langgraph")
+            class CerebroAvanzado:
+                def __init__(self, *a, **kw):
+                    pass
+            _lang_mod.CerebroAvanzado = CerebroAvanzado
+            sys.modules["agents.cerebro_langgraph"] = _lang_mod
+        except Exception:
+            pass
+
+    # Importar ModeloRelacional de forma perezosa ahora que los stubs están en su lugar
+    from core.modelo import ModeloRelacional
+
     modelo = ModeloRelacional(
         num_agentes=0,
         log_callback=cli_log,
-        user_id=args.user,
-        start_empty=True,
+        user_id=user_id,
+        start_empty=False,  # Cargar estado y logs previos para persistencia entre sesiones
     )
 
     # Generar mapa

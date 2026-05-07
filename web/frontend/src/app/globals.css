@@ -129,16 +129,21 @@ body {
 }
 
 /* Estética Pokémon GameBoy */
+@keyframes organic-float {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  33% {
+    transform: translateY(-5px) rotate(2deg);
+  }
+  66% {
+    transform: translateY(-2px) rotate(-2deg);
+  }
+}
+
 @keyframes pixel-wobble {
-
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-
-  50% {
-    transform: translateY(-2px);
-  }
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
 }
 
 @keyframes pixel-walk {
@@ -153,6 +158,13 @@ body {
   100% {
     transform: translateX(-1px);
   }
+}
+
+.animate-organic-float {
+  animation: organic-float var(--float-duration, 3s) ease-in-out infinite;
+  animation-delay: var(--float-delay, 0s);
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
 .animate-pixel-idle {

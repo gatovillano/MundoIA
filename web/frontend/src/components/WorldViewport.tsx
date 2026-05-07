@@ -4,12 +4,14 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import * as d3 from "d3";
 import useGameStore from "@/store/useGameStore";
 import { CloudRain, Sun, Link, Link2Off } from "lucide-react";
+import { replaceIdsWithNames } from "@/utils/nameUtils";
 
 export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: boolean }) {
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const { agents, mapa, relationships, speechBubbles, selectAgent, selectedAgentId, weather } = useGameStore();
     const [showLinks, setShowLinks] = useState(true);
+    const [showGrid, setShowGrid] = useState(true);
     const initializedRef = useRef(false);
     const prevAgentsRef = useRef<any[]>([]);
 
@@ -51,23 +53,24 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
         let terrainGroup = g.select<SVGGElement>(".terrain-layer");
         if (terrainGroup.empty()) terrainGroup = g.append("g").attr("class", "terrain-layer");
         
-        // --- COLORES HABBO STYLE ---
+        // --- COLORES MODERNOS Y PALETA REFINADA ---
         const terrainColors: Record<string, { top: string, left: string, right: string }> = {
-            grass: { top: "#7CB342", left: "#558B2F", right: "#689F38" },
-            forest: { top: "#558B2F", left: "#33691E", right: "#417A27" },
-            mountain: { top: "#B0BEC5", left: "#546E7A", right: "#37474F" },
-            montaña: { top: "#B0BEC5", left: "#546E7A", right: "#37474F" },
-            water: { top: "#29B6F6", left: "#0288D1", right: "#039BE5" },
-            desert: { top: "#FFE082", left: "#FFB300", right: "#FFCA28" },
-            archaeological_site: { top: "#BCAAA4", left: "#795548", right: "#8D6E63" },
-            path: { top: "#E0E0E0", left: "#9E9E9E", right: "#BDBDBD" }
+            grass: { top: "#689F38", left: "#33691E", right: "#558B2F" },
+            forest: { top: "#2E7D32", left: "#1B5E20", right: "#2E7D32" },
+            mountain: { top: "#8D6E63", left: "#4E342E", right: "#3E2723" }, // Tonos café más profundos
+            montaña: { top: "#8D6E63", left: "#4E342E", right: "#3E2723" },
+            water: { top: "#0288D1", left: "#01579B", right: "#0277BD" },
+            desert: { top: "#FFD54F", left: "#F57F17", right: "#FFB300" },
+            archaeological_site: { top: "#A1887F", left: "#5D4037", right: "#795548" },
+            path: { top: "#BDBDBD", left: "#616161", right: "#9E9E9E" }
         };
 
         const buildingIcons: Record<string, string> = {
             "Hospital": "🏥", "Granja": "🌾", "Centro de Recarga": "🔋", 
             "Centro de Descanso": "🛌", "Centro Comunitario": "💠", 
             "Comisaría": "🚓", "Universidad": "🏫", "Comedor": "☕", 
-            "Centro de Ocio": "🕹️", "Torre de Vigilancia": "🗼"
+            "Centro de Ocio": "🕹️", "Torre de Vigilancia": "🗼",
+            "Mina": "⛏️", "Farmacia": "⚕️"
         };
 
         // --- DEFINICIONES SVG ---
@@ -76,34 +79,42 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
         
         if (defs.select("#drop-shadow-soft").empty()) {
             const filter = defs.append("filter").attr("id", "drop-shadow-soft").attr("x", "-20%").attr("y", "-20%").attr("width", "140%").attr("height", "140%");
-            filter.append("feDropShadow").attr("dx", "0").attr("dy", "3").attr("stdDeviation", "2").attr("flood-color", "#000").attr("flood-opacity", "0.3");
+            filter.append("feDropShadow").attr("dx", "0").attr("dy", "3").attr("stdDeviation", "2.5").attr("flood-color", "#000").attr("flood-opacity", "0.4");
         }
 
-        if (defs.select("#pattern-grass-real").empty()) {
-            const p = defs.append("pattern").attr("id", "pattern-grass-real").attr("patternUnits", "userSpaceOnUse").attr("width", 32).attr("height", 32);
-            p.append("rect").attr("width", 32).attr("height", 32).attr("fill", terrainColors.grass.top);
-            Array.from({ length: 15 }).forEach(() => {
+        if (defs.select("#grass-texture").empty()) {
+            const p = defs.append("pattern").attr("id", "grass-texture").attr("patternUnits", "userSpaceOnUse").attr("width", 40).attr("height", 40);
+            p.append("rect").attr("width", 40).attr("height", 40).attr("fill", terrainColors.grass.top);
+            // Textura de briznas más refinada y orgánica
+            for (let i = 0; i < 12; i++) {
+                const x = Math.random() * 40, y = Math.random() * 40;
+                const h = 3 + Math.random() * 4;
                 p.append("path")
-                    .attr("d", `M ${Math.random()*32} ${Math.random()*32} l ${(Math.random()-0.5)*4} -${2 + Math.random()*4}`)
-                    .attr("stroke", Math.random() > 0.5 ? terrainColors.grass.left : "#8BC34A")
-                    .attr("stroke-width", 1.5)
-                    .attr("stroke-linecap", "round")
+                    .attr("d", `M ${x} ${y} Q ${x + 1} ${y - h} ${x + 2} ${y - h + 1}`)
+                    .attr("stroke", i % 2 === 0 ? "#9CCC65" : "#7CB342")
+                    .attr("stroke-width", 1)
                     .attr("fill", "none")
-                    .attr("opacity", 0.7 + Math.random() * 0.3);
-            });
+                    .attr("opacity", 0.6);
+            }
         }
 
-        if (defs.select("#pattern-desert-real").empty()) {
-            const p = defs.append("pattern").attr("id", "pattern-desert-real").attr("patternUnits", "userSpaceOnUse").attr("width", 40).attr("height", 40);
-            p.append("rect").attr("width", 40).attr("height", 40).attr("fill", terrainColors.desert.top);
-            Array.from({ length: 8 }).forEach(() => {
-                p.append("path")
-                    .attr("d", `M ${Math.random()*40} ${Math.random()*40} q 4 -2 8 0 t 8 0`)
-                    .attr("stroke", "#FFD54F").attr("stroke-width", 1.5).attr("fill", "none").attr("opacity", 0.6);
-            });
-            Array.from({ length: 20 }).forEach(() => {
-                p.append("circle").attr("cx", Math.random() * 40).attr("cy", Math.random() * 40).attr("r", 0.6).attr("fill", terrainColors.desert.left).attr("opacity", 0.5);
-            });
+        if (defs.select("#sand-texture").empty()) {
+            const p = defs.append("pattern").attr("id", "sand-texture").attr("patternUnits", "userSpaceOnUse").attr("width", 20).attr("height", 20);
+            p.append("rect").attr("width", 20).attr("height", 20).attr("fill", terrainColors.desert.top);
+            p.append("circle").attr("cx", 5).attr("cy", 5).attr("r", 0.5).attr("fill", "rgba(0,0,0,0.15)");
+        }
+
+        // Gradientes y texturas para edificios y ventanas
+        if (defs.select("#roof-grad").empty()) {
+            const rg = defs.append("linearGradient").attr("id", "roof-grad").attr("x1", "0").attr("y1", "0").attr("x2", "0").attr("y2", "1");
+            rg.append("stop").attr("offset", "0%").attr("stop-color", "#6D4C41");
+            rg.append("stop").attr("offset", "100%").attr("stop-color", "#4E342E");
+        }
+
+        if (defs.select("#window-grad").empty()) {
+            const wg = defs.append("linearGradient").attr("id", "window-grad").attr("x1", "0").attr("y1", "0").attr("x2", "0").attr("y2", "1");
+            wg.append("stop").attr("offset", "0%").attr("stop-color", "#eaf6ff").attr("stop-opacity", "0.95");
+            wg.append("stop").attr("offset", "100%").attr("stop-color", "#b3e5fc").attr("stop-opacity", "0.6");
         }
 
         const flatMap = mapa.flatMap((row, x) => row.map((tile, y) => ({ ...tile, x, y })));
@@ -142,61 +153,65 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
                 // Reset de visibilidad para re-renderizado
                 cell.selectAll(".mountain-left, .mountain-right, .mountain-top").attr("transform", null).attr("opacity", 0);
                 cell.selectAll(".voxel-left, .voxel-right, .voxel-top").attr("opacity", 1);
-                cell.selectAll(".terrain-decor, .cell-overlay, .building-unit, .resource-icon, .tree-unit").remove();
+                // incluir decoraciones de edificio en la limpieza para evitar duplicados
+                cell.selectAll(".terrain-decor, .cell-overlay, .building-unit, .resource-icon, .tree-unit, .building-decor, .farm-decor").remove();
 
             if (!isMountain) {
                 let topFill = c.top;
-                if (!hasBuildings) {
-                    if (terrainStr === 'grass') topFill = "url(#pattern-grass-real)";
-                    if (terrainStr === 'desert') topFill = "url(#pattern-desert-real)";
-                }
-                cell.select(".voxel-top").attr("fill", topFill).attr("stroke", "rgba(0,0,0,0.1)").attr("stroke-width", 0.5);
-                cell.select(".voxel-left").attr("fill", c.left).attr("stroke", "rgba(0,0,0,0.1)").attr("stroke-width", 0.5);
-                cell.select(".voxel-right").attr("fill", c.right).attr("stroke", "rgba(0,0,0,0.1)").attr("stroke-width", 0.5);
+                if (terrainStr === 'grass') topFill = "url(#grass-texture)";
+                if (terrainStr === 'desert') topFill = "url(#sand-texture)";
+
+                const gridStroke = showGrid ? "rgba(0,0,0,0.15)" : "none";
+                const sideStroke = showGrid ? "rgba(0,0,0,0.2)" : "none";
+                
+                cell.select(".voxel-top").attr("fill", topFill).attr("stroke", gridStroke).attr("stroke-width", 0.8).style("filter", "url(#inner-glow-tile)");
+                cell.select(".voxel-left").attr("fill", c.left).attr("stroke", sideStroke).attr("stroke-width", 0.5);
+                cell.select(".voxel-right").attr("fill", c.right).attr("stroke", sideStroke).attr("stroke-width", 0.5);
             } else {
                 cell.selectAll(".voxel-left, .voxel-right, .voxel-top").attr("opacity", 0);
                 
-                // === MONTAÑAS CON RELIEVE REALISTA Y ESTILIZADO ===
-                const noise = (d.x * 127 + d.y * 131) % 100;
-                const hf = 0.3 + (Math.abs(Math.sin(d.x * 0.7) * Math.cos(d.y * 0.7)) * 0.7);
-                
-                // Elevamos los picos desde la base del terreno (0 para que no floten)
+                // === MONTAÑAS CON RELIEVE ROBUSTO Y TONOS CAFÉ ===
+                const hf = 0.4 + (Math.abs(Math.sin(d.x * 0.5) * Math.cos(d.y * 0.5)) * 0.8);
                 const mountainElevation = 0; 
-                
                 const peakGroup = cell.append("g").attr("class", "terrain-decor").attr("transform", `translate(0, -${mountainElevation})`);
                 
-                // Función para dibujar picos más realistas y menos "agujas"
-                const drawRuggedMountain = (ox: number, oy: number, ph: number, pw: number) => {
+                const drawRuggedMountain = (ox: number, oy: number, ph: number, pw: number, colorOffset: number) => {
                     const pg = peakGroup.append("g").attr("transform", `translate(${ox}, ${oy})`);
                     
-                    // Cuerpo principal (polígono más complejo para realismo)
-                    // Cara Izquierda (con un quiebre para rugosidad)
+                    // Colores variados dentro del rango café
+                    const cTop = d3.color(terrainColors.mountain.top)?.darker(colorOffset).toString() || terrainColors.mountain.top;
+                    const cLeft = d3.color(terrainColors.mountain.left)?.darker(colorOffset).toString() || terrainColors.mountain.left;
+                    const cRight = d3.color(terrainColors.mountain.right)?.darker(colorOffset).toString() || terrainColors.mountain.right;
+
+                    // Cara Izquierda con quiebres de roca
                     pg.append("path")
-                        .attr("d", `M 0 ${-ph} L ${-pw*0.7} ${-ph*0.4} L ${-pw} 0 L 0 ${tileH/2} L 0 ${-ph*0.3} Z`)
-                        .attr("fill", "#546E7A").attr("stroke", "rgba(0,0,0,0.2)");
-                    // Cara Derecha (con un quiebre para rugosidad)
-                    pg.append("path")
-                        .attr("d", `M 0 ${-ph} L ${pw*0.8} ${-ph*0.3} L ${pw} 0 L 0 ${tileH/2} L 0 ${-ph*0.3} Z`)
-                        .attr("fill", "#37474F").attr("stroke", "rgba(0,0,0,0.2)");
+                        .attr("d", `M 0 ${-ph} L ${-pw*0.6} ${-ph*0.5} L ${-pw} 0 L 0 ${tileH/2} L 0 ${-ph*0.3} Z`)
+                        .attr("fill", cLeft).attr("stroke", "rgba(0,0,0,0.3)").attr("stroke-width", 0.5);
                     
-                    // Nieve en la cumbre (más orgánica)
-                    if (ph > 18) {
-                        const snowH = ph * 0.35;
-                        const snowW = pw * 0.5;
+                    // Cara Derecha con quiebres
+                    pg.append("path")
+                        .attr("d", `M 0 ${-ph} L ${pw*0.7} ${-ph*0.4} L ${pw} 0 L 0 ${tileH/2} L 0 ${-ph*0.3} Z`)
+                        .attr("fill", cRight).attr("stroke", "rgba(0,0,0,0.3)").attr("stroke-width", 0.5);
+                    
+                    // Detalle de cara superior/aristas
+                    pg.append("path")
+                        .attr("d", `M 0 ${-ph} L ${-pw*0.3} ${-ph*0.7} L 0 ${-ph*0.6} L ${pw*0.3} ${-ph*0.7} Z`)
+                        .attr("fill", cTop).attr("opacity", 0.8);
+
+                    // Nieve/Tierra clara en la cima
+                    if (ph > 20) {
                         pg.append("path")
-                            .attr("d", `M 0 ${-ph} L ${-snowW*0.6} ${-ph+snowH/2} L 0 ${-ph+snowH*0.8} L ${snowW*0.6} ${-ph+snowH/2} Z`)
-                            .attr("fill", "#CFD8DC").attr("opacity", 0.9);
+                            .attr("d", `M 0 ${-ph} L ${-pw*0.3} ${-ph+6} L 0 ${-ph+8} L ${pw*0.3} ${-ph+6} Z`)
+                            .attr("fill", "#D7CCC8").attr("opacity", 0.6);
                     }
                 };
 
-                // Altura de pico más controlada (no tan alta)
-                const peakHeight = 15 + (hf * 35);
-                drawRuggedMountain(0, 0, peakHeight, 22);
+                const peakHeight = 18 + (hf * 32);
+                drawRuggedMountain(0, 0, peakHeight, 22, 0);
                 
-                // Pequeños picos secundarios para naturalidad
-                if (hf > 0.5) {
-                    drawRuggedMountain(-12, 4, peakHeight * 0.5, 12);
-                    drawRuggedMountain(14, -6, peakHeight * 0.3, 10);
+                if (hf > 0.6) {
+                    drawRuggedMountain(-10, 4, peakHeight * 0.6, 14, 0.2);
+                    drawRuggedMountain(12, -4, peakHeight * 0.4, 12, 0.1);
                 }
             }
 
@@ -210,16 +225,6 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
                    const c = cell.append("g").attr("class", "terrain-decor").attr("transform", "translate(0, -4)");
                    c.append("path").attr("d", "M -2 0 L -2 -8 M 2 -2 L 2 -10 M -5 -5 L 5 -5").attr("stroke", "#2E7D32").attr("stroke-width", 2);
                 }
-            } else if (terrainStr === 'grass' && !hasBuildings) {
-                const noise = (d.x * 17 + d.y * 31) % 100;
-                if (noise < 8) {
-                    const b = cell.append("g").attr("class", "terrain-decor").attr("transform", `translate(0, -5)`);
-                    b.append("ellipse").attr("cx", 0).attr("cy", 0).attr("rx", 10).attr("ry", 5).attr("fill", "rgba(0,0,0,0.3)");
-                    const bx = 6, by = 6, bz = 8;
-                    b.append("path").attr("d", `M ${-bx} ${-bz} L 0 ${-bz+by} L ${bx} ${-bz} L 0 ${-bz-by} Z`).attr("fill", "#81C784");
-                    b.append("path").attr("d", `M ${-bx} ${-bz} L 0 ${-bz+by} L 0 ${by} L ${-bx} 0 Z`).attr("fill", "#4CAF50");
-                    b.append("path").attr("d", `M 0 ${-bz+by} L ${bx} ${-bz} L ${bx} 0 L 0 ${by} Z`).attr("fill", "#388E3C");
-                }
             }
 
             if (d.owner) {
@@ -231,18 +236,67 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
             if (hasBuildings) {
                 d.buildings.forEach((b: any) => {
                     const ownerColor = civilizaciones[b.grupo_id]?.color || gruposDinamicos[b.grupo_id]?.color || "#7c4dff";
-                    const bg = cell.append("g").attr("class", "building-unit").attr("transform", "translate(0, -4)");
-                    let blkW = 14, blkH = 7, blkZ = 16; 
-                    const themeColors: any = { "Hospital": { t: "#EF9A9A", l: "#E53935", r: "#C62828" }, "Universidad": { t: "#9FA8DA", l: "#3949AB", r: "#283593" }, "Granja": { t: "#FFE082", l: "#FFB300", r: "#FF8F00" }, "Centro Comunitario": { t: "#80DEEA", l: "#00ACC1", r: "#00838F" }, "Torre de Vigilancia": { t: "#B0BEC5", l: "#546E7A", r: "#37474F", tall: true }, "default": { t: "#FFCC80", l: "#F57C00", r: "#E65100" } };
-                    const tc = themeColors[b.tipo] || themeColors["default"];
-                    if (tc.tall) { blkW = 8; blkH = 4; blkZ = 28; }
+                    // Posicionamiento centrado exacto
+                    const bg = cell.append("g").attr("class", "building-unit").attr("transform", "translate(0, 0)");
+
+                    // Diseño base robusto
+                    let blkW = 16, blkH = 8, blkZ = 12;
+                    const themeColors: any = {
+                        Hospital: { t: "#FFFFFF", l: "#ECEFF1", r: "#CFD8DC", accents: "#EF5350", glass: true },
+                        Universidad: { t: "#ECEFF1", l: "#B0BEC5", r: "#78909C", accents: "#3949AB", tiers: 2 },
+                        Granja: { t: "#A1887F", l: "#6D4C41", r: "#4E342E", accents: "#FDD835", farm: true },
+                        "Centro Comunitario": { t: "#80CBC4", l: "#00897B", r: "#00695C", accents: "#E0F2F1", octagonal: true },
+                        "Torre de Vigilancia": { t: "#90A4AE", l: "#546E7A", r: "#37474F", accents: "#FFD54F", height: 35 },
+                        Mina: { t: "#546E7A", l: "#263238", r: "#1C2329", accents: "#FFB300", rugged: true },
+                        default: { t: "#FFCC80", l: "#FB8C00", r: "#E65100", accents: "#FFF" }
+                    };
+                    const tc = themeColors[b.tipo] || themeColors.default;
+
                     bg.style("filter", "url(#drop-shadow-soft)");
-                    bg.append("path").attr("d", `M ${-blkW} ${-blkZ} L 0 ${-blkZ+blkH} L ${blkW} ${-blkZ} L 0 ${-blkZ-blkH} Z`).attr("fill", tc.t).attr("stroke", "rgba(0,0,0,0.2)");
-                    bg.append("path").attr("d", `M ${-blkW} ${-blkZ} L 0 ${-blkZ+blkH} L 0 ${blkH} L ${-blkW} 0 Z`).attr("fill", tc.l);
-                    bg.append("path").attr("d", `M 0 ${-blkZ+blkH} L ${blkW} ${-blkZ} L ${blkW} 0 L 0 ${blkH} Z`).attr("fill", tc.r);
-                    const sign = bg.append("g").attr("transform", `translate(0, ${-blkZ - 12})`);
-                    sign.append("circle").attr("r", 8).attr("fill", "#FFF").attr("stroke", ownerColor).attr("stroke-width", 2);
-                    sign.append("text").attr("y", 3).attr("text-anchor", "middle").attr("font-size", "10px").text(buildingIcons[b.tipo] || "🏢");
+
+                    // Cimentación/Plataforma
+                    bg.append("path").attr("d", `M ${-blkW-2} 0 L 0 ${blkH+1} L ${blkW+2} 0 L 0 ${-blkH-1} Z`).attr("fill", "rgba(0,0,0,0.2)");
+
+                    const drawBox = (w: number, h: number, z: number, zOff: number, topC: string, leftC: string, rightC: string) => {
+                        const g = bg.append("g").attr("transform", `translate(0, -${zOff})`);
+                        const topD = `M ${-w} ${-z} L 0 ${-z + h} L ${w} ${-z} L 0 ${-z - h} Z`;
+                        const leftD = `M ${-w} ${-z} L 0 ${-z + h} L 0 ${h} L ${-w} 0 Z`;
+                        const rightD = `M 0 ${-z + h} L ${w} ${-z} L ${w} 0 L 0 ${h} Z`;
+                        g.append("path").attr("d", leftD).attr("fill", leftC);
+                        g.append("path").attr("d", rightD).attr("fill", rightC);
+                        g.append("path").attr("d", topD).attr("fill", topC).attr("stroke", "rgba(255,255,255,0.1)").attr("stroke-width", 0.5);
+                        return g;
+                    };
+
+                    if (tc.height) { // Torres
+                        drawBox(8, 4, tc.height, 0, tc.t, tc.l, tc.r);
+                        // Cúpula/Observatorio
+                        drawBox(10, 5, 6, tc.height, tc.accents, tc.l, tc.r);
+                    } else if (tc.tiers) { // Edificios complejos (Universidad)
+                        drawBox(blkW, blkH, 10, 0, tc.t, tc.l, tc.r);
+                        drawBox(blkW*0.6, blkH*0.6, 8, 10, tc.t, tc.l, tc.r);
+                    } else if (tc.octagonal) { // Centro Comunitario
+                        drawBox(12, 12, 14, 0, tc.t, tc.l, tc.r);
+                    } else { // Edificios estándar
+                        drawBox(blkW, blkH, blkZ, 0, tc.t, tc.l, tc.r);
+                    }
+
+                    // Detalles decorativos (ventanas realistas)
+                    const winW = 3, winH = 4;
+                    const rows = tc.height ? 4 : 2;
+                    for(let i=0; i<rows; i++) {
+                        const y = tc.height ? -(i*8 + 8) : -6;
+                        bg.append("rect").attr("x", -6).attr("y", y).attr("width", winW).attr("height", winH).attr("fill", "#E3F2FD").attr("opacity", 0.8).attr("rx", 1);
+                        bg.append("rect").attr("x", 3).attr("y", y).attr("width", winW).attr("height", winH).attr("fill", "#E3F2FD").attr("opacity", 0.8).attr("rx", 1);
+                    }
+
+                    // Puerta robusta
+                    bg.append("path").attr("d", "M -3 0 L 3 0 L 3 -6 L -3 -6 Z").attr("fill", "#3E2723");
+
+                    // Letrero Moderno
+                    const sign = bg.append("g").attr("transform", `translate(0, -${(tc.height || blkZ) + 15})`);
+                    sign.append("circle").attr("r", 10).attr("fill", "white").attr("stroke", ownerColor).attr("stroke-width", 2);
+                    sign.append("text").attr("y", 4).attr("text-anchor", "middle").attr("font-size", "10px").text(buildingIcons[b.tipo] || "🏢");
                 });
             } else if (!hasBuildings && terrainStr === 'forest') {
                 const treeGroup = cell.append("g").attr("class", "tree-unit").style("filter", "url(#drop-shadow-soft)").attr("transform", `translate(0, -6)`);
@@ -262,22 +316,52 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
                 else if (hash === 1) { drwTr(-8, -4, 0.9); drwTr(8, 4, 1.0); }
                 else { drwTr(4, -8, 0.8); drwTr(-4, 8, 0.9); }
             } else if (d.resource) {
-                const resInfo: Record<string, string> = { 
-                    'food': '🍎', 'comida': '🍎',
-                    'wood': '🪵', 'madera': '🪵',
-                    'stone': '🗿', 'piedra': '🗿',
-                    'iron': '⚙️', 'mineral': '⚙️',
-                    'medicine': '💊', 'medicina': '💊',
-                    'gold': '💰', 'oro': '💰',
-                    'fish': '🐟', 'pescado': '🐟'
+                const resColors: Record<string, string> = { 
+                    'food': '#FF5252', 'comida': '#FF5252', 'carne': '#FF5252', 'bayas': '#FF5252',
+                    'wood': '#8D6E63', 'madera': '#8D6E63', 'leña': '#8D6E63',
+                    'stone': '#90A4AE', 'piedra': '#90A4AE', 'roca': '#90A4AE',
+                    'iron': '#B0BEC5', 'mineral': '#B0BEC5', 'hierro': '#B0BEC5', 'metal': '#B0BEC5',
+                    'gold': '#FFD54F', 'oro': '#FFD54F', 'tesoro': '#FFD54F',
+                    'medicine': '#81C784', 'medicina': '#81C784', 'hierbas': '#81C784',
+                    'fish': '#4FC3F7', 'pescado': '#4FC3F7', 'pez': '#4FC3F7'
                 };
-                const type = d.resource.type;
-                const r = resInfo[type] || '🎁';
-                const bag = cell.append("g").attr("class", "resource-icon").attr("transform", `translate(0, -10)`);
-                bag.append("text").attr("y", 0).attr("text-anchor", "middle").attr("font-size", "12px").style("filter", "url(#drop-shadow-soft)").text(r);
+                const resIcons: Record<string, string> = { 
+                    'food': '🍎', 'comida': '🍎', 'carne': '🥩', 'bayas': '🍓',
+                    'wood': '🪵', 'madera': '🪵', 'leña': '🪵',
+                    'stone': '🗿', 'piedra': '🗿', 'roca': '🪨',
+                    'iron': '⚙️', 'mineral': '⚙️', 'hierro': '⛓️', 'metal': '🔩',
+                    'gold': '💰', 'oro': '💰', 'tesoro': '💎',
+                    'medicine': '💊', 'medicina': '💊', 'hierbas': '🌿',
+                    'fish': '🐟', 'pescado': '🐟', 'pez': '🐠'
+                };
+                const type = d.resource.type?.toLowerCase() || "unknown";
+                const color = resColors[type] || '#7c4dff';
+                // Iconos aún más pequeños y elegantes
+                const bag = cell.append("g").attr("class", "resource-icon").attr("transform", `translate(0, 0) scale(0.65)`);
+                
+                // Sombra mínima
+                bag.append("ellipse").attr("cx", 0).attr("cy", 2).attr("rx", 4).attr("ry", 1.5).attr("fill", "rgba(0,0,0,0.15)");
+                
+                bag.append("text").attr("y", -2).attr("text-anchor", "middle").attr("font-size", "14px").style("filter", "url(#drop-shadow-soft)").text(resIcons[type] || '🎁');
+            }
+            // Mostrar sitio arqueológico (oculto hasta ser descubierto)
+            else if (d.is_archaeological_site || terrainStr === 'archaeological_site') {
+                const siteGroup = cell.append("g").attr("class", "arch-site").attr("transform", "translate(0, -6)");
+                if (d.discovered_by) {
+                    siteGroup.append("ellipse").attr("cx", 0).attr("cy", 2).attr("rx", 7).attr("ry", 3).attr("fill", terrainColors.archaeological_site.top).attr("opacity", 0.95);
+                    siteGroup.append("text").attr("y", 4).attr("text-anchor", "middle").attr("font-size", "14px").style("filter", "url(#drop-shadow-soft)").text("🏺");
+                    if (d.artifact_type) {
+                        siteGroup.append("text").attr("y", -10).attr("text-anchor", "middle").attr("font-size", "7px").attr("fill", "#ffffff").text(d.artifact_type);
+                    }
+                } else {
+                    // Marcador sutil para sitio no descubierto (montículo)
+                    const mound = cell.append("g").attr("class", "arch-site-hidden").attr("transform", "translate(0, -2)");
+                    mound.append("ellipse").attr("cx", 0).attr("cy", 2).attr("rx", 6).attr("ry", 2).attr("fill", "rgba(0,0,0,0.12)");
+                    mound.append("path").attr("d", "M -6 0 Q 0 -6 6 0 Z").attr("fill", terrainColors.archaeological_site.left).attr("opacity", 0.22);
+                }
             }
         });
-    }, [mapa]);
+    }, [mapa, showGrid]);
 
     // 2. AGENTES Y OVERLAYS
     useEffect(() => {
@@ -327,28 +411,179 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
             (svg.node() as any).__lastMapKey = mapKey;
         }
 
-        if (showLinks && relationships) {
+        if (showLinks) {
+            console.debug && console.debug(`[WorldViewport] relationships: ${ (relationships || []).length }, agents: ${agents.length}`);
             const agentCoords = new Map();
             agents.forEach(a => agentCoords.set(a.id, iso(a.x, a.y)));
-            const relationshipData = relationships.map(rel => ({ ...rel, coords: { source: agentCoords.get(rel.source), target: agentCoords.get(rel.target) } })).filter(d => d.coords.source && d.coords.target);
-            linkGroup.selectAll("line").data(relationshipData, (d: any) => `${d.source}-${d.target}-${d.type}`).join("line").attr("x1", d => d.coords.source.x).attr("y1", d => d.coords.source.y - 10).attr("x2", d => d.coords.target.x).attr("y2", d => d.coords.target.y - 10).attr("stroke", d => d.type === 'amigo' ? "#00e676" : d.type === 'enemigo' ? "#ff1744" : d.type === 'alianza' ? "#ffd600" : "#ffffff").attr("stroke-width", d => d.type === 'amigo' ? 1.5 : d.type === 'enemigo' ? 2 : d.type === 'alianza' ? 2.5 : 0.5).attr("opacity", d => d.type === 'amigo' ? 0.6 : d.type === 'enemigo' ? 0.8 : d.type === 'alianza' ? 0.8 : 0.2);
-        } else linkGroup.selectAll("line").remove();
+
+            // --- LÍNEAS DE PERTENENCIA A GRUPO (líneas más finas, color del grupo) ---
+            const groupsMap: Record<string, any[]> = {};
+            agents.forEach(a => {
+                const gid = (a as any).grupo_id || (a as any).group_id || null;
+                if (gid) {
+                    groupsMap[gid] = groupsMap[gid] || [];
+                    groupsMap[gid].push(a);
+                }
+            });
+
+            const groupLineData: any[] = Object.entries(groupsMap).flatMap(([gid, members]) => {
+                // Conectar miembros adyacentes para evitar demasiadas líneas
+                return members.slice(1).map((m: any, idx: number) => {
+                    const src = members[idx];
+                    const s = agentCoords.get(src.id);
+                    const t = agentCoords.get(m.id);
+                    if (!s || !t) return null;
+                    return { source: src.id, target: m.id, coords: { source: s, target: t }, groupId: gid };
+                }).filter(Boolean);
+            });
+
+            const groupLinks = linkGroup.selectAll("line.group-link").data(groupLineData, (d: any) => `${d.source}-${d.target}-group`)
+                .join(
+                    enter => enter.append("line").attr("class", "group-link"),
+                    update => update,
+                    exit => exit.remove()
+                )
+                .attr("x1", d => d.coords.source.x)
+                .attr("y1", d => d.coords.source.y - 10)
+                .attr("x2", d => d.coords.target.x)
+                .attr("y2", d => d.coords.target.y - 10)
+                .attr("stroke", d => {
+                    const ownerInfo = (useGameStore.getState().civilizaciones || {})[d.groupId] || (useGameStore.getState().gruposDinamicos || {})[d.groupId];
+                    return ownerInfo?.color || "#9c27b0";
+                })
+                .attr("stroke-width", 0.6)
+                .attr("opacity", 0.45)
+                .attr("stroke-linecap", "round")
+                .attr("pointer-events", "none");
+            // colocar líneas de grupo por debajo de los nodos
+            groupLinks.each(function() { (this as any).parentNode && (this as any).parentNode.insertBefore(this, (this as any).parentNode.firstChild); });
+
+            // --- RELACIONES ENTRE AGENTES ---
+            const relationshipData = (relationships || []).map(rel => ({ ...rel, coords: { source: agentCoords.get(rel.source), target: agentCoords.get(rel.target) } })).filter(d => d.coords.source && d.coords.target);
+
+            const relLinks = linkGroup.selectAll("line.rel-link").data(relationshipData, (d: any) => `${d.source}-${d.target}-${d.type}`).join(
+                enter => enter.append("line").attr("class", "rel-link"),
+                update => update,
+                exit => exit.remove()
+            );
+
+            relLinks
+                .attr("x1", d => d.coords.source.x)
+                .attr("y1", d => d.coords.source.y - 10)
+                .attr("x2", d => d.coords.target.x)
+                .attr("y2", d => d.coords.target.y - 10)
+                .attr("stroke", (d: any) => {
+                    if (d.type === 'amigo') return "#00e676"; // verde amistad
+                    if (d.type === 'enemigo') return "#ff1744"; // rojo enemistad
+                    if (d.type === 'alianza' || d.type === 'alliance') return "#ffd600"; // diplomacia
+                    if (d.type === 'conocido') return "#90A4AE"; // gris para conocidos
+                    return "#ffffff";
+                })
+                .attr("stroke-width", (d: any) => {
+                    const strength = Math.abs(Number(d.strength || 0));
+                    const base = Math.max(0.5, Math.min(3, strength * 2));
+                    if (d.type === 'amigo') return Math.max(1.0, base);
+                    if (d.type === 'enemigo') return Math.max(1.6, base, 1.8);
+                    if (d.type === 'alianza' || d.type === 'alliance') return Math.max(1.0, base);
+                    if (d.type === 'conocido') return Math.max(0.6, base * 0.6);
+                    return Math.max(0.5, base * 0.6);
+                })
+                .attr("stroke-dasharray", (d: any) => (d.type === 'alianza' || d.type === 'alliance') ? "6,3" : "none")
+                .attr("opacity", (d: any) => {
+                    if (d.type === 'amigo') return 0.75;
+                    if (d.type === 'enemigo') return 0.95;
+                    if (d.type === 'alianza' || d.type === 'alliance') return 0.9;
+                    if (d.type === 'conocido') return 0.45;
+                    return 0.35;
+                })
+                .attr("stroke-linecap", "round")
+                .attr("pointer-events", "none");
+
+            // Asegurar que las relaciones sociales se rendericen por encima de las líneas de grupo
+            relLinks.each(function() { if ((this as any).parentNode) (this as any).parentNode.appendChild(this); });
+
+            // --- SÍMBOLOS PARA ALIANZAS (emoji en el punto medio) ---
+            const allianceData = relationshipData.filter((d: any) => d.type === 'alianza' || d.type === 'alliance');
+            const allianceSymbols = linkGroup.selectAll("text.alliance-symbol").data(allianceData, (d: any) => `${d.source}-${d.target}`);
+            allianceSymbols.join(
+                enter => enter.append("text").attr("class", "alliance-symbol").attr("text-anchor", "middle").attr("alignment-baseline", "middle").text("🤝"),
+                update => update,
+                exit => exit.remove()
+            )
+            .attr("x", (d: any) => (d.coords.source.x + d.coords.target.x) / 2)
+            .attr("y", (d: any) => ((d.coords.source.y + d.coords.target.y) / 2) - 8)
+            .attr("font-size", 10)
+            .attr("opacity", 0.95)
+            .attr("pointer-events", "none");
+
+        } else {
+            linkGroup.selectAll("line").remove();
+            linkGroup.selectAll("text.alliance-symbol").remove();
+        }
 
         const sortedAgents = [...agents].sort((a, b) => (a.x + a.y) - (b.x + b.y));
         const agentSelection = agentGroup.selectAll<SVGGElement, any>(".agent").data(sortedAgents, (d) => d.id);
         const enter = agentSelection.enter().append("g").attr("class", "agent").attr("cursor", "pointer").on("click", (event, d) => { event.stopPropagation(); selectAgent(d.id); });
-        enter.append("ellipse").attr("class", "agent-shadow").attr("cx", 0).attr("cy", 0).attr("rx", 10).attr("ry", 5).attr("fill", "rgba(0,0,0,0.3)");
-        enter.append("path").attr("class", "selection-ring").attr("d", "M 0 -10 L 15 0 L 0 10 L -15 0 Z").attr("fill", "none").attr("stroke", "#fff").attr("stroke-width", 2).attr("opacity", 0);
-        const bodyGroup = enter.append("g").attr("class", "agent-body animate-pixel-idle").style("filter", "url(#drop-shadow-soft)");
-        bodyGroup.append("rect").attr("x", -4).attr("y", -8).attr("width", 3).attr("height", 8).attr("fill", "#1E88E5");
-        bodyGroup.append("rect").attr("x", 1).attr("y", -8).attr("width", 3).attr("height", 8).attr("fill", "#1E88E5");
-        bodyGroup.append("rect").attr("x", -5).attr("y", -18).attr("width", 10).attr("height", 10).attr("fill", (d) => d.color || "#EF5350");
-        bodyGroup.append("rect").attr("x", -7).attr("y", -18).attr("width", 2).attr("height", 8).attr("fill", "#FFCCBC");
-        bodyGroup.append("rect").attr("x", 5).attr("y", -18).attr("width", 2).attr("height", 8).attr("fill", "#FFCCBC");
-        bodyGroup.append("rect").attr("x", -6).attr("y", -28).attr("width", 12).attr("height", 10).attr("fill", "#FFCCBC");
-        bodyGroup.append("rect").attr("x", -3).attr("y", -24).attr("width", 2).attr("height", 2).attr("fill", "#000");
-        bodyGroup.append("rect").attr("x", 1).attr("y", -24).attr("width", 2).attr("height", 2).attr("fill", "#000");
-        bodyGroup.append("path").attr("d", "M -7 -28 L 7 -28 L 7 -32 L -7 -32 Z").attr("fill", "#4E342E");
+        enter.append("ellipse").attr("class", "agent-shadow").attr("cx", 0).attr("cy", 0).attr("rx", 10).attr("ry", 5).attr("fill", "rgba(0,0,0,0.25)");
+        
+        // Indicador de Selección: Un rombo brillante debajo del agente
+        enter.append("path").attr("class", "selection-ring")
+            .attr("d", "M 0 -12 L 18 0 L 0 12 L -18 0 Z")
+            .attr("fill", "none")
+            .attr("stroke", "#4fc3f7")
+            .attr("stroke-width", 3)
+            .attr("opacity", 0)
+            .style("filter", "drop-shadow(0 0 4px #4fc3f7)");
+        
+        const bodyGroup = enter.append("g").attr("class", "agent-body animate-organic-float").style("filter", "url(#drop-shadow-soft)");
+        
+        bodyGroup.each(function(d) {
+            const g = d3.select(this);
+            const seed = (d.id || "0").split('').reduce((a: number, b: string) => a + b.charCodeAt(0), 0);
+            
+            // Aplicar variabilidad no uniforme mediante variables CSS
+            const duration = 2.5 + (Math.sin(seed * 0.5) + 1) * 1.5; // Entre 2.5s y 5.5s
+            const delay = -(Math.sin(seed * 0.8) + 1) * 2; // Offset negativo para que empiecen en puntos distintos
+            
+            g.style("--float-duration", `${duration}s`)
+             .style("--float-delay", `${delay}s`);
+
+            const skinTones = ["#FFDBAC", "#F1C27D", "#E0AC69", "#8D5524", "#C68642"];
+            const hairColors = ["#000000", "#4B2C20", "#8D4E33", "#B1B1B1", "#D6C4C2", "#E4B877"];
+            
+            const skin = skinTones[seed % skinTones.length];
+            const hair = hairColors[(seed * 7) % hairColors.length];
+            const hairStyle = (seed * 3) % 4;
+
+            // --- DISEÑO HUMANOIDE FLOTANTE SIN PIERNAS ---
+            
+            // Torso con base redondeada (estilo fantasma/flotante)
+            g.append("path").attr("d", "M -4.5 -16 L 4.5 -16 Q 5.5 -16 5.5 -13 L 5.5 -6 Q 5.5 -2 0 -2 Q -5.5 -2 -5.5 -6 L -5.5 -13 Q -5.5 -16 -4.5 -16")
+                .attr("fill", d.color || "#EF5350")
+                .attr("stroke", "rgba(255,255,255,0.1)")
+                .attr("stroke-width", 1);
+            
+            // Cabeza redondeada
+            g.append("rect").attr("x", -5.5).attr("y", -26).attr("width", 11).attr("height", 11).attr("rx", 5).attr("fill", skin);
+            
+            // CABELLO (Detrás de los ojos)
+            const hG = g.append("g");
+            if (hairStyle === 0) { hG.append("path").attr("d", "M -5.5 -26 Q 0 -32 5.5 -26 L 5.5 -24 L -5.5 -24 Z").attr("fill", hair); }
+            else if (hairStyle === 1) { hG.append("path").attr("d", "M -5.5 -26 Q 2 -34 7 -26 L 5 -24 L -5.5 -24 Z").attr("fill", hair); }
+            else if (hairStyle === 2) { hG.append("path").attr("d", "M -6 -26 Q 0 -30 6 -26 L 7 -18 L -7 -18 Z").attr("fill", hair); }
+            else { hG.append("circle").attr("cx", 0).attr("cy", -26).attr("r", 5.5).attr("fill", hair); hG.append("circle").attr("cx", 0).attr("cy", -30).attr("r", 2.5).attr("fill", hair); }
+
+            // ROSTRO
+            g.append("circle").attr("cx", -2).attr("cy", -21).attr("r", 1.2).attr("fill", "#212121");
+            g.append("circle").attr("cx", 2).attr("cy", -21).attr("r", 1.2).attr("fill", "#212121");
+            g.append("circle").attr("cx", -2.4).attr("cy", -21.4).attr("r", 0.4).attr("fill", "#fff");
+            g.append("circle").attr("cx", 1.6).attr("cy", -21.4).attr("r", 0.4).attr("fill", "#fff");
+
+            // Brazos
+            g.append("rect").attr("x", -6.5).attr("y", -15).attr("width", 2).attr("height", 6).attr("rx", 1).attr("fill", skin);
+            g.append("rect").attr("x", 4.5).attr("y", -15).attr("width", 2).attr("height", 6).attr("rx", 1).attr("fill", skin);
+        });
+
         const nameGroup = enter.append("g").attr("transform", "translate(0, 10)");
         nameGroup.append("rect").attr("x", -30).attr("y", 0).attr("width", 60).attr("height", 12).attr("rx", 2).attr("fill", "rgba(0,0,0,0.7)");
         nameGroup.append("text").attr("y", 9).attr("text-anchor", "middle").attr("font-size", "9px").attr("fill", "#ffffff").attr("font-weight", "500").attr("font-family", "monospace").text((d) => { 
@@ -357,62 +592,29 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
         });
 
         const merged = enter.merge(agentSelection);
+        
+        // Aplicar la clase y variables de animación a todos los agentes (nuevos y existentes)
+        merged.select(".agent-body")
+            .attr("class", "agent-body animate-organic-float")
+            .each(function(d) {
+                const seed = (d.id || "0").split('').reduce((a: number, b: string) => a + b.charCodeAt(0), 0);
+                const duration = 2.5 + (Math.sin(seed * 0.5) + 1) * 1.5;
+                const delay = -(Math.sin(seed * 0.8) + 1) * 2;
+                
+                d3.select(this)
+                    .style("--float-duration", `${duration}s`)
+                    .style("--float-delay", `${delay}s`);
+            });
+
         merged.each(function(d) {
             const currentPos = iso(d.x, d.y);
-            
-            // --- PERSONALIDAD DETERMINISTA SEGÚN AGENTE ID ---
-            const agentSeed = d.id.split('').reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0);
-            const getSeededValue = (offset: number) => (Math.sin(agentSeed * (123.45 + offset)) * 10000) % 1;
-            
-            // Variación de velocidad y ritmo (algunos son lentos, otros rápidos)
-            const duration = 650 + getSeededValue(10) * 550;
-            const startDelay = getSeededValue(20) * 450; 
-            
-            // Easing variable (snappy vs suave)
-            const easings = [d3.easeCubicInOut, d3.easeQuadInOut, d3.easeSinInOut, d3.easeExpInOut];
-            const easingIndex = Math.abs(Math.floor(getSeededValue(30) * easings.length)) % easings.length;
-            const chosenEasing = easings[easingIndex] ?? d3.easeCubicInOut;
-            
-            // Micro-desajuste (jitter) para que no estén todos centrados perfectamente
-            const jitterX = (getSeededValue(40) - 0.5) * 12;
-            const jitterY = (getSeededValue(50) - 0.5) * 6;
-            
-            // Altura de salto al caminar (bobbing)
-            const jumpHeight = -4 - (getSeededValue(60) * 8);
-
-            // Variar la animación IDLE (breathing) para que no sea síncrona
-            const idleDuration = 0.6 + getSeededValue(70) * 0.4;
-            const idleDelay = getSeededValue(80) * 2;
-            d3.select(this).select(".agent-body")
-                .style("animation-duration", `${idleDuration}s`)
-                .style("animation-delay", `${idleDelay}s`);
-
-            // Movimiento principal con ligero "swerve" (curva sutil)
             const node = d3.select(this);
-            const midX = currentPos.x + jitterX + (getSeededValue(90) - 0.5) * 8;
-            const midY = currentPos.y + jitterY + (getSeededValue(100) - 0.5) * 4;
-
+            
+            // Eliminar delay para evitar que actualizaciones frecuentes cancelen la transición
             node.transition()
-                .delay(startDelay)
-                .duration(duration * 0.4)
-                .ease(d3.easeQuadOut)
-                .attr("transform", `translate(${midX}, ${midY})`)
-                .transition()
-                .duration(duration * 0.6)
-                .ease(chosenEasing)
-                .attr("transform", `translate(${currentPos.x + jitterX}, ${currentPos.y + jitterY})`);
-                
-            // Movimiento vertical asíncrono y orgánico (salto al caminar)
-            d3.select(this).select(".agent-body")
-                .transition()
-                .delay(startDelay)
-                .duration(duration / 2.2)
-                .ease(d3.easeQuadOut)
-                .attr("transform", `translate(0, ${jumpHeight})`)
-                .transition()
-                .duration(duration / 2.2)
-                .ease(d3.easeBounceOut)
-                .attr("transform", "translate(0, 0)");
+                .duration(800)
+                .ease(d3.easeCubicInOut)
+                .attr("transform", `translate(${currentPos.x}, ${currentPos.y})`);
         });
         merged.select(".selection-ring").transition().duration(200).attr("opacity", (d) => d.id === selectedAgentId ? 1 : 0);
         agentSelection.exit().remove();
@@ -428,10 +630,15 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
                     bg.append("text").attr("class", "bubble-text").attr("text-anchor", "middle").attr("font-size", "6.5px").attr("fill", "#000").attr("font-family", "monospace").attr("font-weight", "bold");
                     return bg;
                 }, update => update, exit => exit.remove()
-            ).each(function(d: any) {
+            ).each(function(this: any, d: any) {
                 const agent = agents.find(a => a.id === d.id); if (!agent) return;
                 const pos = iso(agent.x, agent.y);
-                const g = d3.select(this); const text = d.text.toUpperCase(); const words = text.split(/\s+/); const lines: string[] = []; let cur = "";
+                const g = d3.select(this); 
+                const rawText = d.text || "";
+                const text = replaceIdsWithNames(rawText, agents).toUpperCase(); 
+                const words = text.split(/\s+/); 
+                const lines: string[] = []; 
+                let cur = "";
                 words.forEach((w: string) => { if ((cur + w).length > 25) { lines.push(cur.trim()); cur = w + " "; } else cur += w + " "; }); lines.push(cur.trim());
                 const lh = 8; const bp = 8; const bw = Math.min(180, (Math.max(...lines.map(l => l.length)) * 4) + 16); const bh = (lines.length * lh) + bp;
                 let yOff = -45;
@@ -453,9 +660,16 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
     return (
         <div ref={containerRef} className="w-full h-full relative bg-[#1c2128] overflow-hidden" style={{ imageRendering: "pixelated" }}>
             <svg ref={svgRef} className="w-full h-full block" />
-            <button onClick={() => setShowLinks(!showLinks)} className="absolute top-20 right-6 glass-panel p-2.5 rounded-xl border border-white/10 hover:border-purple-500/50 transition-all z-50">
-                {showLinks ? <Link className="w-4 h-4 text-emerald-400" /> : <Link2Off className="w-4 h-4 text-gray-400" />}
-            </button>
+            <div className="absolute top-20 right-6 flex flex-col gap-2 z-50">
+                <button onClick={() => setShowLinks(!showLinks)} title="Relaciones" className="glass-panel p-2.5 rounded-xl border border-white/10 hover:border-purple-500/50 transition-all">
+                    {showLinks ? <Link className="w-4 h-4 text-emerald-400" /> : <Link2Off className="w-4 h-4 text-gray-400" />}
+                </button>
+                <button onClick={() => setShowGrid(!showGrid)} title="Cuadrícula" className="glass-panel p-2.5 rounded-xl border border-white/10 hover:border-blue-500/50 transition-all">
+                    <svg className={`w-4 h-4 ${showGrid ? 'text-blue-400' : 'text-gray-400'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/>
+                    </svg>
+                </button>
+            </div>
             <div className="absolute top-20 left-6 flex flex-col gap-3">
                 {/* Leyenda de Biomas */}
                 <div className="p-3 rounded-xl border-2 border-[#424242] text-[9px] space-y-2 pointer-events-none w-36 bg-[#212121]/90 shadow-[2px_2px_0px_#000]">

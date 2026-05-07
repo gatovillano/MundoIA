@@ -161,6 +161,7 @@ export interface Agent {
         traumas: any[];
         epifanias: any[];
         triunfos: any[];
+        reflexiones?: any[];
         triumphs?: any[]; // Incluido por compatibilidad con el snippet anterior
         relacion_con_arquitecto: string;
         filosofia_existencial: string;

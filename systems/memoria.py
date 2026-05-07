@@ -24,6 +24,14 @@ class MemoriaGrafica:
         grupo_visto=None,
     ):
         """Actualiza el conocimiento sobre otro agente y la relación con él."""
+        # --- ROBUSTEZ: Asegurar que otro_id sea el ID string y no el objeto Agente ---
+        if not isinstance(otro_id, (str, int)):
+            if hasattr(otro_id, "unique_id"):
+                otro_id = otro_id.unique_id
+            else:
+                otro_id = str(otro_id)
+        
+        otro_id = str(otro_id) # Forzar string para consistencia con DB
 
         # 1. Actualizar o crear el nodo del otro agente
         if not self.grafo.has_node(otro_id):
@@ -42,11 +50,26 @@ class MemoriaGrafica:
 
         # 2. Actualizar la relación (arista)
         if not self.grafo.has_edge(self.owner_id, otro_id):
-            self.grafo.add_edge(self.owner_id, otro_id, fuerza=0.0, tipo=tipo_relacion)
+            self.grafo.add_edge(self.owner_id, otro_id, fuerza=0.0, tipo="conocido")
 
         # Modificar la fuerza de la relación
         self.grafo[self.owner_id][otro_id]["fuerza"] += fuerza_cambio
-        self.grafo[self.owner_id][otro_id]["tipo"] = tipo_relacion
+        
+        # Determinar el tipo basado en la fuerza acumulada y el tipo sugerido
+        fuerza_total = self.grafo[self.owner_id][otro_id]["fuerza"]
+        
+        # Si el tipo sugerido es enemigo, forzarlo si la fuerza es negativa
+        if tipo_relacion == "enemigo":
+            self.grafo[self.owner_id][otro_id]["tipo"] = "enemigo"
+        else:
+            # Lógica dinámica basada en afinidad total
+            if fuerza_total > 0.5:
+                self.grafo[self.owner_id][otro_id]["tipo"] = "amigo"
+            elif fuerza_total < -0.5:
+                self.grafo[self.owner_id][otro_id]["tipo"] = "enemigo"
+            else:
+                self.grafo[self.owner_id][otro_id]["tipo"] = "conocido"
+
         # También guardar datos de percepción en la arista para facilitar persistencia
         self.grafo[self.owner_id][otro_id]["recursos_vistos"] = recursos_vistos
         self.grafo[self.owner_id][otro_id]["grupo"] = grupo_visto
@@ -93,6 +116,14 @@ class MemoriaGrafica:
         """Retorna la fuerza de la relación con un agente."""
         if self.grafo.has_edge(self.owner_id, otro_id):
             return self.grafo[self.owner_id][otro_id]["fuerza"]
+        return 0.0
+
+    def obtener_afinidad(self, otro_id: str) -> float:
+        """Retorna la afinidad normalizada entre -1.0 y 1.0.
+        Equivalente a la fuerza de la relación, pero con clamping."""
+        if self.grafo.has_edge(self.owner_id, otro_id):
+            fuerza = self.grafo[self.owner_id][otro_id]["fuerza"]
+            return max(-1.0, min(1.0, fuerza))  # Clamp a [-1, 1]
         return 0.0
 
     def obtener_tipo(self, otro_id):
@@ -145,9 +176,9 @@ class MemoriaGrafica:
     def exportar_datos(self):
         """Convierte el grafo en una estructura de datos serializable."""
         return {
-            "nodos": [{"id": n, "data": self.grafo.nodes[n]} for n in self.grafo.nodes],
+            "nodos": [{"id": str(n), "data": self.grafo.nodes[n]} for n in self.grafo.nodes],
             "aristas": [
-                {"u": u, "v": v, "data": self.grafo[u][v]} for u, v in self.grafo.edges
+                {"u": str(u), "v": str(v), "data": self.grafo[u][v]} for u, v in self.grafo.edges
             ],
             "historial_mensajes": self.historial_mensajes,
         }
@@ -155,10 +186,22 @@ class MemoriaGrafica:
     def cargar_datos(self, datos):
         """Reconstruye el grafo desde datos serializados."""
         self.grafo.clear()
+        # Asegurar que el dueño está en el grafo
+        self.grafo.add_node(self.owner_id, tipo="yo", recursos_vistos=None)
+        
         for n in datos.get("nodos", []):
-            self.grafo.add_node(n["id"], **n["data"])
+            node_id = str(n["id"])
+            if not self.grafo.has_node(node_id):
+                self.grafo.add_node(node_id, **n["data"])
+            else:
+                # Si ya existe (ej. el nodo 'yo'), actualizar data
+                for k, v in n["data"].items():
+                    self.grafo.nodes[node_id][k] = v
+                    
         for e in datos.get("aristas", []):
-            self.grafo.add_edge(e["u"], e["v"], **e["data"])
+            u_id = str(e["u"])
+            v_id = str(e["v"])
+            self.grafo.add_edge(u_id, v_id, **e["data"])
         self.historial_mensajes = datos.get("historial_mensajes", [])
 
     def __str__(self):
