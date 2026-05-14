@@ -12,7 +12,6 @@ except ImportError:
         from langgraph.checkpoint.base import SqliteSaver
 import random
 from agents.cerebro_llm import cerebro_llm
-from systems.herramientas import herramientas
 from core.skills_manager import skill_manager
 from systems.conversaciones import gestor_conversaciones
 

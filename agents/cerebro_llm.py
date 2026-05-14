@@ -77,7 +77,6 @@ def _configure_litellm_for_mundoia():
 _configure_litellm_for_mundoia()
 
 from dotenv import load_dotenv
-from systems.herramientas import HerramientasAgente
 from core.skill_factory import SkillFactory, EvolutiveSkill, SkillContext
 
 # Cargar variables de entorno
@@ -126,10 +125,8 @@ class CerebroLLM:
                     resultado = self._ejecutar_skill_evolutivo(
                         nombre, args, context, skill_factory
                     )
-                else:
-                    # Fallback al sistema antiguo
-                    resultado = self._ejecutar_herramienta_legacy(nombre, args, agente)
-
+                # Sistema legacy eliminado - solo skills disponibles
+                    resultado = {"result": "Error: Sistema de herramientas legacy eliminado. Use skills.", "success": False}
                 resultados.append(
                     {
                         "herramienta": nombre,
@@ -313,26 +310,6 @@ def execute(**kwargs):
     result = f"Resultado de {{nombre}}: {{json.dumps(analisis)}}"
     return result
 """
-
-    def _ejecutar_herramienta_legacy(self, nombre, args, agente):
-        """Fallback al sistema antiguo de herramientas"""
-        herramientas_agente = HerramientasAgente(
-            log_callback=lambda msg, cat: print(f"[HERRAMIENTA] {msg}")
-        )
-
-        if nombre == "WEB_SEARCH":
-            query = args.get("query", "")
-            return herramientas_agente.web_search(query, agente.unique_id)
-
-        elif nombre == "REFLEXIONAR":
-            tema = args.get("tema", "")
-            return f"Reflexionando sobre {tema}: He alcanzado una nueva comprensión. Mi nivel de consciencia aumenta."
-
-        elif nombre == "EJECUTAR_CODIGO":
-            return "Ejecución de código requiere sistema OpenClaw"
-
-        else:
-            return f"Herramienta {nombre} ejecutada (legacy mode)"
 
     def _extract_json(self, text):
         """Intenta extraer un objeto JSON de un texto, manejando markdown, texto extra y truncamiento."""

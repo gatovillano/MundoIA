@@ -200,8 +200,44 @@ def execute(ciudad="Madrid", agente_id=None, **kwargs):
             description="Ejecuta código Python en el sandbox. Úsalo para cálculos, automatización o probar lógica.",
             code="""
 def execute(codigo, agente_id=None, **kwargs):
-    from systems.herramientas import herramientas
-    return herramientas.ejecutar_codigo_seguro(codigo, agente_id=agente_id)
+    from RestrictedPython import compile_restricted, safe_builtins
+    import sys
+    from io import StringIO
+    
+    try:
+        # 1. Compilación restringida
+        bytecode = compile_restricted(codigo, '<string>', 'exec')
+        
+        # 2. Entorno seguro
+        safe_globals = safe_builtins.copy()
+        safe_globals.update({
+            "abs": abs, "min": min, "max": max, "sum": sum, "round": round,
+            "len": len, "list": list, "dict": dict, "set": set, "range": range,
+            "int": int, "float": float, "str": str, "bool": bool, "any": any, "all": all,
+            "sorted": sorted, "type": type, "isinstance": isinstance, "zip": zip,
+            "enumerate": enumerate,
+        })
+        
+        # 3. Redirigir stdout para capturar print
+        old_stdout = sys.stdout
+        redirected_output = sys.stdout = StringIO()
+        
+        # 4. Ejecución
+        exec_globals = {"__builtins__": safe_globals}
+        exec(bytecode, exec_globals, {})
+        
+        sys.stdout = old_stdout
+        result = redirected_output.getvalue()
+        
+        if len(result) > 1000:
+            result = result[:1000] + "
+... [Resultado truncado]"
+        
+        return result if result else "Código ejecutado sin salida."
+    except Exception as e:
+        if 'sys' in locals() and 'old_stdout' in locals():
+            sys.stdout = old_stdout
+        return f"Error de ejecución: {str(e)}"
 """,
             experiencia_ganada={"ingenieria": 0.8},
             efecto_necesidades={"alimento": -0.5, "entretenimiento": 0.3},

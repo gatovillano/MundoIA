@@ -4,6 +4,7 @@ import json
 import logging
 import psycopg2
 import bcrypt
+import threading
 from typing import List, Dict, Any, Optional
 from core.utils import Json, logger
 
@@ -20,6 +21,7 @@ class DatabaseManager:
             "port": os.getenv("DB_PORT", "5434"),
         }
         self.conn = None
+        self.lock = threading.RLock()
 
     def connect(self):
         try:
@@ -131,17 +133,23 @@ class DatabaseManager:
             logger.error(f"❌ Error inicializando esquema DB: {e}")
             return False
     def execute(self, query, params=None):
-        if not self.conn:
-            return None
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute(query, params)
-                if cur.description:
-                    return cur.fetchall()
-            return True
-        except Exception as e:
-            logger.error(f"❌ Error ejecutando query: {e}")
-            return False
+        with self.lock:
+            if not self.conn:
+                return None
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute(query, params)
+                    if cur.description:
+                        return cur.fetchall()
+                    # Para INSERT/UPDATE/DELETE sin RETURNING, devolver True
+                    if self.conn.autocommit:
+                        return True
+                return True
+            except Exception as e:
+                logger.error(f"❌ Error ejecutando query: {e}")
+                if self.conn:
+                    self.conn.rollback()
+                return False
 
     def create_user(self, username, password, user_id=None):
         try:
@@ -329,14 +337,18 @@ class DatabaseManager:
         estado = prop.get("estado", "pendiente")
         titulo = prop.get("titulo")
         contenido = prop.get("contenido")
-        db_id = prop.get("db_id")
+        db_id = prop.get("db_id") or prop.get("id") if str(prop.get("id", "")).isdigit() else None
 
         if db_id:
             query = "UPDATE propuestas SET votos = %s, estado = %s, titulo = %s, contenido = %s WHERE id = %s AND user_id = %s;"
             self.execute(query, (votos, estado, titulo, contenido, db_id, user_id))
+            return db_id
         else:
-            query = "INSERT INTO propuestas (user_id, grupo_id, proponente_id, texto, tipo, votos, estado, paso_creacion, titulo, contenido) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);"
-            self.execute(query, (user_id, prop.get("grupo_id"), prop.get("proponente_id"), prop.get("texto"), prop.get("tipo"), votos, estado, prop.get("paso_creacion", 0), titulo, contenido))
+            query = "INSERT INTO propuestas (user_id, grupo_id, proponente_id, texto, tipo, votos, estado, paso_creacion, titulo, contenido) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;"
+            result = self.execute(query, (user_id, prop.get("grupo_id"), prop.get("proponente_id"), prop.get("texto"), prop.get("tipo"), votos, estado, prop.get("paso_creacion", 0), titulo, contenido))
+            if result and isinstance(result, list):
+                return result[0][0]
+            return None
 
     def get_proposals(self, user_id):
         query = "SELECT id, grupo_id, proponente_id, texto, tipo, votos, estado, paso_creacion, titulo, contenido FROM propuestas WHERE user_id = %s;"

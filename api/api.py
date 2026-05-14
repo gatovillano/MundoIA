@@ -18,7 +18,9 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
-from core.modelo import ModeloRelacional, DatabaseManager, DateTimeEncoder
+from core.modelo import ModeloRelacional
+from core.database import DatabaseManager
+from core.utils import DateTimeEncoder
 from agents.agent_utils import resolve_agent_unique_id, display_name_for
 from dotenv import load_dotenv
 
