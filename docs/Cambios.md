@@ -1,3 +1,23 @@
+> ⚠️ **NOTA DE RECUPERACIÓN**: Las entradas de cambios entre el 23-01-26 y el 15-04-26 se perdieron durante una operación de edición. Este archivo ha sido reestablecido desde el último commit válido (03de4d9) que contenía el historial completo. A partir de esta fecha (15-05-26) se continuará el registro normalmente.
+
+## 15-05-26 Fix Bucle Infinito de Agentes en Movimiento Simultáneo
+
+- **Fecha y hora**: 2026-05-15.
+- **Descripción de la tarea**: Resolver el bucle infinito en `_simultaneous_movement_phase` de `core/modelo.py` que ocurría cuando agentes con territorio enemigo intentaban moverse hacia un objetivo dentro de territorio ajeno.
+- **Desafíos encontrados**:
+    - Los agentes con `objetivo_movimiento` fijado a una casilla en territorio de otra facción se bloqueaban por la validación de territorio, pero no se limpiaba el objetivo.
+    - Esto generaba un bucle infinito: cada turno intentaban moverse al mismo objetivo, se bloqueaban, y repetían indefinidamente.
+    - Dos intentos anteriores de aplicar el fix fallaron por errores en el uso de las herramientas de edición.
+- **Soluciones implementadas**:
+    - Modificada la lógica de Prioridad 1 en `_simultaneous_movement_phase` para que, cuando el movimiento hacia el objetivo esté bloqueado por territorio enemigo, se borre el valor de `objetivo_movimiento` del agente.
+    - Al limpiar el objetivo, el agente cae automáticamente en las prioridades de movimiento alternativas: acercarse a compañeros de grupo (Prioridad 2) o movimiento aleatorio de exploración (Fallback).
+    - Se agregó un log de depuración visible: `🔄 [MOVIMIENTO] {id}: objetivo bloqueado por territorio enemigo ({owner}). Buscando alternativa...`
+- **Resultados**:
+    - Los agentes ya no entran en bucle infinito cuando su objetivo está en territorio enemigo.
+    - El sistema de movimiento simultáneo mantiene su estabilidad y los agentes exploran alternativas de forma autónoma.
+    - El fix es limitado y no intrusivo: no se modificó el método `moverse` de `agent_body.py`, solo la capa de lógica de fase de movimiento.
+
+---
 ## 15-04-26 Implementación de Modo "Control de Agentes" (Turno Manual con LLM)
 
 - **Fecha y hora**: 2026-04-15.
