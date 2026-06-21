@@ -8,9 +8,34 @@ import { Play, Pause, RefreshCw, LogOut, Map as MapIcon, Share2, Zap, Brain, Use
 import { motion, AnimatePresence } from "framer-motion";
 import { getAgentName, replaceIdsWithNames } from "@/utils/nameUtils";
 
-import WorldViewport from "@/components/WorldViewport";
-import WorldViewport3D from "@/components/WorldViewport3D";
-import NetworkView from "@/components/NetworkView";
+import dynamic from "next/dynamic";
+
+const WorldViewport = dynamic(() => import("@/components/WorldViewport"), {
+    ssr: false,
+    loading: () => (
+        <div className="w-full h-full flex items-center justify-center bg-[#1c2128]">
+            <span className="text-gray-400 font-mono text-sm animate-pulse">CARGANDO MAPA ISOMÉTRICO (D3)...</span>
+        </div>
+    )
+});
+
+const WorldViewport3D = dynamic(() => import("@/components/WorldViewport3D"), {
+    ssr: false,
+    loading: () => (
+        <div className="w-full h-full flex items-center justify-center bg-[#1c2128]">
+            <span className="text-gray-400 font-mono text-sm animate-pulse">INICIALIZANDO MOTOR 3D (THREE.JS)...</span>
+        </div>
+    )
+});
+
+const NetworkView = dynamic(() => import("@/components/NetworkView"), {
+    ssr: false,
+    loading: () => (
+        <div className="w-full h-full flex items-center justify-center bg-[#1c2128]">
+            <span className="text-gray-400 font-mono text-sm animate-pulse">GENERANDO RED SOCIAL GRAFO...</span>
+        </div>
+    )
+});
 import ArchitectPanel from "@/components/ArchitectPanel";
 import AgentSidebar from "@/components/AgentSidebar";
 import FactionsPanel from "@/components/FactionsPanel";
@@ -316,7 +341,7 @@ export default function GamePage() {
                         <div className="hidden 2xl:flex items-center gap-4 py-2 px-6 border-l border-white/5 pointer-events-auto">
                             <Book className="w-3.5 h-3.5 text-white/20" />
                             <p className="max-w-md text-[10px] text-white/50 leading-relaxed font-mono italic truncate" title={lore}>
-                                "{lore || "La simulación fluye. Los hilos del destino se entrelazan."}"
+                                {`"${lore || "La simulación fluye. Los hilos del destino se entrelazan."}"`}
                             </p>
                         </div>
                     </div>
