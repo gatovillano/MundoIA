@@ -4,14 +4,22 @@ import { useEffect, useRef } from "react";
 
 export default function BackgroundEffects() {
     const blobRef = useRef<HTMLDivElement>(null);
+    const animationRef = useRef<Animation | null>(null);
 
     useEffect(() => {
-        const handleMouseMove = (e: MouseEvent) => {
+        const handleMouseMove = (e: PointerEvent) => {
             if (blobRef.current) {
                 const x = e.clientX;
                 const y = e.clientY;
-                blobRef.current.animate({
-                    transform: `translate3d(calc(${x}px - 50%), calc(${y}px - 50%), 0)`
+                const offsetX = x - 400;
+                const offsetY = y - 400;
+
+                if (animationRef.current) {
+                    animationRef.current.cancel();
+                }
+
+                animationRef.current = blobRef.current.animate({
+                    transform: `translate3d(${offsetX}px, ${offsetY}px, 0)`
                 }, { duration: 3000, fill: "forwards" });
             }
         };
@@ -29,7 +37,7 @@ export default function BackgroundEffects() {
             <div
                 ref={blobRef}
                 className="absolute left-0 top-0 w-[800px] h-[800px] bg-indigo-500/10 rounded-full blur-[120px] will-change-transform"
-                style={{ transform: "translate3d(-50%, -50%, 0)" }}
+                style={{ transform: "translate3d(-400px, -400px, 0)" }}
             />
 
             {/* Static Gradient Elements */}
