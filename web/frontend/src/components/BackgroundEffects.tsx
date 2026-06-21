@@ -11,8 +11,7 @@ export default function BackgroundEffects() {
                 const x = e.clientX;
                 const y = e.clientY;
                 blobRef.current.animate({
-                    left: `${x}px`,
-                    top: `${y}px`
+                    transform: `translate3d(calc(${x}px - 50%), calc(${y}px - 50%), 0)`
                 }, { duration: 3000, fill: "forwards" });
             }
         };
@@ -29,7 +28,8 @@ export default function BackgroundEffects() {
             {/* Ambient Gradient Blob */}
             <div
                 ref={blobRef}
-                className="absolute w-[800px] h-[800px] bg-indigo-500/10 rounded-full blur-[120px] -translate-x-1/2 -translate-y-1/2 transition-transform duration-75 will-change-transform"
+                className="absolute left-0 top-0 w-[800px] h-[800px] bg-indigo-500/10 rounded-full blur-[120px] will-change-transform"
+                style={{ transform: "translate3d(-50%, -50%, 0)" }}
             />
 
             {/* Static Gradient Elements */}
