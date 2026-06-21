@@ -3253,7 +3253,7 @@ class Agente:
         if tipo in ["susurrar", "comunicar_privado", "mensaje_privado"]: tipo = "mensaje_privado"
         if tipo in ["fundar_faccion", "crear_grupo", "crear_faccion"]: tipo = "fundar_grupo"
         if tipo in ["fundar_asentamiento", "establecer_pueblo", "crear_pueblo"]: tipo = "fundar_pueblo"
-        if tipo in ["invitar_a_grupo", "invitar_al_grupo", "invitar_agente"]: tipo = "invitar_grupo"
+        if tipo in ["invitar_a_grupo", "invitar_al_grupo", "invitar_agente", "invitar"]: tipo = "invitar_grupo"
 
         # Normalizaciones para acciones sobre Instituciones (unirse / usar)
         if tipo in ["unirse_institucion", "unirse_institución", "unirseinstitucion", "join_institution", "join_institucion"]:
@@ -3546,16 +3546,16 @@ class Agente:
                 inst_id = params.get("institucion_id") or params.get("inst_id") or params.get("id") or params.get("nombre") or params.get("name")
                 inst_obj = None
                 if inst_id:
-                    inst_obj = self.instituciones.get(str(inst_id))
+                    inst_obj = self.modelo.instituciones.get(str(inst_id))
                     if not inst_obj:
-                        for iid, inst in self.instituciones.items():
+                        for iid, inst in self.modelo.instituciones.items():
                             if getattr(inst, "nombre", "").lower() == str(inst_id).lower():
                                 inst_obj = inst
                                 inst_id = iid
                                 break
                 else:
                     # Buscar institución en la casilla actual
-                    for iid, inst in self.instituciones.items():
+                    for iid, inst in self.modelo.instituciones.items():
                         if inst.x == self.x and inst.y == self.y:
                             inst_obj = inst
                             inst_id = iid

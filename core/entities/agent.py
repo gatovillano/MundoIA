@@ -59,13 +59,16 @@ class Agente:
 
         # Atributos Psicológicos (OCEAN-like)
         # Por defecto partimos neutrales y permitimos deriva posterior.
+        default_antagonist = getattr(self.modelo, "antagonist_prob", 0.10)
+        if not isinstance(default_antagonist, (int, float)):
+            default_antagonist = 0.10
         self.personalidad = (
             personalidad
             if personalidad is not None
             else generar_personalidad_neutral(
                 noise_scale=0.03,
                 extrema_prob=0.05,
-                antagonist_prob=getattr(self.modelo, "antagonist_prob", 0.10),
+                antagonist_prob=default_antagonist,
             )
         )
 
@@ -1542,6 +1545,53 @@ class Agente:
         self.modelo.notificar_cambio_estado()  # Actualizar alianzas en tiempo real
         return True
 
+    def declarar_simpatia(self, grupo_id):
+        """Registra que este agente declara simpatía por una facción.
+        
+        Args:
+            grupo_id: ID de la facción hacia la que se declara simpatía.
+            
+        Returns:
+            bool: True si se registró correctamente.
+        """
+        if not grupo_id:
+            return False
+        
+        # Evitar duplicados
+        if grupo_id in self.simpatizante_de:
+            return False
+        
+        # Registrar la simpatía
+        self.simpatizante_de.append(grupo_id)
+        
+        # Aumentar afinidad entre el grupo del agente y el grupo objetivo
+        if self.grupo_id and self.grupo_id != grupo_id:
+            self.modelo.actualizar_relacion_grupal(self.grupo_id, grupo_id, 0.15)
+        
+        # Aumentar reputación
+        self.reputacion = min(100, self.reputacion + 2)
+        
+        # Generar evento memorable
+        if hasattr(self, 'eventos_recientes'):
+            evento = {
+                "turno": self.modelo.paso_actual,
+                "tipo": "simpatia_declarada",
+                "descripcion": f"Declaró simpatía por la facción {grupo_id}.",
+                "impacto": "reputacion",
+            }
+            self.eventos_recientes.append(evento)
+            if len(self.eventos_recientes) > 20:
+                self.eventos_recientes = self.eventos_recientes[-20:]
+        
+        # Registrar en el log del modelo
+        self.modelo.log(
+            f"💙 [DIPLOMACIA] Agente {self.unique_id} ha declarado simpatía por la facción {grupo_id}.",
+            categoria="social",
+        )
+        
+        # Notificar cambio de estado
+        self.modelo.notificar_cambio_estado()
+        return True
     # === MÉTODOS SOCIALES OASIS ===
     def social_follow(self, otro_agente) -> bool:
         """El agente sigue a otro agente. Acepta objeto agente o ID string."""
@@ -3367,7 +3417,7 @@ class Agente:
         if tipo in ["susurrar", "comunicar_privado", "mensaje_privado"]: tipo = "mensaje_privado"
         if tipo in ["fundar_faccion", "crear_grupo", "crear_faccion"]: tipo = "fundar_grupo"
         if tipo in ["fundar_asentamiento", "establecer_pueblo", "crear_pueblo"]: tipo = "fundar_pueblo"
-        if tipo in ["invitar_a_grupo", "invitar_al_grupo", "invitar_agente"]: tipo = "invitar_grupo"
+        if tipo in ["invitar_a_grupo", "invitar_al_grupo", "invitar_agente", "invitar"]: tipo = "invitar_grupo"
 
         # Normalizaciones para acciones sobre Instituciones (unirse / usar)
         if tipo in ["unirse_institucion", "unirse_institución", "unirseinstitucion", "join_institution", "join_institucion"]:
@@ -3664,16 +3714,16 @@ class Agente:
                 inst_id = params.get("institucion_id") or params.get("inst_id") or params.get("id") or params.get("nombre") or params.get("name")
                 inst_obj = None
                 if inst_id:
-                    inst_obj = self.instituciones.get(str(inst_id))
+                    inst_obj = self.modelo.instituciones.get(str(inst_id))
                     if not inst_obj:
-                        for iid, inst in self.instituciones.items():
+                        for iid, inst in self.modelo.instituciones.items():
                             if getattr(inst, "nombre", "").lower() == str(inst_id).lower():
                                 inst_obj = inst
                                 inst_id = iid
                                 break
                 else:
                     # Buscar institución en la casilla actual
-                    for iid, inst in self.instituciones.items():
+                    for iid, inst in self.modelo.instituciones.items():
                         if inst.x == self.x and inst.y == self.y:
                             inst_obj = inst
                             inst_id = iid
