@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import useGameStore from "@/store/useGameStore";
@@ -698,6 +700,7 @@ const HeaderStat = React.memo(({ icon: Icon, label, value, highlight }: any) => 
         </div>
     );
 });
+HeaderStat.displayName = "HeaderStat";
 
 const LogList = React.memo(({ agents, showThoughts, step, logsContainerRef, lastLogRef }: any) => {
     const logs = useGameStore((state) => state.logs);
@@ -747,6 +750,7 @@ const LogList = React.memo(({ agents, showThoughts, step, logsContainerRef, last
         </div>
     );
 });
+LogList.displayName = "LogList";
 
 const RightPanelManager = React.memo(({ activePanel, onClose, selectedAgentId, userId }: any) => {
     if (!activePanel) return null;
@@ -800,3 +804,4 @@ const RightPanelManager = React.memo(({ activePanel, onClose, selectedAgentId, u
             return null;
     }
 });
+RightPanelManager.displayName = "RightPanelManager";
