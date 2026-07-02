@@ -78,12 +78,14 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
                     loadedProv = "OpenRouter";
                 } else if (data.model?.includes("ollama/")) {
                     loadedProv = "Ollama";
+                } else if (data.model?.includes("kilocode/")) {
+                    loadedProv = "KiloCode";
                 } else if (data.model?.includes("gpt-")) {
                     loadedProv = "OpenAI";
                 }
                 setProvider(loadedProv);
 
-                if (loadedProv === "OpenRouter" || loadedProv === "Ollama") {
+                if (loadedProv === "OpenRouter" || loadedProv === "Ollama" || loadedProv === "KiloCode") {
                     loadModels(loadedProv, data.api_key || "", data.base_url || "");
                 } else {
                     setModels([
@@ -99,7 +101,7 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
     };
 
     const handleManualReload = () => {
-        if (provider === "OpenRouter" || provider === "Ollama") {
+        if (provider === "OpenRouter" || provider === "Ollama" || provider === "KiloCode") {
             loadModels(provider, apiKey, baseUrl);
         }
     };
@@ -112,16 +114,18 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
                 finalModel = `openrouter/${finalModel}`;
             } else if (provider === "Ollama" && !finalModel.startsWith("ollama/")) {
                 finalModel = `ollama/${finalModel}`;
+            } else if (provider === "KiloCode" && !finalModel.startsWith("kilocode/")) {
+                finalModel = `kilocode/${finalModel}`;
             }
 
             const res = await fetch(getHttpUrl("/config/ai"), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    provider,
+                    provider: provider.toLowerCase(), // Enviar en minúscula al backend: "kilocode", "openrouter", "openai", "ollama"
                     api_key: apiKey,
                     model: finalModel,
-                    base_url: baseUrl,
+                    base_url: (provider === "Ollama" || provider === "KiloCode") ? baseUrl : "",
                     tavily_api_key: tavilyApiKey
                 })
             });
@@ -147,8 +151,8 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
         <div className="flex flex-col h-full space-y-8 pb-8">
             {/* Proveedor */}
             <Section title="Proveedor de Inteligencia">
-                <div className="grid grid-cols-3 gap-2 p-1 bg-black/40 rounded-2xl border border-white/5 shadow-inner">
-                    {["OpenRouter", "OpenAI", "Ollama"].map((p) => (
+                <div className="grid grid-cols-4 gap-2 p-1 bg-black/40 rounded-2xl border border-white/5 shadow-inner">
+                    {["OpenRouter", "OpenAI", "Ollama", "KiloCode"].map((p) => (
                         <button
                             key={p}
                             onClick={() => setProvider(p)}
@@ -177,22 +181,30 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
                         </div>
                     </div>
 
-                    {provider === "Ollama" && (
+                    {(provider === "Ollama" || provider === "KiloCode") && (
                         <div className="relative group">
                             <input
                                 type="text"
                                 value={baseUrl}
                                 onChange={(e) => setBaseUrl(e.target.value)}
-                                placeholder="Endpoint (ej: https://api.ollama.cloud/v1 o http://localhost:11434)"
+                                placeholder={provider === "Ollama" 
+                                    ? "Endpoint (ej: http://localhost:11434)" 
+                                    : "Endpoint Kilo (opcional, ej: https://api.kilo.ai/api/gateway)"}
                                 className="w-full bg-black/60 border border-white/10 rounded-2xl p-4 text-xs text-white placeholder:text-gray-700 focus:border-indigo-500/40 focus:outline-none transition-all font-mono"
                             />
                         </div>
                     )}
 
-                    {provider !== "Ollama" && (
+                    {(provider !== "Ollama") && (
                         <div className="flex items-center justify-between px-1">
                             <a
-                                href={provider === "OpenRouter" ? "https://openrouter.ai/keys" : "https://platform.openai.com/api-keys"}
+                                href={
+                                    provider === "OpenRouter" 
+                                        ? "https://openrouter.ai/keys" 
+                                        : provider === "KiloCode" 
+                                            ? "https://kilo.ai/gateway" 
+                                            : "https://platform.openai.com/api-keys"
+                                }
                                 target="_blank"
                                 rel="noreferrer"
                                 className="text-[9px] text-indigo-400/60 hover:text-indigo-400 flex items-center gap-1.5 transition-colors uppercase font-bold tracking-widest"
