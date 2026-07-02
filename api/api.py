@@ -5,6 +5,7 @@ import threading
 import requests
 import random
 import time
+from contextlib import asynccontextmanager as _asynccontextmanager
 from typing import Dict, Optional, Any
 from fastapi import (
     FastAPI,
@@ -64,6 +65,14 @@ async def lifespan(app: FastAPI):
 
 app.router.lifespan_context = lifespan
 
+# Async null context manager (fallback when no lock is available)
+class _nullcontext:
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *args):
+        pass
+
+
 # --- GESTOR DE SESIONES ---
 
 
@@ -83,9 +92,12 @@ class SessionManager:
         self.last_stats: Dict[str, dict] = {}
         self.last_agents: Dict[str, dict] = {}
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._write_locks: Dict[str, asyncio.Lock] = {}  # per-user write lock
 
     async def connect(self, user_id: str, websocket: WebSocket):
         self.active_connections[user_id] = websocket
+        if user_id not in self._write_locks:
+            self._write_locks[user_id] = asyncio.Lock()
         print(f"🔌 Cliente conectado: {user_id}")
 
     def disconnect(self, user_id: str, websocket: WebSocket):
@@ -103,12 +115,15 @@ class SessionManager:
             )
 
     async def send_to_user(self, user_id: str, message: dict):
-        websocket = self.active_connections.get(user_id)
-        if websocket:
-            try:
-                await websocket.send_text(json.dumps(message, cls=DateTimeEncoder))
-            except Exception as e:
-                print(f"❌ Error enviando mensaje a {user_id}: {e}")
+        lock = self._write_locks.get(user_id)
+        async with lock if lock else _nullcontext():
+            websocket = self.active_connections.get(user_id)
+            if websocket:
+                try:
+                    await websocket.send_text(json.dumps(message, cls=DateTimeEncoder))
+                except Exception as e:
+                    print(f"❌ Error enviando mensaje a {user_id}: {e}")
+                    self.disconnect(user_id, websocket)
 
     async def process_message_queue(self):
         """Procesa la cola de mensajes asynchronously."""
@@ -642,7 +657,7 @@ class SessionManager:
         for p in todas_propuestas:
             pid = p.get("id") or p.get("db_id") or None
             if pid is None:
-                pid = p.get("titulo") or p.get("texto") or str(hash(json.dumps(p, sort_keys=True)))
+                pid = p.get("titulo") or p.get("texto") or str(hash(json.dumps(p, sort_keys=True, cls=DateTimeEncoder)))
 
             if pid in unique_by_id:
                 existing = unique_by_id[pid]
@@ -1319,24 +1334,58 @@ async def get_ai_config():
         "provider": os.getenv("AI_PROVIDER", "openrouter"),
         "model": os.getenv("MODEL_NAME", "google/gemini-2.0-flash-exp:free"),
         "base_url": os.getenv("AI_BASE_URL", ""),
-        "has_key": bool(os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY"))
+        "has_openrouter_key": bool(os.getenv("OPENROUTER_API_KEY")),
+        "has_openai_key": bool(os.getenv("OPENAI_API_KEY")),
+        "has_ollama_key": bool(os.getenv("OLLAMA_API_KEY") or os.getenv("OLLAMA_API_BASE")),
+        "has_kilocode_key": bool(os.getenv("KILOCODE_API_KEY")),
+        "tavily_api_key": os.getenv("TAVILY_API_KEY", ""),
     }
-
 @app.post("/config/ai")
 async def set_ai_config(req: AIConfig):
     """Actualiza la configuración del LLM en caliente."""
     os.environ["MODEL_NAME"] = req.model
-    if req.provider == "openrouter":
+    os.environ["AI_PROVIDER"] = req.provider
+    # Guardar API key por proveedor
+    if req.provider == "openrouter" and req.api_key:
         os.environ["OPENROUTER_API_KEY"] = req.api_key
-    elif req.provider == "openai":
+    elif req.provider == "openai" and req.api_key:
         os.environ["OPENAI_API_KEY"] = req.api_key
-    
-    if req.base_url:
-        os.environ["AI_BASE_URL"] = req.base_url
+    elif req.provider == "ollama" and req.api_key:
+        os.environ["OLLAMA_API_KEY"] = req.api_key
+    elif req.provider == "kilocode" and req.api_key:
+        os.environ["KILOCODE_API_KEY"] = req.api_key
         
+    if req.base_url and req.provider in ("ollama", "kilocode"):
+        os.environ["AI_BASE_URL"] = req.base_url
+    elif req.provider not in ("ollama", "kilocode"):
+        # Limpiar AI_BASE_URL al cambiar a otros proveedores para evitar conflictos
+        os.environ.pop("AI_BASE_URL", None)
+        os.environ.pop("OLLAMA_API_BASE", None)
+        
+    if req.tavily_api_key:
+        os.environ["TAVILY_API_KEY"] = req.tavily_api_key
+    # Persistir en config_ai.json para que sobreviva a reinicios
+    try:
+        import json
+        config_data = {
+            "model": req.model,
+            "provider": req.provider,
+            "api_key": req.api_key,
+            "base_url": req.base_url if req.provider in ("ollama", "kilocode") else "",
+            "tavily_api_key": req.tavily_api_key or ""
+        }
+        with open("config_ai.json", "w") as f:
+            json.dump(config_data, f, indent=2)
+        print(f"✅ Configuración guardada en config_ai.json: {req.provider}/{req.model}")
+    except Exception as e:
+        print(f"⚠️ Error guardando config_ai.json: {e}")
+    # Recargar configuración en el cerebro LLM global
+    try:
+        from agents.cerebro_llm import cerebro_llm
+        cerebro_llm.reload_config()
+    except Exception as e:
+        print(f"⚠️ Error recargando config en cerebro_llm: {e}")
     return {"status": "success", "message": "Configuración actualizada"}
-
-
 @app.get("/config/models/{provider}")
 async def get_provider_models(provider: str, api_key: Optional[str] = None, base_url: Optional[str] = None):
     """Retorna la lista de modelos disponibles para un proveedor (OpenRouter, Ollama).
@@ -1381,8 +1430,11 @@ async def get_provider_models(provider: str, api_key: Optional[str] = None, base
 
         elif prov == "openrouter":
             # Usar base_url si se entregó (posible proxy), sino el endpoint público
-            base = base_url or os.getenv("AI_BASE_URL") or "https://api.openrouter.ai"
-            url = base.rstrip("/") + "/v1/models"
+            base = base_url or os.getenv("AI_BASE_URL") or "https://openrouter.ai/api"
+            if base.endswith("/v1"):
+                url = base.rstrip("/") + "/models"
+            else:
+                url = base.rstrip("/") + "/v1/models"
             headers = {}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
