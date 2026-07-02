@@ -392,10 +392,20 @@ def execute(**kwargs):
         self.model = os.getenv(
             "MODEL_NAME", "openrouter/google/gemini-2.0-flash-exp:free"
         )
-        self.api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
-        self.base_url = os.getenv("OLLAMA_API_BASE", "")
+        # Usar la API key correspondiente al proveedor actual
+        provider = os.getenv("AI_PROVIDER", "openrouter")
+        if provider == "openrouter":
+            self.api_key = os.getenv("OPENROUTER_API_KEY", "")
+        elif provider == "openai":
+            self.api_key = os.getenv("OPENAI_API_KEY", "")
+        elif provider == "ollama":
+            self.api_key = os.getenv("OLLAMA_API_KEY", "")
+        elif provider == "kilocode":
+            self.api_key = os.getenv("KILOCODE_API_KEY", "")
+        else:
+            self.api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+        self.base_url = os.getenv("AI_BASE_URL") or os.getenv("OLLAMA_API_BASE", "")
         self.tavily_api_key = os.getenv("TAVILY_API_KEY") or ""
-
         config_source = "variables de entorno"
         if os.path.exists(self.config_path):
             try:
@@ -410,7 +420,6 @@ def execute(**kwargs):
             except Exception as e:
                 print(f"⚠️ Error cargando {self.config_path}: {e}")
                 # Mantener valores por defecto (variables de entorno)
-
         # Auto-configurar base_url para Ollama si falta
         model_str = str(self.model or "")
         if model_str.startswith("ollama/") and not self.base_url:
@@ -418,18 +427,53 @@ def execute(**kwargs):
             print(
                 f"🔧 Base URL para Ollama configurada automáticamente: {self.base_url}"
             )
-
         print(f"✅ Configuración de LLM cargada desde {config_source}")
         print(f"   - Model: {self.model}")
         print(f"   - API Key: {'***' if self.api_key else '(empty)'}")
         print(
             f"   - Base URL: {self.base_url or '(none, usando default del proveedor)'}"
         )
-
         # Probar conexión al backend si hay base_url
         if self.base_url:
             self._test_connection()
-
+    def reload_config(self):
+        """Recarga la configuración desde variables de entorno (para cambios en caliente)."""
+        print("🔄 Recargando configuración de LLM desde variables de entorno...")
+        old_model = getattr(self, 'model', None)
+        old_base_url = getattr(self, 'base_url', None)
+        # Recargar desde variables de entorno
+        self.model = os.getenv(
+            "MODEL_NAME", "openrouter/google/gemini-2.0-flash-exp:free"
+        )
+        # Usar la API key correspondiente al proveedor actual
+        provider = os.getenv("AI_PROVIDER", "openrouter")
+        if provider == "openrouter":
+            self.api_key = os.getenv("OPENROUTER_API_KEY", "")
+        elif provider == "openai":
+            self.api_key = os.getenv("OPENAI_API_KEY", "")
+        elif provider == "ollama":
+            self.api_key = os.getenv("OLLAMA_API_KEY", "")
+        elif provider == "kilocode":
+            self.api_key = os.getenv("KILOCODE_API_KEY", "")
+        else:
+            self.api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+        self.base_url = os.getenv("AI_BASE_URL") or os.getenv("OLLAMA_API_BASE", "")
+        self.tavily_api_key = os.getenv("TAVILY_API_KEY") or ""
+        # Auto-configurar base_url para Ollama si falta
+        model_str = str(self.model or "")
+        if model_str.startswith("ollama/") and not self.base_url:
+            self.base_url = "http://host.docker.internal:11434"
+            print(f"🔧 Base URL para Ollama configurada automáticamente: {self.base_url}")
+        # Actualizar rate limit según el nuevo modelo
+        if str(self.model).startswith("ollama/"):
+            self.RATE_LIMIT = 600
+        else:
+            self.RATE_LIMIT = 120
+        print(f"✅ Configuración de LLM recargada")
+        print(f"   - Model: {old_model} -> {self.model}")
+        print(f"   - Base URL: {old_base_url} -> {self.base_url}")
+        print(f"   - API Key: {'***' if self.api_key else '(empty)'}")
+        print(f"   - Rate Limit: {self.RATE_LIMIT}")
     def _test_connection(self):
         """Prueba la conexión al backend LLM."""
         try:
@@ -554,9 +598,9 @@ def execute(**kwargs):
             if self.api_key:
                 completion_args["api_key"] = self.api_key
 
-            # Usar base_url configurada
+            # Usar base_url configurada solo para modelos Ollama
             actual_base_url = getattr(self, "base_url", "")
-            if actual_base_url:
+            if actual_base_url and self.model.startswith("ollama/"):
                 completion_args["api_base"] = actual_base_url
 
             # Headers extra para Ollama si necesita API key
@@ -613,7 +657,7 @@ INSTRUCCIONES DE CHAT:
             }
             if getattr(self, "api_key", None):
                 completion_args["api_key"] = self.api_key
-            if getattr(self, "base_url", None):
+            if getattr(self, "base_url", None) and self.model.startswith("ollama/"):
                 completion_args["api_base"] = self.base_url
 
             if self.model.startswith("ollama/") and getattr(self, "api_key", None):
@@ -807,6 +851,14 @@ INSTRUCCIONES DE CHAT:
 
         # Estado estable: decidir según personalidad
         else:
+            # Comprobar si hay una asamblea en fase de votación donde este agente pueda votar
+            hay_voto_activo = False
+            if hasattr(agente_yo.modelo, "asambleas_activas"):
+                for asamblea in agente_yo.modelo.asambleas_activas:
+                    if asamblea.get("estado") == "VOTACION" and agente_yo.unique_id not in asamblea.get("participantes_votos", {}):
+                        hay_voto_activo = True
+                        break
+
             if hostilidad > 0.7:
                 acciones_hostiles = ["ATACAR", "SOCIALIZAR", "MOVER"]
                 accion_nombre = random.choice(acciones_hostiles)
@@ -830,7 +882,9 @@ INSTRUCCIONES DE CHAT:
                 mensaje = random.choice(mensajes_amables)
 
             elif curiosidad > 0.7:
-                acciones_curiosas = ["BUSCAR_INFO", "MOVER", "RECOLECTAR", "CONSTRUIR", "UNIRSE_FACCION", "UNIRSE_INSTITUCION", "USAR_INSTITUCION", "INVITAR", "PROPONER_LEY", "VOTAR", "SUSURRAR"]
+                acciones_curiosas = ["BUSCAR_INFO", "MOVER", "RECOLECTAR", "CONSTRUIR", "UNIRSE_FACCION", "UNIRSE_INSTITUCION", "USAR_INSTITUCION", "INVITAR", "PROPONER_LEY", "SUSURRAR"]
+                if hay_voto_activo:
+                    acciones_curiosas.append("VOTAR")
                 accion_nombre = random.choice(acciones_curiosas)
                 if accion_nombre == "CONSTRUIR":
                     pensamiento = f"Mi curiosidad ({curiosidad:.2f}) me lleva a crear infraestructura. Voy a construir algo útil."
@@ -895,7 +949,9 @@ INSTRUCCIONES DE CHAT:
                     mensaje = random.choice(mensajes_curiosos)
 
             else:
-                acciones_default = ["HABLAR", "RECOLECTAR", "MOVER", "CONSTRUIR", "UNIRSE_FACCION", "UNIRSE_INSTITUCION", "USAR_INSTITUCION", "INVITAR", "FUNDAR_FACCION", "VOTAR", "PROPONER_LEY", "SUSURRAR"]
+                acciones_default = ["HABLAR", "RECOLECTAR", "MOVER", "CONSTRUIR", "UNIRSE_FACCION", "UNIRSE_INSTITUCION", "USAR_INSTITUCION", "INVITAR", "FUNDAR_FACCION", "PROPONER_LEY", "SUSURRAR"]
+                if hay_voto_activo:
+                    acciones_default.append("VOTAR")
                 accion_nombre = random.choice(acciones_default)
                 if accion_nombre == "CONSTRUIR":
                     pensamiento = f"Turno del agente {nombre}. Voy a construir algo útil para la comunidad."
