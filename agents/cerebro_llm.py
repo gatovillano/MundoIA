@@ -1,9 +1,23 @@
 import os
 import json
-from litellm import completion
+from litellm import completion as _original_completion
 import litellm
 import logging
 from litellm._logging import verbose_logger
+
+# Wrapper para interceptar modelos de KiloCode Gateway
+def completion(*args, **kwargs):
+    if "model" in kwargs and isinstance(kwargs["model"], str) and kwargs["model"].startswith("kilocode/"):
+        model_name = kwargs["model"]
+        # Mapear kilocode/ a openai/ compatible con custom api_base
+        kwargs["model"] = "openai/" + model_name[len("kilocode/"):]
+        # Endpoint de KiloCode Gateway
+        if not kwargs.get("api_base"):
+            kwargs["api_base"] = "https://api.kilo.ai/api/gateway"
+        # Resolver API key si no está presente
+        if not kwargs.get("api_key"):
+            kwargs["api_key"] = os.getenv("KILOCODE_API_KEY", "")
+    return _original_completion(*args, **kwargs)
 
 
 def _configure_litellm_for_mundoia():
