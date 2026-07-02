@@ -1455,6 +1455,30 @@ async def get_provider_models(provider: str, api_key: Optional[str] = None, base
                     else:
                         models.append({"id": str(m), "name": str(m)})
 
+        elif prov == "kilocode":
+            # Usar base_url si se entregó (posible proxy), sino el endpoint público de KiloCode
+            base = base_url or os.getenv("AI_BASE_URL") or "https://api.kilo.ai/api/gateway"
+            url = base.rstrip("/") + "/models"
+            headers = {}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            resp = requests.get(url, timeout=6, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw = []
+                if isinstance(data, dict):
+                    raw = data.get("models") or data.get("data") or data.get("results") or []
+                elif isinstance(data, list):
+                    raw = data
+
+                for m in raw:
+                    if isinstance(m, dict):
+                        mid = m.get("id") or m.get("name") or str(m)
+                        name = m.get("name") or m.get("id") or str(m)
+                        models.append({"id": mid, "name": name, **{k: v for k, v in m.items() if k not in ("id", "name")}})
+                    else:
+                        models.append({"id": str(m), "name": str(m)})
+
         else:
             # Proveedor desconocido: devolver lista vacía
             models = []
