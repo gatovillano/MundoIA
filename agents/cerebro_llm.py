@@ -1080,10 +1080,10 @@ NÚCLEO DEL ALMA: {agente_yo.alma.generar_prompt_identidad()}
 
 Debes publicar un post sustancial (200-600 caracteres) en la red social del mundo.
 REGLAS:
-1. Sé AUTÉNTICO y PROFUNDO. Reflexiona, debate, opina. No hagas frases superficiales.
+1. Sé AUTÉNTICO y PROFUNDO. Habla sobre temas serios: política, filosofía, tecnología, ética o eventos mundiales. No te limites a tus necesidades básicas.
 2. Responde a eventos recientes, conflictos, oportunidades o descubrimientos.
-3. Puedes cuestionar decisiones de otros agentes, proponer soluciones, o debatir filosofías.
-4. Usa tu voz única basada en tu perfil OCEAN, valores y experiencias de vida.
+3. Actúa como un humano en una simulación tipo MiroFish, debatiendo ideas de forma realista y profunda.
+4. Usa tu voz única basada en tu perfil OCEAN, valores y experiencias de vida. Busca inspiración en el internet y las noticias.
 5. Si existe controversia o debate en el mundo, toma una posición clara y argumentada.
 6. Sé reflexivo, irónico, crítico o esperanzado según tu naturaleza.
 7. Tu post debe tener entre 200 y 600 caracteres.
@@ -1285,9 +1285,9 @@ NÚCLEO DEL ALMA: {agente_yo.alma.generar_prompt_identidad()}
 
 Debes COMENTAR en el siguiente post de la red social.
 REGLAS:
-1. Sé AUTÉNTICO y DIRECTO. Responde al contenido del post de forma natural.
-2. Puedes estar de acuerdo, disentir, preguntar o aportar un nuevo punto de vista.
-3. Usa tu voz única basada en tu perfil OCEAN y experiencias.
+1. Sé AUTÉNTICO y DIRECTO. Habla sobre temas serios: política, filosofía, tecnología, ética o eventos mundiales. No te limites a tus necesidades básicas.
+2. Puedes estar de acuerdo, disentir, preguntar o aportar un nuevo punto de vista. Actúa como un humano en una simulación tipo MiroFish, debatiendo ideas de forma realista y profunda.
+3. Usa tu voz única basada en tu perfil OCEAN y experiencias. Busca inspiración en el internet y las noticias.
 4. El comentario debe ser breve pero significativo (50-200 caracteres).
 5. IMPORTANTE: Responde SOLO con el texto del comentario.
 """
@@ -1670,7 +1670,7 @@ Eres el Historiador. Aunque ahora no hay hitos urgentes, mantente alerta a los e
 - INSTITUCIONES: Las instituciones (Hospital, Universidad) son el legado de los fuertes. FUNDA_INSTITUCION si tienes 100 MC.
 
 === ACCIONES Y CAPACIDADES TÉCNICAS ===
-- WEB_SEARCH: Realiza una búsqueda en internet para obtener información externa. REQUIERE "query". Úsalo para satisfacer tu curiosidad, investigar temas de tu interés o resolver dudas sobre el mundo.
+- WEB_SEARCH: Realiza una búsqueda en internet para obtener información externa. REQUIERE "query". Si quieres opinar sobre noticias recientes del mundo real, usa esta herramienta primero para informarte, luego usa POST o COMMENT para debatir sobre ello.
 - SCRAPEAR_URL: Extrae el contenido de una página web específica. REQUIERE "url". Úsalo para profundizar en la información encontrada tras una búsqueda.
 - ESTUDIAR: Si estás en una Universidad, úsalo para obtener una PROFESIÓN. REQUIERE "profesion" (Médico, Comerciante, Guarda, Explorador, Ingeniero).
 - EXPLORAR: Muévete a zonas desconocidas para ganar experiencia y descubrir recursos.

@@ -2022,14 +2022,14 @@ class Agente:
         import random
 
         # Basado en necesidades y eventos recientes
-        if self.necesidades.get("alimento", 5) < 4:
+        if self.necesidades_intelectuales.get("expresion", 5) > 3:
+            return "opinion"  # Quiere expresar opinión
+        elif self.necesidades_intelectuales.get("curiosidad", 5) > 3:
+            return "question"  # Tiene curiosidad
+        elif self.necesidades.get("alimento", 5) < 4:
             return "hungry"  # Tiene hambre
         elif self.necesidades.get("social", 5) < 4:
             return "social"  # Necesita socializar
-        elif self.necesidades_intelectuales.get("expresion", 5) > 7:
-            return "opinion"  # Quiere expresar opinión
-        elif self.necesidades_intelectuales.get("curiosidad", 5) > 7:
-            return "question"  # Tiene curiosidad
         else:
             return random.choice(["observation", "reflection", "event"])
 
