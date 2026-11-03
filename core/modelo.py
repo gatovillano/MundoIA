@@ -45,7 +45,9 @@ from core.skill_factory import SkillFactory
 from systems.sistema_misiones import SistemaMisiones
 from core.world_system import WorldSystem, WorldTile, TerrainType
 from systems.historia import LibretaHistoria
+from core.database import DatabaseManager
 from core.entities.faction import Civilizacion
+from core.entities.structure import Institucion
 
 # Alias para compatibilidad con el sistema de mundo
 Tile = WorldTile

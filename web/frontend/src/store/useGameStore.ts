@@ -88,7 +88,11 @@ const customStorage: PersistStorage<GameState> = {
     getItem: (name) => {
         const item = localStorage.getItem(name);
         if (item) {
-            return JSON.parse(item);
+            const parsed = JSON.parse(item);
+            if (parsed?.state) {
+                parsed.state.apiHost = getApiBase();
+            }
+            return parsed;
         }
         return null;
     },
@@ -173,7 +177,16 @@ const useGameStore = create(
             apiHost: getApiBase(),
 
             setApiHost: (host) => {
-                set({ apiHost: host });
+                const trimmed = (host || '').trim();
+                if (typeof window !== 'undefined') {
+                    if (trimmed) {
+                        localStorage.setItem('MUNDOIA_API_HOST', trimmed);
+                    } else {
+                        localStorage.removeItem('MUNDOIA_API_HOST');
+                    }
+                }
+                const resolvedHost = getApiBase();
+                set({ apiHost: resolvedHost });
                 // Reconnect if already connected
                 if (get().socket) {
                     get().disconnect();
@@ -674,6 +687,21 @@ const useGameStore = create(
                         if (typeof window !== 'undefined' && window.location.pathname !== '/auth') {
                             window.location.href = '/auth';
                         }
+                        return;
+                    }
+
+                    // Auto-reconexión si el usuario sigue autenticado en una partida activa
+                    if (get().isAuthenticated && (get().gameId || get().userId) && typeof window !== 'undefined') {
+                        const existingTimer = get().reconnectTimer;
+                        if (!existingTimer) {
+                            const timer = window.setTimeout(() => {
+                                set({ reconnectTimer: null });
+                                if (!get().socket && get().isAuthenticated) {
+                                    get().connect();
+                                }
+                            }, 1500);
+                            set({ reconnectTimer: timer });
+                        }
                     }
                 };
 
@@ -707,6 +735,7 @@ const useGameStore = create(
                     try { clearTimeout(reconnectTimer as any); } catch (e) {}
                 }
                 if (socket) {
+                    socket.onclose = null;
                     socket.close();
                 }
                 set({ socket: null, isConnected: false, bubbleCleanupInterval: null, reconnecting: false, reconnectAttempts: 0, reconnectTimer: null });

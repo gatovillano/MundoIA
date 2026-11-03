@@ -875,6 +875,8 @@ async def login(req: UserLogin):
 @app.post("/game/control")
 async def game_control(req: GameAction):
     sim = session_manager.get_simulation(req.user_id)
+    if not sim and req.action != "reset":
+        sim = session_manager.create_simulation(req.user_id)
     if req.action == "start":
         if sim and req.modo_control_total is not None:
             sim.modo_control_total = req.modo_control_total
@@ -926,7 +928,7 @@ async def game_control(req: GameAction):
 async def set_game_speed(req: SpeedControl):
     sim = session_manager.get_simulation(req.user_id)
     if not sim:
-        raise HTTPException(status_code=404, detail="Simulación no encontrada")
+        sim = session_manager.create_simulation(req.user_id)
     
     sim.ritmo = req.ritmo
     print(f"⏱️ [SPEED] Nuevo ritmo para {req.user_id}: {req.ritmo}s entre agentes")
@@ -938,9 +940,27 @@ class GodAction(BaseModel):
 
 @app.post("/game/god-mode/{user_id:path}")
 async def god_mode(user_id: str, req: dict = Body(...)):
-    action_type = req.get("action_type")
+    action_type = req.get("action_type") or req.get("action")
     params = req.get("params", {})
-    
+
+    if action_type == "reset":
+        await session_manager.stop_simulation_loop(user_id)
+        session_manager.simulations.pop(user_id, None)
+        session_manager.last_stats.pop(user_id, None)
+        session_manager.last_agents.pop(user_id, None)
+        sim = session_manager.create_simulation(user_id, start_empty=True)
+        if req.get("modo_control_total") is not None:
+            sim.modo_control_total = bool(req.get("modo_control_total"))
+        if sim.db_active:
+            try:
+                if hasattr(sim, "db") and sim.db:
+                    sim.db.clear_database(user_id)
+                sim.guardar_estado()
+            except Exception as e:
+                print(f"⚠️ [RESET] Error limpiando DB: {e}")
+        await session_manager.broadcast_state(user_id, include_map=True, include_logs=True)
+        return {"status": "success", "message": "Nueva realidad generada y persistida"}
+
     sim = session_manager.get_simulation(user_id)
     if not sim: sim = session_manager.create_simulation(user_id)
     

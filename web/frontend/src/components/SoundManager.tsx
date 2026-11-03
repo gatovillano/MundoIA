@@ -181,5 +181,6 @@ export default function SoundManager() {
         }
     }, [isConnected]);
 
-
+    return null;
 }
+

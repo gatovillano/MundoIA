@@ -285,7 +285,7 @@ export default function StartPage() {
           <div className="flex items-center gap-4 text-[9px] font-mono tracking-[0.4em] uppercase text-white">
               <span>Status: Synchronized</span>
               <div className="w-1 h-1 rounded-full bg-indigo-500" />
-              <span>Host: {getHttpUrl('').replace('http://', '').replace('/', '')}</span>
+              <span>Host: {getHttpUrl('').replace(/^https?:\/\//, '').replace(/\/$/, '')}</span>
           </div>
       </div>
     </main>
