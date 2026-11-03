@@ -1311,7 +1311,7 @@ class Agente:
         )
 
         # ACTUAlIZACIÓN INMEDIATA DE UI Y PERSISTENCIA
-        self.modelo.notificar_cambio_estado()
+        self.modelo.notificar_cambio_estado(force=True)
         self.modelo.guardar_estado()
 
         # Hito histórico
@@ -1444,15 +1444,19 @@ class Agente:
         if not grupo_id:
             return False
 
-        # Si grupo_id no existe como clave, buscar por nombre en civilizaciones
+        # Si grupo_id no existe como clave, buscar por ID o nombre en civilizaciones
         if grupo_id not in self.modelo.civilizaciones:
-            nombre_lower = str(grupo_id).lower()
+            nombre_lower = str(grupo_id).lower().strip()
             for gid, civ in self.modelo.civilizaciones.items():
-                if civ.nombre.lower() == nombre_lower:
+                if (
+                    gid.lower() == nombre_lower
+                    or civ.nombre.lower().strip() == nombre_lower
+                    or nombre_lower in civ.nombre.lower()
+                ):
                     grupo_id = gid
                     break
 
-        if getattr(self, 'grupo_id', None) == grupo_id:
+        if getattr(self, 'grupo_id', None) == grupo_id and getattr(self, 'civilizacion_id', None) == grupo_id:
             return False
 
         civ = None
@@ -1461,7 +1465,26 @@ class Agente:
         except Exception:
             civ = None
 
+        # Si la facción aún no estaba registrada en civilizaciones, registrarla con un color de la paleta
+        if civ is None and hasattr(self.modelo, "civilizaciones"):
+            colores_en_uso = [c.color for c in self.modelo.civilizaciones.values()]
+            paleta = getattr(self.modelo, "colores_paleta", ["#7c4dff"])
+            nuevo_color = next(
+                (c for c in paleta if c not in colores_en_uso),
+                paleta[hash(str(grupo_id)) % len(paleta)],
+            )
+            civ = Civilizacion(
+                id=str(grupo_id),
+                nombre=str(grupo_id),
+                color=nuevo_color,
+                user_id=getattr(self.modelo, "user_id", None),
+                descripcion="Facción emergente",
+            )
+            self.modelo.civilizaciones[str(grupo_id)] = civ
+            grupo_id = str(grupo_id)
+
         self.grupo_id = grupo_id
+        self.civilizacion_id = grupo_id
         self.rol = "Ciudadano"
 
         if civ:
@@ -1475,10 +1498,10 @@ class Agente:
                 categoria="social",
             )
 
-        # Notificar cambios de estado para refrescar UI / persistencia
+        # Notificar cambios de estado para refrescar UI / persistencia inmediatamente
         try:
             if hasattr(self.modelo, 'notificar_cambio_estado'):
-                self.modelo.notificar_cambio_estado()
+                self.modelo.notificar_cambio_estado(force=True)
             if hasattr(self.modelo, 'guardar_estado'):
                 self.modelo.guardar_estado()
         except Exception:
@@ -1699,22 +1722,9 @@ class Agente:
         top_k = candidatos[: min(3, len(candidatos))]
         return random.choice(top_k)
 
-    def _generar_comentario_rapido(self, post, paso: int) -> str:
-        """Genera un comentario relevante y contextual cuando el LLM no está disponible o falla."""
-        import random
-
-        autor_nombre = self._resolver_nombre_agente(getattr(post, "autor_id", ""))
-        temas = getattr(post, "temas", []) or ["general"]
-        tema_principal = temas[0] if temas else "general"
-        extracto = (getattr(post, "contenido", "") or "")[:60].strip()
-
-        plantillas = [
-            f"Coincido contigo, {autor_nombre}. El tema de {tema_principal} es clave en este turno {paso} para nuestra comunidad.",
-            f"Interesante perspectiva, {autor_nombre}. Sobre '{extracto}...', creo que debemos coordinar esfuerzos pronto.",
-            f"Te leo atentamente, {autor_nombre}. Si logramos organizarnos en torno a {tema_principal}, todos saldremos fortalecidos.",
-            f"Buen punto, {autor_nombre}. Desde mi posición veo los mismos desafíos; contemos los unos con los otros.",
-        ]
-        return random.choice(plantillas)
+    def _generar_comentario_rapido(self, post, paso: int):
+        """Deshabilitado: los comentarios deben ser generados únicamente por el LLM."""
+        return None
 
     def social_follow(self, otro_agente) -> bool:
         """El agente sigue a otro agente. Acepta objeto agente o ID/nombre string."""
@@ -1869,7 +1879,7 @@ class Agente:
         if not recsys:
             return False
 
-        if not contenido or not isinstance(contenido, str):
+        if not contenido or not isinstance(contenido, str) or len(contenido.strip()) < 5:
             return False
 
         # Si el post_id no existe (ej. alucinación del LLM), elegir el post más relevante del feed
@@ -1878,8 +1888,7 @@ class Agente:
             if post_relevante:
                 post_id = post_relevante.id
             else:
-                # Si aún no hay posts en Oasis, publicar este comentario como el primer post
-                return self.social_create_post(contenido, tipo="opinion")
+                return False
 
         exito = recsys.comentar(post_id, self.unique_id, contenido)
         if exito:
@@ -2129,7 +2138,7 @@ class Agente:
                     random.choice(otros_posts) if otros_posts else random.choice(posts)
                 )
                 if target:
-                    if self._ejecutar_comentario_aleatorio(target.id, usar_llm=usar_llm):
+                    if self._ejecutar_comentario_aleatorio(target.id, usar_llm=True):
                         return True
 
             elif decision == "like" and unliked_posts:
@@ -2444,26 +2453,28 @@ class Agente:
                 hitos_texto = f"\n=== HECHOS RECIENTES EN EL MUNDO ===\n{hitos}\n"
 
         paso = getattr(self.modelo, "paso_actual", 0)
-        respuesta = None
-        if usar_llm:
-            try:
-                from agents.cerebro_llm import cerebro_llm
+        if not usar_llm:
+            return False
 
-                if getattr(cerebro_llm, "model", None):
-                    ctx = (
-                        f'Estás viendo un post de {autor_post_nombre} que dice: "{target_post.contenido}".'
-                        f"{contexto_hilo}"
-                        f"{hitos_texto}"
-                        f"\nEste post tiene {getattr(target_post, 'likes', 0)} likes y {getattr(target_post, 'comentarios', 0)} comentarios."
-                        f"\nParticipa en el debate para aumentar tu influencia social!"
-                        f"\nEscribe una respuesta corta, natural y significativa."
-                    )
-                    respuesta = cerebro_llm.generar_comentario_social(self, target_post, ctx)
-            except Exception:
-                respuesta = None
+        respuesta = None
+        try:
+            from agents.cerebro_llm import cerebro_llm
+
+            if getattr(cerebro_llm, "model", None):
+                ctx = (
+                    f'Estás viendo un post de {autor_post_nombre} que dice: "{target_post.contenido}".'
+                    f"{contexto_hilo}"
+                    f"{hitos_texto}"
+                    f"\nEste post tiene {getattr(target_post, 'likes', 0)} likes y {getattr(target_post, 'comentarios', 0)} comentarios."
+                    f"\nParticipa en el debate para aumentar tu influencia social!"
+                    f"\nEscribe una respuesta corta, natural y significativa."
+                )
+                respuesta = cerebro_llm.generar_comentario_social(self, target_post, ctx)
+        except Exception:
+            respuesta = None
 
         if not respuesta or len(str(respuesta).strip()) <= 5:
-            respuesta = self._generar_comentario_rapido(target_post, paso)
+            return False
 
         return self.social_comment(post_id, respuesta)
 
@@ -3770,26 +3781,47 @@ class Agente:
                 
             # 3.5 Acciones Políticas e Institucionales
             elif tipo == "fundar_grupo":
-                nombre = params.get("nombre")
-                desc = params.get("descripcion")
-                
-                if not nombre or not desc:
-                    # Usar el cerebro LLM para generar una identidad descriptiva (Requerimiento de Memoria)
+                nombre = (
+                    params.get("nombre")
+                    or params.get("nombre_grupo")
+                    or params.get("grupo")
+                    or params.get("faccion")
+                    or accion_dict.get("nombre")
+                    or accion_dict.get("nombre_grupo")
+                )
+                desc = (
+                    params.get("descripcion")
+                    or params.get("mision")
+                    or params.get("objetivo")
+                    or params.get("idea")
+                    or accion_dict.get("descripcion")
+                )
+                es_controlado = bool(
+                    getattr(self, "_ejecutando_decreto", False)
+                    or getattr(self, "is_player_avatar", False)
+                    or str(self.unique_id).startswith("av_")
+                )
+
+                if (not nombre or not desc) and not es_controlado:
+                    # Usar el cerebro LLM para generar una identidad descriptiva en agentes autónomos
                     if hasattr(self.modelo, "cerebro_llm") and self.modelo.cerebro_llm:
-                        # Intentar obtener miembros cercanos para dar contexto
                         cercanos = [a for a in self.modelo.agentes if a.unique_id != self.unique_id and abs(a.x - self.x) <= 3 and abs(a.y - self.y) <= 3]
                         nombres_miembros = [a.identidad.nombre for a in cercanos]
                         nombre_gen, desc_gen = self.modelo.cerebro_llm.generar_identidad_grupo(self, nombres_miembros)
                         if not nombre: nombre = nombre_gen
                         if not desc: desc = desc_gen
-                
-                # Fallback si falla el LLM o no hay
+
+                tema = getattr(self.identidad, "nombre", None) or self.unique_id
                 if not nombre:
                     prefijos = ["Los Peregrinos de", "Orden de", "Sindicato de", "El Despertar de", "Renacer de"]
-                    tema = getattr(self.identidad, "nombre", self.unique_id)
                     nombre = f"{random.choice(prefijos)} {tema}"
+                elif len(str(nombre).strip()) < 5:
+                    nombre = f"Orden {str(nombre).strip()}"
+
                 if not desc:
-                    desc = f"Un nuevo movimiento fundado por {self.unique_id} en busca del destino."
+                    desc = f"Un nuevo movimiento fundado por {tema} en busca del destino y la prosperidad común."
+                elif len(str(desc).strip()) < 30:
+                    desc = f"{str(desc).strip()} — Movimiento fundado por {tema} para forjar un destino común."
 
                 res = self.fundar_grupo(nombre, desc)
                 if res and res.get("exito"):
@@ -3809,32 +3841,55 @@ class Agente:
                     self.modelo.log(f"🏘️ {self.unique_id} intentó fundar un pueblo pero falló: {msg}", categoria="info")
                 return res
             elif tipo == "unirse_grupo":
-                grupo_id = params.get("grupo_id") or params.get("faccion_id")
-                nombre_grupo = params.get("nombre") or accion_dict.get("nombre")
+                grupo_id = (
+                    params.get("grupo_id")
+                    or params.get("faccion_id")
+                    or params.get("id")
+                    or accion_dict.get("grupo_id")
+                    or accion_dict.get("faccion_id")
+                )
+                nombre_grupo = (
+                    params.get("nombre")
+                    or params.get("nombre_grupo")
+                    or accion_dict.get("nombre")
+                    or accion_dict.get("nombre_grupo")
+                )
                 if not grupo_id and nombre_grupo:
                     # Buscar por nombre en civilizaciones
-                    nombre_lower = str(nombre_grupo).lower()
+                    nombre_lower = str(nombre_grupo).lower().strip()
                     for gid, civ in self.modelo.civilizaciones.items():
-                        if civ.nombre.lower() == nombre_lower:
+                        if (
+                            gid.lower() == nombre_lower
+                            or civ.nombre.lower().strip() == nombre_lower
+                            or nombre_lower in civ.nombre.lower()
+                        ):
                             grupo_id = gid
                             break
                 if not grupo_id:
-                    # Intentar unirse a la facción del agente más cercano
-                    for a in self.modelo.agentes:
-                        if a.unique_id != self.unique_id and a.grupo_id and abs(a.x - self.x) <= 2 and abs(a.y - self.y) <= 2:
-                            grupo_id = a.grupo_id
-                            break
+                    # Intentar unirse a la facción del agente más cercano con grupo
+                    candidatos_cercanos = [
+                        a for a in self.modelo.agentes
+                        if a.unique_id != self.unique_id and a.grupo_id
+                    ]
+                    if candidatos_cercanos:
+                        candidatos_cercanos.sort(key=lambda a: abs(a.x - self.x) + abs(a.y - self.y))
+                        grupo_id = candidatos_cercanos[0].grupo_id
+                    elif self.modelo.civilizaciones:
+                        grupo_id = next(iter(self.modelo.civilizaciones.keys()))
                 if grupo_id and hasattr(self, 'unirse_a_grupo'):
                     res = self.unirse_a_grupo(grupo_id)
                     if res:
-                        civ = self.modelo.civilizaciones.get(grupo_id)
+                        civ = self.modelo.civilizaciones.get(self.grupo_id or grupo_id)
                         nombre_c = civ.nombre if civ else grupo_id
                         self.registrar_evento(f"He decidido unirme a la facción {nombre_c}. Comienza una nueva etapa.")
                     return res
                 elif grupo_id:
                     self.grupo_id = grupo_id
+                    self.civilizacion_id = grupo_id
                     self.modelo.log(f"🏳️ {self.unique_id} se ha unido a la facción {grupo_id}.", categoria="social")
                     self.registrar_evento(f"Me he unido a la facción {grupo_id}.")
+                    if hasattr(self.modelo, 'notificar_cambio_estado'):
+                        self.modelo.notificar_cambio_estado(force=True)
                     return True
                 return False
             elif tipo == "abandonar_grupo":
@@ -3844,7 +3899,11 @@ class Agente:
                         self.abandonar_grupo_actual()
                     else:
                         self.grupo_id = None
+                        self.civilizacion_id = None
+                        self.rol = "Ciudadano"
                     self.modelo.log(f"🚪 {self.unique_id} ha abandonado la facción {viejo}.", categoria="social")
+                    if hasattr(self.modelo, 'notificar_cambio_estado'):
+                        self.modelo.notificar_cambio_estado(force=True)
                     return True
                 return False
             elif tipo == "invitar_grupo":

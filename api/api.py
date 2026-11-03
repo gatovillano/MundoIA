@@ -232,18 +232,18 @@ class SessionManager:
                     print(f"[LOG_CALLBACK] Error: {e}, mensaje: {mensaje[:50]}...")
 
             # Callback para cambios de estado (actualización inmediata de UI)
-            def on_state_change():
+            def on_state_change(force: bool = False):
                 sim = self.simulations.get(user_id)
                 if sim and not getattr(sim, "_stopped", False):
                     try:
                         now = time.time()
                         last_time = self.last_broadcast_time.get(user_id, 0)
-                        if now - last_time < 0.2:
+                        if not force and now - last_time < 0.2:
                             return
                         
                         loop = self.main_loop
                         if loop and not loop.is_closed() and loop.is_running():
-                            coro = self.broadcast_state(user_id)
+                            coro = self.broadcast_state(user_id, force=force)
                             asyncio.run_coroutine_threadsafe(coro, loop)
                     except Exception as e:
                         print(f"[STATE_CHANGE] Error en broadcast: {e}")
@@ -1216,7 +1216,7 @@ async def god_mode(user_id: str, req: dict = Body(...)):
             except Exception:
                 pass
 
-            await session_manager.broadcast_state(user_id)
+            await session_manager.broadcast_state(user_id, force=True, include_logs=True)
             return {"status": "success"}
 
         # Modo autónomo / fallback: ejecución directa garantizada para Avatar de Jugador o Decreto Divino

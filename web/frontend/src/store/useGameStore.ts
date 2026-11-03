@@ -34,6 +34,8 @@ interface GameState {
     toggleStreaming: () => void;
     toggleBubbles: () => void;
     toggleThoughts: () => void;
+    musicEnabled: boolean;
+    toggleMusic: () => void;
     historia: { historiador_id: string | null, entradas: any[], num_entradas: number };
     ranking: any[];
     instituciones: Record<string, any>;
@@ -91,6 +93,7 @@ interface PersistedState {
     modoControlTotal: boolean;
     startupOperationDone: boolean;
     showBubbles: boolean;
+    musicEnabled: boolean;
 }
 
 const customStorage: PersistStorage<GameState> = {
@@ -122,7 +125,8 @@ const customStorage: PersistStorage<GameState> = {
                     socialMode: value.state.socialMode || 'twitter',
                     modoControlTotal: value.state.modoControlTotal || false,
                     startupOperationDone: value.state.startupOperationDone || false,
-                    showBubbles: value.state.showBubbles !== undefined ? value.state.showBubbles : true
+                    showBubbles: value.state.showBubbles !== undefined ? value.state.showBubbles : true,
+                    musicEnabled: value.state.musicEnabled !== undefined ? value.state.musicEnabled : true
                 },
                 version: value.version
             };
@@ -159,6 +163,7 @@ const useGameStore = create(
             recentCompletedMissions: [],
             showThoughts: true,
             showBubbles: true,
+            musicEnabled: true,
             llmBuffers: {},
             enableStreaming: true,
             historia: { historiador_id: null, entradas: [], num_entradas: 0 },
@@ -242,6 +247,7 @@ const useGameStore = create(
             toggleThoughts: () => set((state) => ({ showThoughts: !state.showThoughts })),
             toggleStreaming: () => set((state) => ({ enableStreaming: !state.enableStreaming })),
             toggleBubbles: () => set((state) => ({ showBubbles: !state.showBubbles })),
+            toggleMusic: () => set((state) => ({ musicEnabled: !state.musicEnabled })),
 
             selectAgent: (agentId) => set({ selectedAgentId: agentId }),
 
@@ -551,10 +557,31 @@ const useGameStore = create(
 
                             const newBuffers = { ...(state.llmBuffers || {}), [agentId]: newBuf };
 
+                            // Extraer solo el mensaje limpio si por alguna razón llega JSON o bloques <think>
+                            let displayText = newBuf;
+                            if (displayText.includes('<think>') || displayText.trim().startsWith('{')) {
+                                const withoutThink = displayText.replace(/<think>[\s\S]*?<\/think>/gi, '');
+                                if (withoutThink.toLowerCase().includes('<think>')) {
+                                    displayText = '';
+                                } else {
+                                    const msgMatch = withoutThink.match(/"(?:mensaje|message)"\s*:\s*"((?:[^"\\]|\\.)*)/i);
+                                    if (msgMatch) {
+                                        displayText = msgMatch[1]
+                                            .replace(/\\"/g, '"')
+                                            .replace(/\\n/g, '\n')
+                                            .replace(/\\\\/g, '\\');
+                                    } else if (withoutThink.trim().startsWith('{')) {
+                                        displayText = '';
+                                    } else {
+                                        displayText = withoutThink;
+                                    }
+                                }
+                            }
+
                             // Decidir si actualizamos las burbujas visibles
                             let newSpeech = { ...state.speechBubbles };
-                            if (streamingEnabled || data.done) {
-                                newSpeech[agentId] = { text: newBuf, timestamp: Date.now() };
+                            if ((streamingEnabled || data.done) && displayText.trim()) {
+                                newSpeech[agentId] = { text: displayText.trim(), timestamp: Date.now() };
                             }
 
                             // Si el stream finalizó, limpiamos el buffer

@@ -8,6 +8,7 @@ export default function SoundManager() {
     const selectedAgentId = useGameStore(state => state.selectedAgentId);
     const logs = useGameStore(state => state.logs);
     const isConnected = useGameStore(state => state.isConnected);
+    const musicEnabled = useGameStore(state => state.musicEnabled);
 
     const prevAgentId = useRef<string | null>(null);
     const prevLogTime = useRef<number>(0);
@@ -107,6 +108,16 @@ export default function SoundManager() {
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const musicStartedRef = useRef(false);
     const currentTrackRef = useRef(0);
+    const musicEnabledRef = useRef(musicEnabled);
+    const isConnectedRef = useRef(isConnected);
+
+    useEffect(() => {
+        musicEnabledRef.current = musicEnabled;
+    }, [musicEnabled]);
+
+    useEffect(() => {
+        isConnectedRef.current = isConnected;
+    }, [isConnected]);
 
     // Carga y configura una pista de la playlist
     const loadTrack = (index: number) => {
@@ -121,7 +132,9 @@ export default function SoundManager() {
     const handleEnded = () => {
         currentTrackRef.current = (currentTrackRef.current + 1) % PLAYLIST.length;
         loadTrack(currentTrackRef.current);
-        audioRef.current?.play().catch(() => {});
+        if (musicEnabledRef.current && isConnectedRef.current) {
+            audioRef.current?.play().catch(() => {});
+        }
     };
 
     // Inicializar audio de fondo con la primera pista
@@ -146,22 +159,30 @@ export default function SoundManager() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Reproducir cuando hay conexión, reintentar si falla por política de autoplay
+    // Reproducir o pausar según conexión y estado de musicEnabled
     useEffect(() => {
         if (!audioRef.current) return;
 
+        let interactionCleanup: (() => void) | null = null;
+
         const tryPlay = () => {
-            if (audioRef.current && !musicStartedRef.current) {
+            if (audioRef.current && musicEnabledRef.current && isConnectedRef.current) {
                 audioRef.current.play().then(() => {
                     musicStartedRef.current = true;
                 }).catch(e => {
                     console.log("Background music autoplay blocked, will retry on user interaction:", e);
                     const handleInteraction = () => {
-                        if (audioRef.current) {
+                        if (interactionCleanup) {
+                            interactionCleanup();
+                            interactionCleanup = null;
+                        }
+                        if (audioRef.current && musicEnabledRef.current && isConnectedRef.current) {
                             audioRef.current.play().then(() => {
                                 musicStartedRef.current = true;
                             }).catch(() => {});
                         }
+                    };
+                    interactionCleanup = () => {
                         document.removeEventListener('click', handleInteraction);
                         document.removeEventListener('keydown', handleInteraction);
                     };
@@ -171,7 +192,7 @@ export default function SoundManager() {
             }
         };
 
-        if (isConnected) {
+        if (isConnected && musicEnabled) {
             tryPlay();
         } else {
             if (audioRef.current) {
@@ -179,7 +200,13 @@ export default function SoundManager() {
                 musicStartedRef.current = false;
             }
         }
-    }, [isConnected]);
+
+        return () => {
+            if (interactionCleanup) {
+                interactionCleanup();
+            }
+        };
+    }, [isConnected, musicEnabled]);
 
     return null;
 }

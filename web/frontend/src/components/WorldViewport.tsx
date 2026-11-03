@@ -9,7 +9,7 @@ import { replaceIdsWithNames } from "@/utils/nameUtils";
 export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: boolean }) {
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const { agents, mapa, relationships, speechBubbles, selectAgent, selectedAgentId, weather } = useGameStore();
+    const { agents, mapa, relationships, speechBubbles, selectAgent, selectedAgentId, weather, civilizaciones, gruposDinamicos } = useGameStore();
     const [showLinks, setShowLinks] = useState(true);
     const [showGrid, setShowGrid] = useState(true);
     const [isBoardMinimized, setIsBoardMinimized] = useState(false);
@@ -571,12 +571,16 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
             // --- DISEÑO HUMANOIDE FLOTANTE SIN PIERNAS ---
             
             // Torso con base redondeada (estilo fantasma/flotante)
-            const defaultBodyColor = isAvatar ? "#10b981" : "#EF5350";
-            const torsoColor = (d.color && d.color !== "#ffffff") ? d.color : defaultBodyColor;
+            // Agentes sin grupo se muestran en blanco (#ffffff) y cambian al color del grupo al fundar o unirse
+            const gid = (d as any).grupo_id || (d as any).group_id || null;
+            const groupColor = gid
+                ? (civilizaciones?.[gid]?.color || gruposDinamicos?.[gid]?.color || (d.color && d.color.toLowerCase() !== "#ffffff" ? d.color : null))
+                : null;
+            const torsoColor = groupColor || "#ffffff";
             g.append("path").attr("class", "agent-torso")
                 .attr("d", "M -4.5 -16 L 4.5 -16 Q 5.5 -16 5.5 -13 L 5.5 -6 Q 5.5 -2 0 -2 Q -5.5 -2 -5.5 -6 L -5.5 -13 Q -5.5 -16 -4.5 -16")
                 .attr("fill", torsoColor)
-                .attr("stroke", isAvatar ? "#ffd54f" : "rgba(255,255,255,0.1)")
+                .attr("stroke", isAvatar ? "#ffd54f" : (torsoColor.toLowerCase() === "#ffffff" ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.2)"))
                 .attr("stroke-width", isAvatar ? 1.5 : 1);
             
             // Cabeza redondeada
@@ -624,8 +628,11 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
                 const duration = 2.5 + (Math.sin(seed * 0.5) + 1) * 1.5;
                 const delay = -(Math.sin(seed * 0.8) + 1) * 2;
                 const isAvatar = Boolean(d.is_player_avatar || String(d.id || "").startsWith("av_"));
-                const defaultBodyColor = isAvatar ? "#10b981" : "#EF5350";
-                const torsoColor = (d.color && d.color !== "#ffffff") ? d.color : defaultBodyColor;
+                const gid = (d as any).grupo_id || (d as any).group_id || null;
+                const groupColor = gid
+                    ? (civilizaciones?.[gid]?.color || gruposDinamicos?.[gid]?.color || (d.color && d.color.toLowerCase() !== "#ffffff" ? d.color : null))
+                    : null;
+                const torsoColor = groupColor || "#ffffff";
                 
                 const g = d3.select(this)
                     .style("--float-duration", `${duration}s`)
@@ -633,7 +640,7 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
 
                 g.select(".agent-torso")
                     .attr("fill", torsoColor)
-                    .attr("stroke", isAvatar ? "#ffd54f" : "rgba(255,255,255,0.1)")
+                    .attr("stroke", isAvatar ? "#ffd54f" : (torsoColor.toLowerCase() === "#ffffff" ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.2)"))
                     .attr("stroke-width", isAvatar ? 1.5 : 1);
 
                 g.select(".player-crown-badge")
@@ -705,7 +712,7 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
 
         weatherGroup.selectAll("rect").data((weather === 'rainy' || weather === 'storm') ? [1] : []).join("rect").attr("x", -mapa.length*tileW).attr("y", -mapa[0].length*tileH).attr("width", mapa.length * tileW * 2).attr("height", mapa[0].length * tileH * 2).attr("fill", "#1E88E5").attr("opacity", 0.08);
 
-    }, [agents, selectedAgentId, weather, selectAgent, relationships, speechBubbles, showLinks, hideBubbles]);
+    }, [agents, selectedAgentId, weather, selectAgent, relationships, speechBubbles, showLinks, hideBubbles, civilizaciones, gruposDinamicos]);
 
     return (
         <div ref={containerRef} className="w-full h-full relative bg-[#1c2128] overflow-hidden" style={{ imageRendering: "pixelated" }}>

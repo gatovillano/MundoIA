@@ -1,6 +1,7 @@
 {
-    "model": "ollama/nemotron-3-super",
-    "api_key": "9893f16127b140f6816de15c24719c6d.Cwv-kKn2FTA9QAq0HCSROPEF",
-    "base_url": "https://ollama.com",
-    "tavily_api_key": "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"
+  "model": "kilocode/dots-studio/dots-3-note-preview:free",
+  "provider": "kilocode",
+  "api_key": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbnYiOiJwcm9kdWN0aW9uIiwia2lsb1VzZXJJZCI6Im9hdXRoL2dvb2dsZToxMDI1MjkyMzM4OTg3MjEyMDQzODgiLCJhcGlUb2tlblBlcHBlciI6bnVsbCwidmVyc2lvbiI6MywiaWF0IjoxNzkzNjUyOTg0LCJleHAiOjE5NTEzMzI5ODR9.22_rnSZWm8xlSSHpFXHjZagsNtLOn7G_3FDASK_djeo",
+  "base_url": "https://api.kilo.ai/api/gateway",
+  "tavily_api_key": "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"
 }

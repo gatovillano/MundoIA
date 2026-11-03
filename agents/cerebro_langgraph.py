@@ -234,7 +234,20 @@ def analizar_situacion(state: AgentState):
         contexto += "Considera compartir esta reflexión en tus conversaciones.\n"
         contexto += "==============================\n"
 
-    # --- OASIS: Notificaciones de interacciones propias ---
+    # --- OASIS: Feed y Notificaciones de interacciones propias ---
+    if hasattr(agente_yo, "actualizar_contexto_social_oasis"):
+        try:
+            agente_yo.actualizar_contexto_social_oasis()
+        except Exception:
+            pass
+
+    recent_posts = getattr(agente_yo, "contexto_social_reciente", [])
+    if recent_posts:
+        contexto += "\n=== RED SOCIAL OASIS: PUBLICACIONES RELEVANTES ===\n"
+        for p in recent_posts[:5]:
+            contexto += f"- {p['autor']} publicó: \"{p['texto']}\" (ID: {p['id']}, ❤️ {p.get('likes', 0)}, 💬 {p.get('comentarios', 0)})\n"
+        contexto += "==================================================\n"
+
     notifications = getattr(agente_yo, "notificaciones_sociales", [])
     if notifications:
         contexto += "\n=== NOTIFICACIONES: INTERACCIONES EN TUS POSTS ===\n"
@@ -661,34 +674,22 @@ def ejecutar_herramientas(state: AgentState):
     if nombre_accion == "comment":
         post_id = argumentos.get("post_id", "")
         contenido = argumentos.get("contenido", "")
-        if not post_id or not contenido:
-            resultado = "Error: COMMENT requiere 'post_id' y 'contenido'."
+        if not contenido:
+            resultado = "Error: COMMENT requiere 'contenido'."
         else:
             modelo = state.get("modelo_instance")
-            if modelo and hasattr(modelo, "social_recsys") and modelo.social_recsys:
-                try:
-                    comentario_obj = modelo.social_recsys.agregar_comentario(
-                        post_id, agente_yo.unique_id, contenido
+            if hasattr(agente_yo, "social_comment") and agente_yo.social_comment(post_id, contenido):
+                resultado = f"Comentario añadido en Oasis: {contenido[:50]}..."
+                if hasattr(agente_yo, "memoria") and agente_yo.memoria:
+                    agente_yo.memoria.agregar_mensaje_a_conversacion(
+                        state.get("agente_otro_id", "OASIS"),
+                        f"[COMENTARIO] {contenido}",
+                        modelo.paso_actual,
+                        tipo="social_comment",
+                        metadata={"post_id": post_id},
                     )
-                    resultado = f"Comentario añadido al post {post_id}: {contenido[:50]}..."
-                    # Registrar en memoria conversacional del agente
-                    if hasattr(agente_yo, "memoria") and agente_yo.memoria:
-                        agente_yo.memoria.agregar_mensaje_a_conversacion(
-                            state.get("agente_otro_id", "OASIS"),
-                            f"[COMENTARIO] {contenido}",
-                            modelo.paso_actual,
-                            tipo="social_comment",
-                            metadata={"post_id": post_id, "comentario_id": comentario_obj.id if comentario_obj else None},
-                        )
-                    modelo.log(
-                        f"💬 [COMMENT] Agente {agente_yo.unique_id} comentó en post {post_id}: {contenido[:30]}...",
-                        categoria="social",
-                    )
-                    modelo.notificar_cambio_estado()
-                except Exception as e:
-                    resultado = f"Error al comentar: {e}"
             else:
-                resultado = "Error: Sistema social no disponible."
+                resultado = "Error: No se pudo registrar el comentario en Oasis."
         return {"info_externa": resultado}
 
 

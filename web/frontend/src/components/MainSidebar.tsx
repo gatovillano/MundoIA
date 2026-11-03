@@ -23,8 +23,9 @@ import {
     TrendingUp
 } from "lucide-react";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { getHttpUrl } from "@/utils/apiConfig";
+import useGameStore from "@/store/useGameStore";
 
 // Speed presets: [label, ritmo_seconds, icon_symbol, color]
 const SPEED_PRESETS = [
@@ -64,10 +65,10 @@ export default function MainSidebar({
     onToggleMode,
     userId,
 }: MainSidebarProps) {
-    const [isPlayingMusic, setIsPlayingMusic] = useState(false);
+    const musicEnabled = useGameStore(state => state.musicEnabled);
+    const toggleMusic = useGameStore(state => state.toggleMusic);
     const [speedIdx, setSpeedIdx] = useState(1); // default FAST
     const [speedStatus, setSpeedStatus] = useState<'idle' | 'ok' | 'err'>('idle');
-    const audioRef = useRef<HTMLAudioElement | null>(null);
 
     const cycleSpeed = useCallback(async () => {
         const nextIdx = (speedIdx + 1) % SPEED_PRESETS.length;
@@ -86,42 +87,6 @@ export default function MainSidebar({
             setTimeout(() => setSpeedStatus('idle'), 1500);
         }
     }, [speedIdx, userId]);
-
-    // --- PLAYLIST DE MÚSICA ---
-    // Edita esta lista con los nombres de los archivos que pongas en frontend/public/music/
-    const PLAYLIST = [
-        "/music/bgm1.mp3",
-        "/music/bgm2.mp3",
-        "/music/bgm3.mp3"
-    ];
-
-    const playRandomTrack = () => {
-        if (!audioRef.current) return;
-        const randomTrack = PLAYLIST[Math.floor(Math.random() * PLAYLIST.length)];
-        audioRef.current.src = randomTrack;
-        audioRef.current.play().catch(e => console.error("Error reproduciendo música:", e));
-    };
-
-    const toggleMusic = () => {
-        if (!audioRef.current) return;
-        if (isPlayingMusic) {
-            audioRef.current.pause();
-        } else {
-            // Si es la primera vez que inicia o no tiene 'src' definida
-            if (!audioRef.current.getAttribute("src")) {
-                playRandomTrack();
-            } else {
-                audioRef.current.play().catch(e => console.error("Error reproduciendo música:", e));
-            }
-        }
-        setIsPlayingMusic(!isPlayingMusic);
-    };
-
-    const handleSongEnd = () => {
-        if (isPlayingMusic) {
-            playRandomTrack();
-        }
-    };
 
     
     const navItems = [
@@ -232,15 +197,12 @@ export default function MainSidebar({
                 {/* Music Control */}
                 <button
                     onClick={toggleMusic}
-                    className={`p-1 mt-1 sm:p-1.5 rounded-lg border transition-all duration-300 shadow-lg flex flex-col items-center ${isPlayingMusic ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-400' : 'bg-white/5 border-white/10 text-white/30 hover:text-white/60'}`}
-                    title={isPlayingMusic ? 'Pausar Música' : 'Reproducir Música'}
+                    className={`p-1 mt-1 sm:p-1.5 rounded-lg border transition-all duration-300 shadow-lg flex flex-col items-center ${musicEnabled ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-400' : 'bg-white/5 border-white/10 text-white/30 hover:text-white/60'}`}
+                    title={musicEnabled ? 'Pausar Música' : 'Reproducir Música'}
                 >
-                    {isPlayingMusic ? <Music className="w-3 h-3 sm:w-3.5 sm:h-3.5 animate-pulse" /> : <VolumeX className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
+                    {musicEnabled ? <Music className="w-3 h-3 sm:w-3.5 sm:h-3.5 animate-pulse" /> : <VolumeX className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
                 </button>
             </div>
-
-            {/* Hidden Audio Element */}
-            <audio ref={audioRef} onEnded={handleSongEnd} />
         </aside>
     );
 }

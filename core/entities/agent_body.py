@@ -1214,7 +1214,7 @@ class Agente:
         )
 
         # ACTUAlIZACIÓN INMEDIATA DE UI Y PERSISTENCIA
-        self.modelo.notificar_cambio_estado()
+        self.modelo.notificar_cambio_estado(force=True)
         self.modelo.guardar_estado()
 
         # Hito histórico
@@ -1348,15 +1348,19 @@ class Agente:
         if not grupo_id:
             return False
 
-        # Si grupo_id no existe como clave, buscar por nombre en civilizaciones
+        # Si grupo_id no existe como clave, buscar por ID o nombre en civilizaciones
         if grupo_id not in self.modelo.civilizaciones:
-            nombre_lower = str(grupo_id).lower()
+            nombre_lower = str(grupo_id).lower().strip()
             for gid, civ in self.modelo.civilizaciones.items():
-                if civ.nombre.lower() == nombre_lower:
+                if (
+                    gid.lower() == nombre_lower
+                    or civ.nombre.lower().strip() == nombre_lower
+                    or nombre_lower in civ.nombre.lower()
+                ):
                     grupo_id = gid
                     break
 
-        if getattr(self, 'grupo_id', None) == grupo_id:
+        if getattr(self, 'grupo_id', None) == grupo_id and getattr(self, 'civilizacion_id', None) == grupo_id:
             return False
 
         civ = None
@@ -1365,7 +1369,26 @@ class Agente:
         except Exception:
             civ = None
 
+        if civ is None and hasattr(self.modelo, "civilizaciones"):
+            from core.entities.faction import Civilizacion
+            colores_en_uso = [c.color for c in self.modelo.civilizaciones.values()]
+            paleta = getattr(self.modelo, "colores_paleta", ["#7c4dff"])
+            nuevo_color = next(
+                (c for c in paleta if c not in colores_en_uso),
+                paleta[hash(str(grupo_id)) % len(paleta)],
+            )
+            civ = Civilizacion(
+                id=str(grupo_id),
+                nombre=str(grupo_id),
+                color=nuevo_color,
+                user_id=getattr(self.modelo, "user_id", None),
+                descripcion="Facción emergente",
+            )
+            self.modelo.civilizaciones[str(grupo_id)] = civ
+            grupo_id = str(grupo_id)
+
         self.grupo_id = grupo_id
+        self.civilizacion_id = grupo_id
         self.rol = "Ciudadano"
 
         if civ:
@@ -1382,7 +1405,7 @@ class Agente:
         # Notificar cambios de estado para refrescar UI / persistencia
         try:
             if hasattr(self.modelo, 'notificar_cambio_estado'):
-                self.modelo.notificar_cambio_estado()
+                self.modelo.notificar_cambio_estado(force=True)
             if hasattr(self.modelo, 'guardar_estado'):
                 self.modelo.guardar_estado()
         except Exception:
@@ -1460,27 +1483,141 @@ class Agente:
         return True
 
     # === MÉTODOS SOCIALES OASIS ===
-    def social_follow(self, otro_agente) -> bool:
-        """El agente sigue a otro agente. Acepta objeto agente o ID string."""
+    def _resolver_nombre_agente(self, agent_id: str) -> str:
+        if not agent_id:
+            return "Desconocido"
+        for a in getattr(self.modelo, "agentes", []):
+            if a.unique_id == agent_id:
+                return a.identidad.nombre if getattr(a, "identidad", None) and a.identidad.nombre else a.unique_id
+        return str(agent_id)
+
+    def actualizar_contexto_social_oasis(self):
+        """Actualiza el feed reciente y las notificaciones de Oasis para la deliberación del agente."""
         recsys = getattr(self.modelo, "social_recsys", None)
         if not recsys:
+            self.contexto_social_reciente = []
+            self.notificaciones_sociales = []
+            return
+
+        try:
+            feed = self.get_social_feed(limite=8)
+            all_posts = feed.get("all_posts", []) if isinstance(feed, dict) else []
+            otros = [p for p in all_posts if getattr(p, "autor_id", None) != self.unique_id]
+            seleccion = (otros if otros else all_posts)[:6]
+            self.contexto_social_reciente = [
+                {
+                    "id": p.id,
+                    "autor_id": p.autor_id,
+                    "autor": self._resolver_nombre_agente(p.autor_id),
+                    "texto": p.contenido,
+                    "likes": getattr(p, "likes", 0),
+                    "comentarios": getattr(p, "comentarios", 0),
+                    "temas": getattr(p, "temas", []),
+                }
+                for p in seleccion
+            ]
+        except Exception:
+            self.contexto_social_reciente = []
+
+        try:
+            raw_notifs = self.get_social_notifications()
+            formatted_notifs = []
+            for n in raw_notifs[-10:]:
+                usuario_id = n.get("autor_interaccion") or n.get("usuario", "")
+                formatted_notifs.append(
+                    {
+                        "tipo": n.get("tipo", "like"),
+                        "post_id": n.get("post_id", ""),
+                        "autor_interaccion": self._resolver_nombre_agente(usuario_id),
+                        "contenido_post": n.get("contenido_post", ""),
+                        "contenido_interaccion": n.get("contenido_interaccion") or n.get("contenido", ""),
+                    }
+                )
+            self.notificaciones_sociales = formatted_notifs
+        except Exception:
+            self.notificaciones_sociales = []
+
+    def _seleccionar_post_relevante(self, para: str = "comment"):
+        """Selecciona el post más relevante del feed de Oasis para comentar o dar like."""
+        import random
+
+        recsys = getattr(self.modelo, "social_recsys", None)
+        if not recsys or not recsys.interest_recsys.posts:
+            return None
+
+        paso = getattr(self.modelo, "paso_actual", 0)
+        try:
+            feed = recsys.get_feed_hibrido(self, paso, limite=25)
+            posts = feed.get("all_posts", []) if isinstance(feed, dict) else list(recsys.interest_recsys.posts.values())
+        except Exception:
+            posts = list(recsys.interest_recsys.posts.values())
+
+        if not posts:
+            return None
+
+        otros_posts = [p for p in posts if getattr(p, "autor_id", None) != self.unique_id]
+        candidatos = otros_posts if otros_posts else posts
+
+        if para == "like":
+            no_likeados = [p for p in candidatos if self.unique_id not in getattr(p, "likes_por", [])]
+            if not no_likeados:
+                return None
+            candidatos = no_likeados
+        elif para == "comment":
+            comentarios_map = getattr(recsys.interest_recsys, "comentarios", {})
+            sin_mi_comentario = [
+                p
+                for p in candidatos
+                if not any(c.get("autor_id") == self.unique_id for c in comentarios_map.get(p.id, []))
+            ]
+            if sin_mi_comentario:
+                candidatos = sin_mi_comentario
+
+        top_k = candidatos[: min(3, len(candidatos))]
+        return random.choice(top_k)
+
+    def _generar_comentario_rapido(self, post, paso: int):
+        """Deshabilitado: los comentarios deben ser generados únicamente por el LLM."""
+        return None
+
+    def social_follow(self, otro_agente) -> bool:
+        """El agente sigue a otro agente. Acepta objeto agente o ID/nombre string."""
+        recsys = getattr(self.modelo, "social_recsys", None)
+        if not recsys or not otro_agente:
             return False
 
-        # Manejar si se pasa un ID en lugar de un objeto
         if isinstance(otro_agente, str):
             target_id = otro_agente
-            otro_agente_obj = next((a for a in self.modelo.agentes if a.unique_id == target_id), None)
+            otro_agente_obj = next(
+                (
+                    a
+                    for a in self.modelo.agentes
+                    if a.unique_id == target_id
+                    or (getattr(a, "identidad", None) and a.identidad.nombre == target_id)
+                ),
+                None,
+            )
+            if otro_agente_obj:
+                target_id = otro_agente_obj.unique_id
         else:
-            target_id = otro_agente.unique_id
+            target_id = getattr(otro_agente, "unique_id", None)
             otro_agente_obj = otro_agente
+
+        if not target_id or target_id == self.unique_id:
+            return False
 
         exito = recsys.follow(self.unique_id, target_id)
         if exito:
             self.siguiendo += 1
             if otro_agente_obj:
                 otro_agente_obj.seguidores += 1
+            self.necesidades["social"] = min(10.0, self.necesidades.get("social", 5.0) + 0.4)
+            self.capital_social = self.calcular_capital_social()
+            self.ultimo_turno_oasis = getattr(self.modelo, "paso_actual", 0)
+            nombre_yo = self._resolver_nombre_agente(self.unique_id)
+            nombre_target = self._resolver_nombre_agente(target_id)
             self.modelo.log(
-                f"📡 [{self.unique_id}] Ahora sigue a [{target_id}]",
+                f"📡 [{nombre_yo}] Ahora sigue a [{nombre_target}] en Oasis",
                 categoria="social",
             )
             if hasattr(self.modelo, "notificar_cambio_estado"):
@@ -1515,92 +1652,123 @@ class Agente:
         if not recsys:
             return False
 
+        if not target_id or target_id not in recsys.interest_recsys.posts:
+            candidato = self._seleccionar_post_relevante(para="like")
+            if not candidato:
+                return False
+            target_id = candidato.id
+
         exito = recsys.likear_post(target_id, self.unique_id)
         if exito:
-            # Incrementar likes recibidos del autor del post
+            self.likes_dados += 1
             post = recsys.interest_recsys.posts.get(target_id)
+            autor_nombre = "otro agente"
             if post:
+                autor_nombre = self._resolver_nombre_agente(post.autor_id)
                 autor_post = next(
                     (a for a in self.modelo.agentes if a.unique_id == post.autor_id),
                     None,
                 )
                 if autor_post:
                     autor_post.likes_recibidos += 1
-                
-                # --- NUEVO: Actualizar intereses basado en post likeado ---
                 self.actualizar_intereses_por_post(post, engagement_level=2.0)
-            
-            # Recompensa biológica: un like satisface un poco la necesidad social
-            self.necesidades["social"] = min(10.0, self.necesidades["social"] + 0.5)
+                if post.likes > 5:
+                    self.ultimo_engagement_positivo = getattr(self.modelo, "paso_actual", 0)
+
+            self.necesidades["social"] = min(10.0, self.necesidades.get("social", 5.0) + 0.5)
             self.capital_social = self.calcular_capital_social()
-            
+            self.ultimo_turno_oasis = getattr(self.modelo, "paso_actual", 0)
+            nombre_yo = self._resolver_nombre_agente(self.unique_id)
+            self.modelo.log(
+                f"❤️ [{nombre_yo}] Puso Me Gusta en el post de [{autor_nombre}] en Oasis",
+                categoria="social",
+            )
+
             if hasattr(self.modelo, "notificar_cambio_estado"):
                 self.modelo.notificar_cambio_estado()
                 if hasattr(self.modelo, "difundir_social_feed"):
                     self.modelo.difundir_social_feed()
         return exito
 
-
     def social_create_post(
         self, contenido: str, tipo: str = "opinion", temas: List[str] = None
     ) -> bool:
         """El agente crea un post en la red social."""
         recsys = getattr(self.modelo, "social_recsys", None)
-        if not recsys:
+        if not recsys or not contenido or not isinstance(contenido, str):
             return False
 
         paso = getattr(self.modelo, "paso_actual", 0)
+        if not temas:
+            temas = self._detectar_temas_post(contenido) if hasattr(self, "_detectar_temas_post") else ["general"]
         post = recsys.crear_post(self.modelo.user_id, self.unique_id, contenido, tipo, temas, timestamp=paso)
 
         self.posts_publicados += 1
-        # Publicar satisface la necesidad de expresión (baja el hambre de expresión)
+        self.ultimo_paso_social = paso
+        self.ultimo_turno_oasis = paso
         if "expresion" in self.necesidades_intelectuales:
             self.necesidades_intelectuales["expresion"] = max(
                 0.0, self.necesidades_intelectuales["expresion"] - 2.0
             )
+        self.necesidades["social"] = min(10.0, self.necesidades.get("social", 5.0) + 1.0)
 
-        # --- NUEVO: Actualizar intereses basado en el post creado ---
-        self.actualizar_intereses_por_post(post, engagement_level=5.0)  # Crear = máximo
-
+        self.actualizar_intereses_por_post(post, engagement_level=5.0)
         self.capital_social = self.calcular_capital_social()
 
-        # Notificar cambio de estado para actualizar UI
+        nombre_agente = self._resolver_nombre_agente(self.unique_id)
+        self.modelo.log(
+            f"📱 [{nombre_agente}] Publicó en Oasis: {contenido[:100]}...",
+            categoria="social",
+        )
+
         if hasattr(self.modelo, "notificar_cambio_estado"):
             self.modelo.notificar_cambio_estado()
 
         return True
 
     def social_comment(self, post_id: str, contenido: str) -> bool:
-        """El agente comenta en un post."""
+        """El agente comenta en un post relevante de Oasis."""
         recsys = getattr(self.modelo, "social_recsys", None)
         if not recsys:
             return False
 
-        # No publicar comentarios vacíos o no-string cuando LLM no disponible
-        if not contenido or not isinstance(contenido, str):
+        if not contenido or not isinstance(contenido, str) or len(contenido.strip()) < 5:
             return False
+
+        if not post_id or post_id not in recsys.interest_recsys.posts:
+            post_relevante = self._seleccionar_post_relevante(para="comment")
+            if post_relevante:
+                post_id = post_relevante.id
+            else:
+                return False
 
         exito = recsys.comentar(post_id, self.unique_id, contenido)
         if exito:
-            # --- NUEVO: Actualizar intereses basado en post comentado ---
             post = recsys.interest_recsys.posts.get(post_id)
+            autor_nombre = "otro agente"
             if post:
+                autor_nombre = self._resolver_nombre_agente(post.autor_id)
                 self.actualizar_intereses_por_post(post, engagement_level=3.0)
-            
-            self.comentarios_realizados += 1
-            # Recompensa biológica: comentar es interacción social fuerte
-            self.necesidades["social"] = min(10.0, self.necesidades["social"] + 1.5)
-            self.capital_social = self.calcular_capital_social()
-            
-            # MEJORA: Registrar comentario en memoria para retroalimentación
-            self.memoria.registrar_accion(f"Comenté en post: {contenido[:40]}...")
-            # Incrementar contador de engagement positivo reciente
-            self.ultimo_engagement_positivo = getattr(self.modelo, "paso_actual", 0)
 
-            # Notificar cambio de estado para actualizar UI
+            self.comentarios_realizados += 1
+            self.necesidades["social"] = min(10.0, self.necesidades.get("social", 5.0) + 1.5)
+            self.capital_social = self.calcular_capital_social()
+
+            self.memoria.registrar_accion(f"Comenté en post: {contenido[:40]}...")
+            paso = getattr(self.modelo, "paso_actual", 0)
+            self.ultimo_engagement_positivo = paso
+            self.ultimo_turno_oasis = paso
+
+            nombre_yo = self._resolver_nombre_agente(self.unique_id)
+            self.modelo.log(
+                f"💬 [{nombre_yo}] Comentó en el post de [{autor_nombre}]: {contenido[:80]}...",
+                categoria="social",
+            )
+
             if hasattr(self.modelo, "notificar_cambio_estado"):
                 self.modelo.notificar_cambio_estado()
-        return exito
+            return True
+        return False
 
     def get_social_feed(self, limite: int = 10) -> Dict:
         """Obtiene el feed personalizado del agente."""
@@ -1755,96 +1923,107 @@ class Agente:
             self._ejecutar_follow_aleatorio()
 
     def social_force_action(self, paso: int) -> bool:
-        """Ejecuta forzosamente una acción en la red social por turno.
+        """Ejecuta forzosamente una acción en la red social Oasis por turno.
 
-        Garantiza que cada turno el agente realice una acción social (post, like, comment o follow).
+        Garantiza que en todos sus turnos el agente interactúe con Oasis:
+        posteando, comentando un post relevante, poniendo me gusta o siguiendo a otro agente.
         """
         import random
+        from agents.cerebro_llm import cerebro_llm
+
         recsys = getattr(self.modelo, "social_recsys", None)
         if not recsys:
             return False
 
-        # 1. Obtener el feed para interactuar
         try:
             feed = recsys.get_feed_hibrido(self, paso, limite=20)
-            posts = []
-            if isinstance(feed, dict):
-                posts = feed.get("all_posts", []) or []
-            elif isinstance(feed, list):
-                posts = feed
+            posts = feed.get("all_posts", []) if isinstance(feed, dict) else (feed if isinstance(feed, list) else [])
         except Exception:
-            posts = []
+            posts = list(recsys.interest_recsys.posts.values())
 
-        # 2. Decidir tipo de acción
-        # Probabilidades base: Post (20%), Like (30%), Comment (35%), Follow (15%)
-        if not posts:
-            decision = "post"
-        else:
-            exp_hunger = self.necesidades_intelectuales.get("expresion", 0)
-            engagement_bonus = 0.15 if getattr(self, "ultimo_engagement_positivo", 0) > paso - 3 else 0.0
-            if exp_hunger > 7 or self.posts_publicados < 1:
-                decision = random.choices(
-                    ["post", "like", "comment", "follow"], weights=[0.4, 0.2, 0.25 + engagement_bonus, 0.15]
-                )[0]
-            else:
-                decision = random.choices(
-                    ["post", "like", "comment", "follow"], weights=[0.15, 0.3, 0.40 + engagement_bonus, 0.15]
-                )[0]
+        otros_posts = [p for p in posts if getattr(p, "autor_id", None) != self.unique_id]
+        unliked_posts = [
+            p for p in (otros_posts if otros_posts else posts)
+            if getattr(p, "autor_id", None) != self.unique_id
+            and self.unique_id not in getattr(p, "likes_por", [])
+        ]
+        siguiendo = set(self.get_following())
+        otros_agentes_no_seguidos = [
+            a
+            for a in getattr(self.modelo, "agentes", [])
+            if a.unique_id != self.unique_id and a.esta_vivo and a.unique_id not in siguiendo
+        ]
 
-        # 3. Ejecutar la decisión
-        from agents.cerebro_llm import cerebro_llm
+        exp_hunger = self.necesidades_intelectuales.get("expresion", 0)
+        engagement_bonus = 0.15 if getattr(self, "ultimo_engagement_positivo", 0) > paso - 3 else 0.0
 
-        if decision == "post":
-            try:
+        pesos_candidatos = {
+            "post": 0.40 if (exp_hunger > 7 or self.posts_publicados < 1) else 0.20,
+            "comment": (0.25 if (exp_hunger > 7 or self.posts_publicados < 1) else 0.40) + engagement_bonus,
+            "like": 0.20 if (exp_hunger > 7 or self.posts_publicados < 1) else 0.25,
+            "follow": 0.15,
+        }
+
+        disponibles = ["post"]
+        if posts:
+            disponibles.append("comment")
+        if unliked_posts:
+            disponibles.append("like")
+        if otros_agentes_no_seguidos:
+            disponibles.append("follow")
+
+        pesos = [pesos_candidatos[a] for a in disponibles]
+        primaria = random.choices(disponibles, weights=pesos, k=1)[0]
+
+        orden_intentos = [primaria] + [a for a in ["comment", "like", "follow", "post"] if a in disponibles and a != primaria]
+
+        usar_llm = bool(getattr(cerebro_llm, "model", None)) and (
+            random.random() < getattr(self.modelo, "social_llm_ratio", 0.45)
+        )
+
+        for decision in orden_intentos:
+            if decision == "comment" and posts:
+                target = self._seleccionar_post_relevante(para="comment") or (
+                    random.choice(otros_posts) if otros_posts else random.choice(posts)
+                )
+                if target:
+                    if self._ejecutar_comentario_aleatorio(target.id, usar_llm=True):
+                        return True
+
+            elif decision == "like" and unliked_posts:
+                target = self._seleccionar_post_relevante(para="like") or random.choice(unliked_posts)
+                if target and self.social_like(target.id):
+                    return True
+
+            elif decision == "follow" and otros_agentes_no_seguidos:
+                autores_posts_no_seguidos = [
+                    p.autor_id
+                    for p in otros_posts
+                    if getattr(p, "autor_id", None) in {a.unique_id for a in otros_agentes_no_seguidos}
+                ]
+                if autores_posts_no_seguidos:
+                    target_autor_id = autores_posts_no_seguidos[0]
+                    if self.social_follow(target_autor_id):
+                        return True
+                if self._ejecutar_follow_aleatorio():
+                    return True
+
+            elif decision == "post":
                 tipo_post = self._determinar_tipo_post() if hasattr(self, "_determinar_tipo_post") else "opinion"
-                # USAR CONTEXTO ENRIQUECIDO (Diary, Milestones, Weather)
-                if hasattr(self, "_generar_contenido_post"):
-                    contenido = self._generar_contenido_post(tipo_post, paso)
-                else:
-                    contenido = cerebro_llm.generar_post_social(self, f"Paso: {paso}")
-            except Exception:
                 contenido = None
-            if contenido:
-                return self.social_create_post(contenido, tipo=tipo_post, temas=[])
-
-        elif decision == "like" and posts:
-            # Likear 1-2 posts aleatorios
-            num_likes = random.randint(1, 2)
-            liked_any = False
-            for _ in range(num_likes):
-                target = random.choice(posts)
-                if self.social_like(target.id):
-                    liked_any = True
-            if liked_any: return True
-
-        elif decision == "comment" and posts:
-            # Comentar en un post que no sea propio si es posible
-            otros_posts = [p for p in posts if getattr(p, "autor_id", None) != self.unique_id]
-            target = random.choice(otros_posts) if otros_posts else random.choice(posts)
-            
-            try:
-                # Usar el nuevo método del cerebro para generar comentarios reales (requiere LLM)
-                contenido_comentario = cerebro_llm.generar_comentario_social(self, target, f"Turno {paso}")
-            except Exception as e:
-                contenido_comentario = None
-            
-            # Si no se obtuvo comentario válido (p.ej. LLM ausente), no comentar
-            if not contenido_comentario:
-                return False
-            return self.social_comment(target.id, contenido_comentario)
-
-        elif decision == "follow" and posts:
-            # Priorizar seguir a alguien que no seguimos aún
-            siguiendo = self.get_following()
-            otros_posts = [p for p in posts if getattr(p, "autor_id", None) != self.unique_id and getattr(p, "autor_id", None) not in siguiendo]
-            target = random.choice(otros_posts) if otros_posts else random.choice(posts)
-            if target and hasattr(target, 'autor_id'):
-                return self.social_follow(target.autor_id)
-
-        # Fallback a follow si no se hizo nada
-        if posts and random.random() < 0.2:
-            target = random.choice(posts)
-            return self.social_follow(target.autor_id)
+                if usar_llm:
+                    try:
+                        if hasattr(self, "_generar_contenido_post"):
+                            contenido = self._generar_contenido_post(tipo_post, paso)
+                        else:
+                            contenido = cerebro_llm.generar_post_social(self, f"Paso: {paso}")
+                    except Exception:
+                        contenido = None
+                if not contenido or len(str(contenido).strip()) < 5:
+                    contenido = self._generar_contenido_post_rapido(tipo_post, paso)
+                temas = self._detectar_temas_post(contenido) if hasattr(self, "_detectar_temas_post") else ["general"]
+                if self.social_create_post(contenido, tipo=tipo_post, temas=temas):
+                    return True
 
         return False
 
@@ -2041,136 +2220,110 @@ class Agente:
 
         return temas
 
-    def _ejecutar_like_aleatorio(self, target_post_id=None):
-        """Da like a un post específico o uno aleatorio."""
+    def _ejecutar_like_aleatorio(self, target_post_id=None) -> bool:
+        """Da like a un post específico o a un post relevante no likeado."""
         recsys = getattr(self.modelo, "social_recsys", None)
         if not recsys:
-            return
+            return False
 
-        if target_post_id:
-            post_id = target_post_id
-        else:
-            posts = recsys.interest_recsys.posts
-            if not posts: return
-            post_ids = [pid for pid, p in posts.items() if p.autor_id != self.unique_id]
-            if not post_ids: return
-            import random
-            # MEJORA: priorizar posts con engagement alto para dar like
-            posts_con_engagement = [(pid, p) for pid, p in posts.items() if p.autor_id != self.unique_id and p.likes > 2]
-            if posts_con_engagement and random.random() < 0.6:  # 60% de probabilidad de priorizar engagement
-                post_id = random.choice(posts_con_engagement)[0]
-            else:
-                post_id = random.choice(post_ids)
+        post_id = target_post_id
+        if not post_id or post_id not in recsys.interest_recsys.posts:
+            candidato = self._seleccionar_post_relevante(para="like")
+            if not candidato:
+                return False
+            post_id = candidato.id
 
-        self.social_like(post_id)
-        self.likes_dados += 1
-        # MEJORA: si el like va a un post conengagement alto, el agente se siente más satisfecho
-        post = recsys.interest_recsys.posts.get(post_id)
-        if post and post.likes > 5:
-            self.ultimo_engagement_positivo = getattr(self.modelo, "paso_actual", 0)
+        return self.social_like(post_id)
 
-    def _ejecutar_follow_aleatorio(self):
-        """Sigue a un agente aleatorio."""
+    def _ejecutar_follow_aleatorio(self) -> bool:
+        """Sigue a un agente relevante que aún no siga."""
+        import random
+
+        siguiendo = set(self.get_following())
         otros = [
             a
             for a in self.modelo.agentes
-            if a.unique_id != self.unique_id and a.esta_vivo
+            if a.unique_id != self.unique_id and a.esta_vivo and a.unique_id not in siguiendo
         ]
         if not otros:
-            return
-
-        import random
+            return False
 
         otro = random.choice(otros)
 
-        # MEJORA: priorizar seguir a agentes con buen engagement o alta influencia
-        # Buscar si hay agentes con posts de alto engagement
         recsys = getattr(self.modelo, "social_recsys", None)
-        agentes_con_engagement = set()
+        agentes_destacados = set()
         if recsys and getattr(self, "fomento_engagement", True):
             for post in recsys.interest_recsys.posts.values():
-                if post.likes > 3:
-                    agentes_con_engagement.add(post.autor_id)
-            if agentes_con_engagement:
-                # Priorizar seguir a agentes con engagement
-                agentes_engagement_list = [a for a in otros if a.unique_id in agentes_con_engagement]
-                if agentes_engagement_list and random.random() < 0.4:
-                    otro = random.choice(agentes_engagement_list)
+                if getattr(post, "likes", 0) > 1 or getattr(post, "comentarios", 0) > 0:
+                    agentes_destacados.add(post.autor_id)
+        for a in otros:
+            if self.grupo_id and a.grupo_id == self.grupo_id:
+                agentes_destacados.add(a.unique_id)
 
-        # Verificar si ya lo sigue
-        siguiendo = self.get_following()
-        if otro.unique_id not in siguiendo:
-            self.social_follow(otro)
-            # Log con contexto de engagement
-            nombre_otro = otro.identidad.nombre if hasattr(otro, "identidad") and otro.identidad else otro.unique_id
-            if getattr(self, "fomento_engagement", True) and otro.unique_id in agentes_con_engagement:
-                self.modelo.log(
-                    f"📡 [{self.unique_id}] Sigue a [{nombre_otro}] (engagement alto en sus posts)",
-                    categoria="social",
-                )
+        candidatos_destacados = [a for a in otros if a.unique_id in agentes_destacados]
+        if candidatos_destacados and random.random() < 0.65:
+            otro = random.choice(candidatos_destacados)
 
-    def _ejecutar_comentario_aleatorio(self, target_post_id=None):
-        """Comenta en un post específico o uno aleatorio del feed con contexto de hilo."""
+        return self.social_follow(otro)
+
+    def _ejecutar_comentario_aleatorio(self, target_post_id=None, usar_llm: bool = True) -> bool:
+        """Comenta en un post específico o en un post relevante del feed con contexto de hilo."""
         recsys = getattr(self.modelo, "social_recsys", None)
         if not recsys:
-            return
+            return False
 
-        if target_post_id:
-            post_id = target_post_id
-        else:
-            posts = recsys.interest_recsys.posts
-            if not posts: return
-            post_ids = [pid for pid, p in posts.items() if p.autor_id != self.unique_id]
-            if not post_ids: return
-            import random
-            post_id = random.choice(post_ids)
+        post_id = target_post_id
+        if not post_id or post_id not in recsys.interest_recsys.posts:
+            candidato = self._seleccionar_post_relevante(para="comment")
+            if not candidato:
+                return False
+            post_id = candidato.id
 
         target_post = recsys.interest_recsys.posts.get(post_id)
-        if not target_post: return
+        if not target_post:
+            return False
 
-        # Obtener comentarios existentes para dar contexto de hilo
         comentarios_hilo = recsys.interest_recsys.comentarios.get(post_id, [])
         contexto_hilo = ""
         if comentarios_hilo:
             contexto_hilo = "\nOtros comentarios en este hilo:\n"
-            for c in comentarios_hilo[-3:]: # Ver últimos 3 comentarios
-                contexto_hilo += f"- {c['autor_id']}: {c['contenido']}\n"
+            for c in comentarios_hilo[-3:]:
+                autor_c = self._resolver_nombre_agente(c.get("autor_id", ""))
+                contexto_hilo += f"- {autor_c}: {c.get('contenido', '')}\n"
 
-        # Buscar nombre del autor del post
-        autor_post_nombre = target_post.autor_id
-        for a in self.modelo.agentes:
-            if a.unique_id == target_post.autor_id:
-                autor_post_nombre = a.identidad.nombre or a.unique_id
-                break
+        autor_post_nombre = self._resolver_nombre_agente(target_post.autor_id)
 
-        # --- NUEVO: Hechos relevantes del mundo para comentarios ---
         hitos_texto = ""
         if hasattr(self.modelo, "historia") and self.modelo.historia:
             hitos = self.modelo.historia.obtener_resumen_hitos()
             if hitos and "No han ocurrido" not in hitos:
                 hitos_texto = f"\n=== HECHOS RECIENTES EN EL MUNDO ===\n{hitos}\n"
 
-        from agents.cerebro_llm import cerebro_llm
-        ctx = (
-            f'Estás viendo un post de {autor_post_nombre} que dice: "{target_post.contenido}".'
-            f'{contexto_hilo}'
-            f'{hitos_texto}'
-            # MEJORA: Añadir lógica de engagement para motivar comentarios
-            f'\\nEste post tiene {getattr(target_post, "likes", 0)} likes y {getattr(target_post, "comentarios", 0)} comentarios.'
-            f'\\nParticipa en el debate para aumentar tu influencia social!'
-            f'\\nEscribe una respuesta corta, natural y significativa. '
-            f'Si hay otros comentarios, puedes construir sobre ellos o discrepan suavemente.'
-            f'\\nOpcionalmente, haz una pregunta para continuar el hilo.'
-        )
+        paso = getattr(self.modelo, "paso_actual", 0)
+        if not usar_llm:
+            return False
 
-        respuesta = cerebro_llm.generar_comentario_social(self, target_post, ctx)
-        if respuesta and len(respuesta) > 5:
-            self.social_comment(post_id, respuesta)
-            nombre_yo = self.identidad.nombre if self.identidad else self.unique_id
-            self.modelo.log(
-                f"💬 [{nombre_yo}] Comentó en el post de {autor_post_nombre}: {respuesta[:60]}...",
-                categoria="social",
-            )
+        respuesta = None
+        try:
+            from agents.cerebro_llm import cerebro_llm
+
+            if getattr(cerebro_llm, "model", None):
+                ctx = (
+                    f'Estás viendo un post de {autor_post_nombre} que dice: "{target_post.contenido}".'
+                    f"{contexto_hilo}"
+                    f"{hitos_texto}"
+                    f"\nEste post tiene {getattr(target_post, 'likes', 0)} likes y {getattr(target_post, 'comentarios', 0)} comentarios."
+                    f"\nParticipa en el debate para aumentar tu influencia social!"
+                    f"\nEscribe una respuesta corta, natural y significativa."
+                )
+                respuesta = cerebro_llm.generar_comentario_social(self, target_post, ctx)
+        except Exception:
+            respuesta = None
+
+        if not respuesta or len(str(respuesta).strip()) <= 5:
+            return False
+
+        return self.social_comment(post_id, respuesta)
 
     # === FIN MÉTODOS SOCIALES ===
 
@@ -3518,7 +3671,11 @@ class Agente:
                         self.abandonar_grupo_actual()
                     else:
                         self.grupo_id = None
+                        self.civilizacion_id = None
+                        self.rol = "Ciudadano"
                     self.modelo.log(f"🚪 {self.unique_id} ha abandonado la facción {viejo}.", categoria="social")
+                    if hasattr(self.modelo, 'notificar_cambio_estado'):
+                        self.modelo.notificar_cambio_estado(force=True)
                     return True
                 return False
             elif tipo == "invitar_grupo":

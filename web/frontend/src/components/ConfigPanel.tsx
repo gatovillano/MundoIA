@@ -17,12 +17,56 @@ interface ModelInfo {
     pricing?: any;
 }
 
+const STORAGE_KEY = "mundoia_ai_config";
+
+const PROVIDER_DISPLAY_MAP: Record<string, string> = {
+    openrouter: "OpenRouter",
+    openai: "OpenAI",
+    ollama: "Ollama",
+    kilocode: "KiloCode",
+};
+
+const OPENAI_DEFAULT_MODELS: ModelInfo[] = [
+    { id: "gpt-4o", name: "GPT-4o" },
+    { id: "gpt-4o-mini", name: "GPT-4o Mini" },
+    { id: "gpt-4-turbo", name: "GPT-4 Turbo" },
+];
+
+function stripProviderPrefix(modelId: string): string {
+    if (!modelId) return "";
+    return modelId.replace(/^(openrouter|ollama|kilocode)\//i, "");
+}
+
+function addProviderPrefix(modelId: string, prov: string): string {
+    if (!modelId) return "";
+    const clean = stripProviderPrefix(modelId);
+    if (prov === "OpenRouter") return `openrouter/${clean}`;
+    if (prov === "Ollama") return `ollama/${clean}`;
+    if (prov === "KiloCode") return `kilocode/${clean}`;
+    return clean;
+}
+
+function resolveProviderDisplay(rawProvider?: string, rawModel?: string): string {
+    if (rawProvider) {
+        const mapped = PROVIDER_DISPLAY_MAP[rawProvider.toLowerCase()];
+        if (mapped) return mapped;
+    }
+    if (rawModel?.startsWith("openrouter/")) return "OpenRouter";
+    if (rawModel?.startsWith("ollama/")) return "Ollama";
+    if (rawModel?.startsWith("kilocode/")) return "KiloCode";
+    if (rawModel?.startsWith("gpt-")) return "OpenAI";
+    return "OpenRouter";
+}
+
 export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps) {
     const [provider, setProvider] = useState("OpenRouter");
     const [apiKey, setApiKey] = useState("");
     const [baseUrl, setBaseUrl] = useState("");
     const [tavilyApiKey, setTavilyApiKey] = useState("");
     const [selectedModel, setSelectedModel] = useState("");
+    const [apiKeysByProvider, setApiKeysByProvider] = useState<Record<string, string>>({});
+    const [baseUrlsByProvider, setBaseUrlsByProvider] = useState<Record<string, string>>({});
+    const [modelsByProvider, setModelsByProvider] = useState<Record<string, string>>({});
     const [models, setModels] = useState<ModelInfo[]>([]);
     const [isLoadingModels, setIsLoadingModels] = useState(false);
     const [status, setStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error', msg: string }>({ type: 'idle', msg: '' });
@@ -30,15 +74,48 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
 
     const { socialMode, setSocialMode } = useGameStore();
 
-    // Cargar config inicial
+    // Cargar caché local de inmediato y sincronizar con el backend
+    useEffect(() => {
+        try {
+            const cached = localStorage.getItem(STORAGE_KEY);
+            if (cached) {
+                const parsed = JSON.parse(cached);
+                if (parsed.provider) setProvider(parsed.provider);
+                if (parsed.apiKey) setApiKey(parsed.apiKey);
+                if (parsed.baseUrl !== undefined) setBaseUrl(parsed.baseUrl);
+                if (parsed.tavilyApiKey) setTavilyApiKey(parsed.tavilyApiKey);
+                if (parsed.selectedModel) setSelectedModel(parsed.selectedModel);
+                if (parsed.apiKeysByProvider) setApiKeysByProvider(parsed.apiKeysByProvider);
+                if (parsed.baseUrlsByProvider) setBaseUrlsByProvider(parsed.baseUrlsByProvider);
+                if (parsed.modelsByProvider) setModelsByProvider(parsed.modelsByProvider);
+            }
+        } catch (e) {
+            console.warn("Error leyendo caché local de AI config:", e);
+        }
+        fetchCurrentConfig();
+    }, []);
+
     useEffect(() => {
         if (isOpen) {
             fetchCurrentConfig();
         }
     }, [isOpen]);
 
-    // loadModels has been moved or modified to accept arguments so it doesn't rely on stale state
+    const persistLocalCache = (patch: Record<string, any>) => {
+        try {
+            const currentRaw = localStorage.getItem(STORAGE_KEY);
+            const current = currentRaw ? JSON.parse(currentRaw) : {};
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...current, ...patch }));
+        } catch (e) {
+            console.warn("Error guardando caché local de AI config:", e);
+        }
+    };
+
     const loadModels = async (prov: string, currentApiKey: string, currentBaseUrl: string) => {
+        if (prov === "OpenAI") {
+            setModels(OPENAI_DEFAULT_MODELS);
+            return;
+        }
         setIsLoadingModels(true);
         setStatus({ type: 'loading', msg: 'Cargando...' });
         try {
@@ -69,69 +146,121 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
             const res = await fetch(getHttpUrl("/config/ai"));
             if (res.ok) {
                 const data = await res.json();
-                setApiKey(data.api_key || "");
-                setBaseUrl(data.base_url || "");
-                setTavilyApiKey(data.tavily_api_key || "");
-                setSelectedModel(data.model || "");
-                let loadedProv = "OpenRouter";
-                if (data.model?.includes("openrouter/")) {
-                    loadedProv = "OpenRouter";
-                } else if (data.model?.includes("ollama/")) {
-                    loadedProv = "Ollama";
-                } else if (data.model?.includes("kilocode/")) {
-                    loadedProv = "KiloCode";
-                } else if (data.model?.includes("gpt-")) {
-                    loadedProv = "OpenAI";
-                }
-                setProvider(loadedProv);
+                const loadedProv = resolveProviderDisplay(data.provider, data.model);
+                const provKey = loadedProv.toLowerCase();
 
-                if (loadedProv === "OpenRouter" || loadedProv === "Ollama" || loadedProv === "KiloCode") {
-                    loadModels(loadedProv, data.api_key || "", data.base_url || "");
-                } else {
-                    setModels([
-                        { id: "gpt-4o", name: "GPT-4o" },
-                        { id: "gpt-4o-mini", name: "GPT-4o Mini" },
-                        { id: "gpt-4-turbo", name: "GPT-4 Turbo" }
-                    ]);
-                }
+                const keysMap: Record<string, string> = data.api_keys || {};
+                const urlsMap: Record<string, string> = data.base_urls || {};
+                const modelsMap: Record<string, string> = data.models_by_provider || {};
+
+                const activeKey = data.api_key || keysMap[provKey] || "";
+                const activeUrl = data.base_url !== undefined ? data.base_url : (urlsMap[provKey] || "");
+                const activeModel = data.model || modelsMap[provKey] || "";
+                const activeTavily = data.tavily_api_key || "";
+
+                if (activeKey) keysMap[provKey] = activeKey;
+                if (activeUrl) urlsMap[provKey] = activeUrl;
+                if (activeModel) modelsMap[provKey] = activeModel;
+
+                setProvider(loadedProv);
+                setApiKey(activeKey);
+                setBaseUrl(activeUrl);
+                setTavilyApiKey(activeTavily);
+                setSelectedModel(activeModel);
+                setApiKeysByProvider(keysMap);
+                setBaseUrlsByProvider(urlsMap);
+                setModelsByProvider(modelsMap);
+
+                persistLocalCache({
+                    provider: loadedProv,
+                    apiKey: activeKey,
+                    baseUrl: activeUrl,
+                    tavilyApiKey: activeTavily,
+                    selectedModel: activeModel,
+                    apiKeysByProvider: keysMap,
+                    baseUrlsByProvider: urlsMap,
+                    modelsByProvider: modelsMap,
+                });
+
+                loadModels(loadedProv, activeKey, activeUrl);
             }
         } catch (error) {
             console.error("Error fetching config:", error);
         }
     };
 
-    const handleManualReload = () => {
-        if (provider === "OpenRouter" || provider === "Ollama" || provider === "KiloCode") {
-            loadModels(provider, apiKey, baseUrl);
+    const handleProviderChange = (newProv: string) => {
+        // Guardar lo que el usuario estaba editando en el proveedor actual
+        const oldProvKey = provider.toLowerCase();
+        const updatedKeys = { ...apiKeysByProvider, [oldProvKey]: apiKey };
+        const updatedUrls = { ...baseUrlsByProvider, [oldProvKey]: baseUrl };
+        const updatedModels = selectedModel
+            ? { ...modelsByProvider, [oldProvKey]: selectedModel }
+            : modelsByProvider;
+
+        setApiKeysByProvider(updatedKeys);
+        setBaseUrlsByProvider(updatedUrls);
+        setModelsByProvider(updatedModels);
+
+        const newProvKey = newProv.toLowerCase();
+        const nextKey = updatedKeys[newProvKey] || "";
+        const nextUrl = updatedUrls[newProvKey] || (newProv === "KiloCode" ? "https://api.kilo.ai/api/gateway" : "");
+        const nextModel = updatedModels[newProvKey] || "";
+
+        setProvider(newProv);
+        setApiKey(nextKey);
+        setBaseUrl(nextUrl);
+        if (nextModel) {
+            setSelectedModel(nextModel);
         }
+        loadModels(newProv, nextKey, nextUrl);
+    };
+
+    const handleManualReload = () => {
+        loadModels(provider, apiKey, baseUrl);
     };
 
     const handleSave = async () => {
         setStatus({ type: 'loading', msg: 'Sincronizando...' });
         try {
-            let finalModel = selectedModel || searchTerm; // Try searchTerm as custom input if selected is missing
-            if (provider === "OpenRouter" && !finalModel.startsWith("openrouter/")) {
-                finalModel = `openrouter/${finalModel}`;
-            } else if (provider === "Ollama" && !finalModel.startsWith("ollama/")) {
-                finalModel = `ollama/${finalModel}`;
-            } else if (provider === "KiloCode" && !finalModel.startsWith("kilocode/")) {
-                finalModel = `kilocode/${finalModel}`;
-            }
+            const rawModel = selectedModel || searchTerm; // Try searchTerm as custom input if selected is missing
+            const finalModel = addProviderPrefix(rawModel, provider);
+            const provKey = provider.toLowerCase();
+            const finalBaseUrl = (provider === "Ollama" || provider === "KiloCode") ? baseUrl : "";
 
             const res = await fetch(getHttpUrl("/config/ai"), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    provider: provider.toLowerCase(), // Enviar en minúscula al backend: "kilocode", "openrouter", "openai", "ollama"
+                    provider: provKey, // Enviar en minúscula al backend: "kilocode", "openrouter", "openai", "ollama"
                     api_key: apiKey,
                     model: finalModel,
-                    base_url: (provider === "Ollama" || provider === "KiloCode") ? baseUrl : "",
+                    base_url: finalBaseUrl,
                     tavily_api_key: tavilyApiKey
                 })
             });
 
             if (res.ok) {
-                setSelectedModel(finalModel); // Actualizar el modelo seleccionado en la UI si era custom
+                const updatedKeys = { ...apiKeysByProvider, [provKey]: apiKey };
+                const updatedUrls = { ...baseUrlsByProvider, [provKey]: finalBaseUrl };
+                const updatedModels = { ...modelsByProvider, [provKey]: finalModel };
+
+                setSelectedModel(finalModel);
+                setApiKeysByProvider(updatedKeys);
+                setBaseUrlsByProvider(updatedUrls);
+                setModelsByProvider(updatedModels);
+
+                persistLocalCache({
+                    provider,
+                    apiKey,
+                    baseUrl: finalBaseUrl,
+                    tavilyApiKey,
+                    selectedModel: finalModel,
+                    apiKeysByProvider: updatedKeys,
+                    baseUrlsByProvider: updatedUrls,
+                    modelsByProvider: updatedModels,
+                });
+
                 setStatus({ type: 'success', msg: 'Matriz Cognitiva Guardada' });
                 setTimeout(() => setStatus({ type: 'idle', msg: '' }), 3000);
             } else {
@@ -142,10 +271,33 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
         }
     };
 
-    const filteredModels = models.filter(m =>
-        m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        m.id.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const isModelSelected = (modelId: string) => {
+        if (!selectedModel || !modelId) return false;
+        return (
+            selectedModel === modelId ||
+            stripProviderPrefix(selectedModel) === stripProviderPrefix(modelId)
+        );
+    };
+
+    // Asegurar que el modelo actualmente seleccionado siempre aparezca en la lista y al principio si coincide con el filtro
+    const baseModels: ModelInfo[] = (() => {
+        if (!selectedModel) return models;
+        const exists = models.some(m => isModelSelected(m.id));
+        if (exists) return models;
+        const cleanId = stripProviderPrefix(selectedModel);
+        return [{ id: selectedModel, name: `${cleanId} (Guardado)` }, ...models];
+    })();
+
+    const filteredModels = baseModels
+        .filter(m =>
+            m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            m.id.toLowerCase().includes(searchTerm.toLowerCase())
+        )
+        .sort((a, b) => {
+            const aSel = isModelSelected(a.id) ? -1 : 0;
+            const bSel = isModelSelected(b.id) ? -1 : 0;
+            return aSel - bSel;
+        });
 
     return (
         <div className="flex flex-col h-full space-y-8 pb-8">
@@ -155,7 +307,7 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
                     {["OpenRouter", "OpenAI", "Ollama", "KiloCode"].map((p) => (
                         <button
                             key={p}
-                            onClick={() => setProvider(p)}
+                            onClick={() => handleProviderChange(p)}
                             className={`py-2.5 text-[10px] font-bold uppercase rounded-xl transition-all ${provider === p ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 shadow-[0_0_15px_rgba(99,102,241,0.1)]' : 'text-gray-500 hover:text-gray-300'}`}
                         >
                             {p}
@@ -249,6 +401,17 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
             {/* Model Selector */}
             <Section title="Modelos Disponibles">
                 <div className="space-y-4">
+                    {selectedModel && (
+                        <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                            <div className="flex items-center gap-2 min-w-0">
+                                <Cpu className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                                <span className="text-[9px] text-indigo-300/70 uppercase tracking-wider font-bold shrink-0">Activo:</span>
+                                <span className="text-[10px] text-indigo-200 font-mono truncate">{selectedModel}</span>
+                            </div>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                        </div>
+                    )}
+
                     <div className="relative">
                         <input
                             type="text"
@@ -275,21 +438,24 @@ export default function ConfigPanelContent({ isOpen, onClose }: ConfigPanelProps
                                     <span className="text-[9px] font-mono text-indigo-500/40 uppercase tracking-widest animate-pulse">Sincronizando...</span>
                                 </div>
                             ) : filteredModels.length > 0 ? (
-                                filteredModels.map((m) => (
-                                    <button
-                                        key={m.id}
-                                        onClick={() => setSelectedModel(m.id)}
-                                        className={`w-full flex flex-col p-3 rounded-xl text-left transition-all mb-1 last:mb-0 group ${selectedModel === m.id ? 'bg-indigo-500/20 border border-indigo-500/20 shadow-lg' : 'hover:bg-white/[0.03]'}`}
-                                    >
-                                        <div className="flex items-center justify-between">
-                                            <span className={`text-[11px] font-bold font-mono transition-colors ${selectedModel === m.id ? 'text-indigo-300' : 'text-gray-500 group-hover:text-gray-300'}`}>
-                                                {m.name}
-                                            </span>
-                                            {selectedModel === m.id && <CheckCircle2 className="w-3 h-3 text-indigo-400" />}
-                                        </div>
-                                        <span className="text-[8px] text-gray-600 font-mono mt-0.5 truncate uppercase tracking-tighter opacity-50">{m.id}</span>
-                                    </button>
-                                ))
+                                filteredModels.map((m) => {
+                                    const active = isModelSelected(m.id);
+                                    return (
+                                        <button
+                                            key={m.id}
+                                            onClick={() => setSelectedModel(addProviderPrefix(m.id, provider))}
+                                            className={`w-full flex flex-col p-3 rounded-xl text-left transition-all mb-1 last:mb-0 group ${active ? 'bg-indigo-500/20 border border-indigo-500/20 shadow-lg' : 'hover:bg-white/[0.03]'}`}
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <span className={`text-[11px] font-bold font-mono transition-colors ${active ? 'text-indigo-300' : 'text-gray-500 group-hover:text-gray-300'}`}>
+                                                    {m.name}
+                                                </span>
+                                                {active && <CheckCircle2 className="w-3 h-3 text-indigo-400" />}
+                                            </div>
+                                            <span className="text-[8px] text-gray-600 font-mono mt-0.5 truncate uppercase tracking-tighter opacity-50">{m.id}</span>
+                                        </button>
+                                    );
+                                })
                             ) : (
                                 <div className="py-10 text-center text-[10px] text-gray-600 italic">No se encontraron modelos.</div>
                             )}

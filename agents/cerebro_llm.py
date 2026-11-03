@@ -5,6 +5,165 @@ import litellm
 import logging
 from litellm._logging import verbose_logger
 
+class _IncrementalJsonMessageStreamer:
+    """Filtra el stream crudo de un LLM que responde en JSON BDI y emite a `stream_callback`
+    únicamente los caracteres del campo `"mensaje"` (o `"message"`) conforme van llegando,
+    ocultando `<think>`, `"pensamiento"`, llaves JSON y demás metadatos.
+    """
+
+    def __init__(self, stream_callback):
+        self.stream_callback = stream_callback
+        self.buffer = ""
+        self.emitted_len = 0
+        self.done_sent = False
+        self._msg_pattern = None
+
+    def _get_pattern(self):
+        if self._msg_pattern is None:
+            import re
+            self._msg_pattern = re.compile(r'"(?:mensaje|message)"\s*:\s*"', re.IGNORECASE)
+        return self._msg_pattern
+
+    @staticmethod
+    def _extract_partial_json_string(s: str) -> str:
+        """Decodifica un string JSON parcial desde el inicio de `s` hasta la comilla de cierre (o el final si sigue abierto)."""
+        out = []
+        i = 0
+        n = len(s)
+        while i < n:
+            ch = s[i]
+            if ch == '"':
+                break
+            if ch == '\\':
+                if i + 1 >= n:
+                    # Secuencia de escape incompleta al final del chunk; esperar al siguiente chunk
+                    break
+                nxt = s[i + 1]
+                if nxt in ('"', '\\', '/'):
+                    out.append(nxt)
+                    i += 2
+                elif nxt == 'n':
+                    out.append('\n')
+                    i += 2
+                elif nxt == 'r':
+                    out.append('\r')
+                    i += 2
+                elif nxt == 't':
+                    out.append('\t')
+                    i += 2
+                elif nxt == 'b':
+                    out.append('\b')
+                    i += 2
+                elif nxt == 'f':
+                    out.append('\f')
+                    i += 2
+                elif nxt == 'u':
+                    if i + 5 >= n:
+                        break
+                    hex_str = s[i + 2 : i + 6]
+                    try:
+                        out.append(chr(int(hex_str, 16)))
+                    except Exception:
+                        out.append(hex_str)
+                    i += 6
+                else:
+                    out.append(nxt)
+                    i += 2
+            else:
+                out.append(ch)
+                i += 1
+        return "".join(out)
+
+    def feed(self, piece: str):
+        if not self.stream_callback or not piece:
+            return
+        self.buffer += piece
+
+        # Ignorar cualquier bloque <think>...</think> previo
+        import re
+        clean_buf = re.sub(r"<think>.*?</think>", "", self.buffer, flags=re.DOTALL | re.IGNORECASE)
+        if "<think>" in clean_buf.lower():
+            # Aún dentro de un bloque <think> abierto
+            return
+
+        match = self._get_pattern().search(clean_buf)
+        if not match:
+            return
+
+        after_quote = clean_buf[match.end():]
+        current_msg = self._extract_partial_json_string(after_quote)
+        if len(current_msg) > self.emitted_len:
+            delta = current_msg[self.emitted_len:]
+            self.emitted_len = len(current_msg)
+            try:
+                self.stream_callback(delta, False)
+            except Exception:
+                pass
+
+    def finish(self, final_message: str = ""):
+        if not self.stream_callback or self.done_sent:
+            return
+        self.done_sent = True
+        msg = (final_message or "").strip()
+        if msg and self.emitted_len == 0:
+            # Si no se pudo emitir incrementalmente durante el stream, emitir el mensaje limpio final
+            try:
+                self.stream_callback(msg, True)
+            except Exception:
+                pass
+        elif msg and len(msg) > self.emitted_len:
+            rem = msg[self.emitted_len:]
+            try:
+                self.stream_callback(rem, True)
+            except Exception:
+                pass
+        else:
+            try:
+                self.stream_callback("", True)
+            except Exception:
+                pass
+
+
+def _extract_message_text(response) -> str:
+    """Extrae texto de una respuesta LiteLLM/OpenAI, incluyendo campos de razonamiento como fallback."""
+    if not response:
+        return ""
+    try:
+        choices = getattr(response, "choices", None)
+        if not choices and isinstance(response, dict):
+            choices = response.get("choices")
+        if not choices:
+            return ""
+        c0 = choices[0]
+        msg = getattr(c0, "message", None)
+        if msg is None and isinstance(c0, dict):
+            msg = c0.get("message")
+        if not msg:
+            return ""
+
+        # 1. Intentar content principal
+        content = getattr(msg, "content", None) if not isinstance(msg, dict) else msg.get("content")
+        if content and isinstance(content, str) and content.strip():
+            return content.strip()
+
+        # 2. Fallback a campos de razonamiento (común en modelos reasoning cuando agotan max_tokens o usan otro campo)
+        for alt_field in ("reasoning", "reasoning_content", "thinking", "thought", "chain_of_thought"):
+            alt_val = getattr(msg, alt_field, None) if not isinstance(msg, dict) else msg.get(alt_field)
+            if alt_val and isinstance(alt_val, str) and alt_val.strip():
+                return alt_val.strip()
+
+        # 3. Revisar provider_specific_fields si existe en LiteLLM
+        psf = getattr(msg, "provider_specific_fields", None) if not isinstance(msg, dict) else msg.get("provider_specific_fields")
+        if isinstance(psf, dict):
+            for alt_field in ("reasoning", "reasoning_content", "thinking", "thought"):
+                alt_val = psf.get(alt_field)
+                if alt_val and isinstance(alt_val, str) and alt_val.strip():
+                    return alt_val.strip()
+    except Exception:
+        pass
+    return ""
+
+
 # Wrapper para interceptar modelos de KiloCode Gateway
 def completion(*args, **kwargs):
     if "model" in kwargs and isinstance(kwargs["model"], str) and kwargs["model"].startswith("kilocode/"):
@@ -17,6 +176,9 @@ def completion(*args, **kwargs):
         # Resolver API key si no está presente
         if not kwargs.get("api_key"):
             kwargs["api_key"] = os.getenv("KILOCODE_API_KEY", "")
+        # Asegurar margen suficiente de tokens para modelos de razonamiento (thinking/reasoning)
+        if "max_tokens" in kwargs and isinstance(kwargs["max_tokens"], int) and kwargs["max_tokens"] < 2048:
+            kwargs["max_tokens"] = 2048
     return _original_completion(*args, **kwargs)
 
 
@@ -395,6 +557,18 @@ def execute(**kwargs):
 
         return None
 
+    def _resolve_config_path(self) -> str:
+        """Resuelve la ruta del archivo de configuración persistente."""
+        if os.path.exists(self.config_path):
+            return self.config_path
+        if self.config_path == "config_ai.json":
+            root_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "config_ai.json")
+            )
+            if os.path.exists(root_path):
+                return root_path
+        return self.config_path
+
     def load_config(self):
         """Carga la configuración desde un archivo JSON o variables de entorno.
 
@@ -407,7 +581,8 @@ def execute(**kwargs):
             "MODEL_NAME", "openrouter/google/gemini-2.0-flash-exp:free"
         )
         # Usar la API key correspondiente al proveedor actual
-        provider = os.getenv("AI_PROVIDER", "openrouter")
+        provider = os.getenv("AI_PROVIDER", "openrouter").lower()
+        self.provider = provider
         if provider == "openrouter":
             self.api_key = os.getenv("OPENROUTER_API_KEY", "")
         elif provider == "openai":
@@ -418,21 +593,91 @@ def execute(**kwargs):
             self.api_key = os.getenv("KILOCODE_API_KEY", "")
         else:
             self.api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
-        self.base_url = os.getenv("AI_BASE_URL") or os.getenv("OLLAMA_API_BASE", "")
+        self.base_url = os.getenv("AI_BASE_URL") or (
+            os.getenv("OLLAMA_API_BASE", "") if provider == "ollama" else ""
+        )
         self.tavily_api_key = os.getenv("TAVILY_API_KEY") or ""
         config_source = "variables de entorno"
-        if os.path.exists(self.config_path):
+        resolved_path = self._resolve_config_path()
+        if os.path.exists(resolved_path):
             try:
-                with open(self.config_path, "r") as f:
+                with open(resolved_path, "r") as f:
                     config = json.load(f)
-                # Sobrescribir solo los valores presentes en el archivo
-                self.model = config.get("model", self.model)
-                self.api_key = config.get("api_key", self.api_key)
-                self.base_url = config.get("base_url", self.base_url)
-                self.tavily_api_key = config.get("tavily_api_key", self.tavily_api_key)
+                # Sobrescribir con los valores persistidos en el archivo
+                if config.get("model"):
+                    self.model = config["model"]
+                persisted_provider = (config.get("provider") or "").strip().lower()
+                if not persisted_provider and self.model:
+                    if self.model.startswith("openrouter/"):
+                        persisted_provider = "openrouter"
+                    elif self.model.startswith("ollama/"):
+                        persisted_provider = "ollama"
+                    elif self.model.startswith("kilocode/"):
+                        persisted_provider = "kilocode"
+                    elif self.model.startswith("gpt-"):
+                        persisted_provider = "openai"
+                if persisted_provider:
+                    self.provider = persisted_provider
+
+                # Restaurar mapa de API keys por proveedor si existe
+                api_keys_map = config.get("api_keys")
+                if isinstance(api_keys_map, dict):
+                    env_key_map = {
+                        "openrouter": "OPENROUTER_API_KEY",
+                        "openai": "OPENAI_API_KEY",
+                        "ollama": "OLLAMA_API_KEY",
+                        "kilocode": "KILOCODE_API_KEY",
+                    }
+                    for prov_key, env_var in env_key_map.items():
+                        val = api_keys_map.get(prov_key)
+                        if val:
+                            os.environ[env_var] = val
+
+                # Determinar api_key para el proveedor activo
+                if config.get("api_key"):
+                    self.api_key = config["api_key"]
+                elif isinstance(api_keys_map, dict) and api_keys_map.get(self.provider):
+                    self.api_key = api_keys_map[self.provider]
+                else:
+                    # Fallback a la variable de entorno específica del proveedor persistido
+                    if self.provider == "openrouter":
+                        self.api_key = os.getenv("OPENROUTER_API_KEY", "")
+                    elif self.provider == "openai":
+                        self.api_key = os.getenv("OPENAI_API_KEY", "")
+                    elif self.provider == "ollama":
+                        self.api_key = os.getenv("OLLAMA_API_KEY", "")
+                    elif self.provider == "kilocode":
+                        self.api_key = os.getenv("KILOCODE_API_KEY", "")
+
+                if "base_url" in config:
+                    self.base_url = config.get("base_url") or ""
+                if config.get("tavily_api_key"):
+                    self.tavily_api_key = config["tavily_api_key"]
+
+                # Sincronizar os.environ para que API endpoints y reload_config vean el estado persistido
+                if self.model:
+                    os.environ["MODEL_NAME"] = self.model
+                if self.provider:
+                    os.environ["AI_PROVIDER"] = self.provider
+                if self.api_key:
+                    if self.provider == "openrouter":
+                        os.environ["OPENROUTER_API_KEY"] = self.api_key
+                    elif self.provider == "openai":
+                        os.environ["OPENAI_API_KEY"] = self.api_key
+                    elif self.provider == "ollama":
+                        os.environ["OLLAMA_API_KEY"] = self.api_key
+                    elif self.provider == "kilocode":
+                        os.environ["KILOCODE_API_KEY"] = self.api_key
+                if self.base_url and self.provider in ("ollama", "kilocode"):
+                    os.environ["AI_BASE_URL"] = self.base_url
+                elif self.provider not in ("ollama", "kilocode"):
+                    os.environ.pop("AI_BASE_URL", None)
+                if self.tavily_api_key:
+                    os.environ["TAVILY_API_KEY"] = self.tavily_api_key
+
                 config_source = "config_ai.json"
             except Exception as e:
-                print(f"⚠️ Error cargando {self.config_path}: {e}")
+                print(f"⚠️ Error cargando {resolved_path}: {e}")
                 # Mantener valores por defecto (variables de entorno)
         # Auto-configurar base_url para Ollama si falta
         model_str = str(self.model or "")
@@ -460,7 +705,8 @@ def execute(**kwargs):
             "MODEL_NAME", "openrouter/google/gemini-2.0-flash-exp:free"
         )
         # Usar la API key correspondiente al proveedor actual
-        provider = os.getenv("AI_PROVIDER", "openrouter")
+        provider = os.getenv("AI_PROVIDER", "openrouter").lower()
+        self.provider = provider
         if provider == "openrouter":
             self.api_key = os.getenv("OPENROUTER_API_KEY", "")
         elif provider == "openai":
@@ -471,7 +717,9 @@ def execute(**kwargs):
             self.api_key = os.getenv("KILOCODE_API_KEY", "")
         else:
             self.api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
-        self.base_url = os.getenv("AI_BASE_URL") or os.getenv("OLLAMA_API_BASE", "")
+        self.base_url = os.getenv("AI_BASE_URL") or (
+            os.getenv("OLLAMA_API_BASE", "") if provider == "ollama" else ""
+        )
         self.tavily_api_key = os.getenv("TAVILY_API_KEY") or ""
         # Auto-configurar base_url para Ollama si falta
         model_str = str(self.model or "")
@@ -493,21 +741,34 @@ def execute(**kwargs):
         try:
             import requests
 
-            test_url = self.base_url.rstrip("/") + "/api/tags"
+            is_ollama = getattr(self, "provider", "") == "ollama" or str(getattr(self, "model", "")).startswith("ollama/")
+            headers = {}
+            if getattr(self, "api_key", None):
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            if is_ollama:
+                test_url = self.base_url.rstrip("/") + "/api/tags"
+            else:
+                test_url = self.base_url.rstrip("/") + "/models"
+
             print(f"🔌 Probando conexión a {test_url}...")
-            resp = requests.get(test_url, timeout=2)
+            resp = requests.get(test_url, headers=headers, timeout=4)
             if resp.status_code == 200:
-                models = resp.json().get("models", [])
-                print(
-                    f"✅ Conexión exitosa. Modelos disponibles: {[m.get('name') for m in models]}"
-                )
+                data = resp.json()
+                if is_ollama:
+                    models = data.get("models", [])
+                    print(
+                        f"✅ Conexión exitosa. Modelos disponibles: {[m.get('name') for m in models[:5]]}"
+                    )
+                else:
+                    models = data.get("data", [])
+                    print(
+                        f"✅ Conexión exitosa ({len(models)} modelos disponibles en el gateway)."
+                    )
             else:
                 print(f"❌ Conexión fallida: HTTP {resp.status_code}")
         except Exception as e:
             print(f"❌ No se pudo conectar a {self.base_url}: {e}")
-            print(
-                "   Asegúrate de que Ollama esté corriendo y accesible desde el contenedor Docker."
-            )
 
     def update_config(
         self, model: str, api_key: str, base_url: str = None, tavily_api_key: str = None
@@ -612,9 +873,9 @@ def execute(**kwargs):
             if self.api_key:
                 completion_args["api_key"] = self.api_key
 
-            # Usar base_url configurada solo para modelos Ollama
+            # Usar base_url configurada
             actual_base_url = getattr(self, "base_url", "")
-            if actual_base_url and self.model.startswith("ollama/"):
+            if actual_base_url:
                 completion_args["api_base"] = actual_base_url
 
             # Headers extra para Ollama si necesita API key
@@ -625,7 +886,7 @@ def execute(**kwargs):
 
             response = completion(**completion_args)
 
-            contenido = response.choices[0].message.content.strip()
+            contenido = _extract_message_text(response)
             # Intentar capturar pensamiento si el modelo lo provee, o usar fallback
             pensamiento = (
                 f"Mi estrategia como {agente_yo.rol} es clara: {contexto_extra}"
@@ -671,14 +932,14 @@ INSTRUCCIONES DE CHAT:
             }
             if getattr(self, "api_key", None):
                 completion_args["api_key"] = self.api_key
-            if getattr(self, "base_url", None) and self.model.startswith("ollama/"):
+            if getattr(self, "base_url", None):
                 completion_args["api_base"] = self.base_url
 
             if self.model.startswith("ollama/") and getattr(self, "api_key", None):
                 completion_args["extra_headers"] = {"Authorization": f"Bearer {self.api_key}"}
 
             response = completion(**completion_args)
-            contenido = response.choices[0].message.content.strip()
+            contenido = _extract_message_text(response)
             pensamiento = f"El Arquitecto me habló. Mi respuesta fue influenciada por mi personalidad de {agente_yo.rol}."
             
             return contenido, pensamiento
@@ -731,7 +992,7 @@ INSTRUCCIONES DE CHAT:
                 completion_args["api_base"] = self.base_url
 
             response = completion(**completion_args)
-            texto = response.choices[0].message.content.strip()
+            texto = _extract_message_text(response)
             # Log raw LLM output for debugging crónica generation
             try:
                 print(f"[CRONICA RAW] {texto[:1000]}")
@@ -791,7 +1052,7 @@ INSTRUCCIONES DE CHAT:
             if getattr(self, "base_url", ""): completion_args["api_base"] = self.base_url
 
             response = completion(**completion_args)
-            res = self._extract_json(response.choices[0].message.content)
+            res = self._extract_json(_extract_message_text(response))
             
             if res and "nombre" in res and "descripcion" in res:
                 return res["nombre"], res["descripcion"]
@@ -1181,7 +1442,7 @@ REGLAS:
                 }
 
             response = completion(**completion_params)
-            post_content = response.choices[0].message.content.strip()
+            post_content = _extract_message_text(response)
             post_content = _limpiar_post_content(post_content)
 
             finish_reason = None
@@ -1202,7 +1463,7 @@ REGLAS:
                 ]
                 completion_params["messages"] = retry_messages
                 response = completion(**completion_params)
-                post_content = response.choices[0].message.content.strip()
+                post_content = _extract_message_text(response)
                 post_content = _limpiar_post_content(post_content)
 
                 finish_reason = None
@@ -1223,7 +1484,7 @@ REGLAS:
                     ]
                     completion_params["messages"] = retry_messages2
                     response = completion(**completion_params)
-                    post_content = response.choices[0].message.content.strip()
+                    post_content = _extract_message_text(response)
                     post_content = _limpiar_post_content(post_content)
 
                     # Último intento: reescritura guiada si sigue inválido
@@ -1243,7 +1504,7 @@ REGLAS:
                         completion_params["messages"] = rewrite_messages
                         response = completion(**completion_params)
                         post_content = _limpiar_post_content(
-                            response.choices[0].message.content.strip()
+                            _extract_message_text(response)
                         )
 
             # Si aún inválido después de retries, usar fallback
@@ -1273,9 +1534,11 @@ REGLAS:
             return random.choice(fallbacks)
 
     def generar_comentario_social(self, agente_yo, post_objetivo, contexto_adicional=""):
-        """Genera un comentario para un post específico basado en el estado del agente."""
+        """Genera un comentario para un post específico basado en el estado del agente.
+        Si no hay modelo o el LLM falla, retorna None (nunca comentarios hardcodeados).
+        """
         if not self.model:
-            return "Interesante reflexión."
+            return None
 
         self._wait_for_rate_limit()
 
@@ -1288,8 +1551,8 @@ REGLAS:
 1. Sé AUTÉNTICO y DIRECTO. Habla sobre temas serios: política, filosofía, tecnología, ética o eventos mundiales. No te limites a tus necesidades básicas.
 2. Puedes estar de acuerdo, disentir, preguntar o aportar un nuevo punto de vista. Actúa como un humano en una simulación tipo MiroFish, debatiendo ideas de forma realista y profunda.
 3. Usa tu voz única basada en tu perfil OCEAN y experiencias. Busca inspiración en el internet y las noticias.
-4. El comentario debe ser breve pero significativo (50-200 caracteres).
-5. IMPORTANTE: Responde SOLO con el texto del comentario.
+4. El comentario debe ser breve pero significativo (50-250 caracteres) y terminar en una oración completa con signo de puntuación.
+5. IMPORTANTE: Responde SOLO con el texto del comentario, sin etiquetas, sin comillas envolventes ni explicaciones previas.
 """
 
         try:
@@ -1300,25 +1563,30 @@ REGLAS:
             else:
                 post_texto = getattr(post_objetivo, "contenido", str(post_objetivo))
                 post_autor = getattr(post_objetivo, "autor_id", "otro agente")
-            
+
+            if hasattr(agente_yo, "_resolver_nombre_agente") and post_autor:
+                post_autor = agente_yo._resolver_nombre_agente(post_autor)
+
             messages = [
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": f"Post de {post_autor}: \"{post_texto}\"\n\nContexto actual:\n{contexto_adicional}\n\nEscribe tu comentario:",
+                    "content": f"Post de {post_autor}: \"{post_texto}\"\n\nContexto actual:\n{contexto_adicional}\n\nEscribe tu comentario completo (50-250 caracteres), responde SOLO con el texto del comentario:",
                 },
             ]
 
+            timeout_s = float(os.getenv("MUNDOIA_LLM_TIMEOUT_SECONDS", "90"))
             completion_params = {
                 "model": self.model,
                 "messages": messages,
-                "max_tokens": 150,
+                "max_tokens": 1500,
                 "temperature": 0.8,
+                "timeout": timeout_s,
                 "no-log": True,
             }
             if self.api_key:
                 completion_params["api_key"] = self.api_key
-            
+
             actual_base_url = getattr(self, "base_url", "")
             if actual_base_url:
                 completion_params["api_base"] = actual_base_url
@@ -1330,20 +1598,33 @@ REGLAS:
                 }
 
             response = completion(**completion_params)
-            comentario = response.choices[0].message.content.strip()
-            
-            # Limpieza básica
+            raw_content = _extract_message_text(response)
+
+            if not raw_content or not str(raw_content).strip():
+                print(f"⚠️ [LLM COMMENT EMPTY] {agente_yo.unique_id}: Respuesta vacía del LLM, no se publica comentario.")
+                return None
+
+            comentario = str(raw_content).strip()
+
+            # Limpieza básica de bloques de pensamiento y envoltorios
             import re
-            comentario = re.sub(r"<think>.*?</think>", "", comentario, flags=re.DOTALL).strip()
-            if comentario.startswith('"') and comentario.endswith('"'):
+            comentario = re.sub(r"<think>.*?</think>", "", comentario, flags=re.DOTALL | re.IGNORECASE).strip()
+            comentario = re.sub(r"<think>.*", "", comentario, flags=re.DOTALL | re.IGNORECASE).strip()
+            comentario = re.sub(r"```[a-z]*\n?(.*?)\n?```", r"\1", comentario, flags=re.DOTALL).strip()
+            comentario = re.sub(r"^(comentario|respuesta|mensaje)\s*[:\-–]\s*", "", comentario, flags=re.IGNORECASE).strip()
+            if (comentario.startswith('"') and comentario.endswith('"')) or (comentario.startswith("'") and comentario.endswith("'")):
                 comentario = comentario[1:-1].strip()
-            
+
+            if not comentario or len(comentario) < 5:
+                print(f"⚠️ [LLM COMMENT INVALID] {agente_yo.unique_id}: Comentario demasiado corto o vacío tras limpieza.")
+                return None
+
             print(f"💬 [LLM COMMENT] {agente_yo.unique_id} -> {post_autor}: {comentario[:50]}...")
             return comentario
 
         except Exception as e:
             print(f"🔥 Error en generar_comentario_social para {agente_yo.unique_id}: {e}")
-            return "Coincido con tu punto de vista."
+            return None
 
     def generar_pensamiento_para_accion_forzada(
         self, agente_yo, agente_otro, contexto, accion_forzada, stream_callback=None
@@ -1425,6 +1706,7 @@ REGLAS:
             }
 
             raw_content = None
+            msg_streamer = _IncrementalJsonMessageStreamer(stream_callback) if stream_callback else None
 
             if stream_enabled and stream_callback:
                 try:
@@ -1450,37 +1732,37 @@ REGLAS:
                             pass
                         if piece:
                             parts.append(piece)
-                            try:
-                                stream_callback(piece, False)
-                            except Exception:
-                                pass
+                            if msg_streamer:
+                                msg_streamer.feed(piece)
                     raw_content = "".join(parts)
-                    try:
-                        stream_callback("", True)
-                    except Exception:
-                        pass
                 except Exception as stream_e:
                     print(f"⚠️ [FORCED ACTION STREAM FALLBACK] {agente_yo.unique_id}: {stream_e}")
 
             # Fallback a llamada sin streaming
-            if raw_content is None:
+            if not raw_content or not raw_content.strip():
                 response = completion(**completion_params)
-                raw_content = response.choices[0].message.content.strip()
-                if stream_callback and raw_content:
-                    try:
-                        stream_callback(raw_content, True)
-                    except Exception:
-                        pass
+                raw_content = _extract_message_text(response)
 
             content = raw_content.strip() if raw_content else ""
             
+            parsed_forced = self._extract_json(content)
+            if parsed_forced and isinstance(parsed_forced, dict):
+                if "message" in parsed_forced and "mensaje" not in parsed_forced:
+                    parsed_forced["mensaje"] = parsed_forced["message"]
+                if msg_streamer:
+                    msg_streamer.finish(parsed_forced.get("mensaje", ""))
+                return parsed_forced
+
             # Limpiar posibles etiquetas de markdown
             if content.startswith("```json"):
                 content = content[7:-3].strip()
             elif content.startswith("```"):
                 content = content[3:-3].strip()
             
-            return json.loads(content)
+            parsed_json = json.loads(content)
+            if isinstance(parsed_json, dict) and msg_streamer:
+                msg_streamer.finish(parsed_json.get("mensaje") or parsed_json.get("message") or "")
+            return parsed_json
         except Exception as e:
             print(f"❌ Error en acción forzada: {e}")
             return {
@@ -1834,48 +2116,81 @@ Responde ÚNICAMENTE con el objeto JSON válido. NO incluyas preámbulos, explic
             )
 
             def _extract_stream_piece(chunk):
-                """Extrae texto incremental de chunks LiteLLM/OpenAI-like."""
+                """Extrae (content, reasoning) incremental de chunks LiteLLM/OpenAI-like."""
                 if not chunk:
-                    return ""
+                    return "", ""
                 try:
                     choices = getattr(chunk, "choices", None)
                     if not choices and isinstance(chunk, dict):
                         choices = chunk.get("choices")
                     if not choices:
-                        return ""
+                        return "", ""
                     c0 = choices[0]
+
+                    txt = ""
+                    reas = ""
 
                     # Formato objeto
                     delta = getattr(c0, "delta", None)
                     if delta is not None:
-                        txt = getattr(delta, "content", None)
-                        if txt:
-                            return txt
+                        txt = getattr(delta, "content", None) or ""
+                        for rf in ("reasoning", "reasoning_content", "thinking", "thought"):
+                            rv = getattr(delta, rf, None)
+                            if rv and isinstance(rv, str):
+                                reas = rv
+                                break
+                        if not reas:
+                            psf = getattr(delta, "provider_specific_fields", None)
+                            if isinstance(psf, dict):
+                                for rf in ("reasoning", "reasoning_content", "thinking", "thought"):
+                                    rv = psf.get(rf)
+                                    if rv and isinstance(rv, str):
+                                        reas = rv
+                                        break
+                        if txt or reas:
+                            return txt, reas
 
                     # Formato dict
                     if isinstance(c0, dict):
                         delta = c0.get("delta", {}) or {}
-                        txt = delta.get("content")
-                        if txt:
-                            return txt
+                        txt = delta.get("content") or ""
+                        for rf in ("reasoning", "reasoning_content", "thinking", "thought"):
+                            rv = delta.get(rf)
+                            if rv and isinstance(rv, str):
+                                reas = rv
+                                break
+                        if txt or reas:
+                            return txt, reas
 
                     # Fallback no-stream-like
                     msg = getattr(c0, "message", None)
                     if msg is not None:
-                        txt = getattr(msg, "content", None)
-                        if txt:
-                            return txt
+                        txt = getattr(msg, "content", None) or ""
+                        for rf in ("reasoning", "reasoning_content", "thinking", "thought"):
+                            rv = getattr(msg, rf, None)
+                            if rv and isinstance(rv, str):
+                                reas = rv
+                                break
+                        if txt or reas:
+                            return txt, reas
                     if isinstance(c0, dict):
                         msg = c0.get("message", {}) or {}
-                        txt = msg.get("content")
-                        if txt:
-                            return txt
+                        txt = msg.get("content") or ""
+                        for rf in ("reasoning", "reasoning_content", "thinking", "thought"):
+                            rv = msg.get(rf)
+                            if rv and isinstance(rv, str):
+                                reas = rv
+                                break
+                        if txt or reas:
+                            return txt, reas
                 except Exception:
-                    return ""
-                return ""
+                    return "", ""
+                return "", ""
 
             raw_content = None
+            stream_reasoning_content = ""
             response = None
+            msg_streamer = _IncrementalJsonMessageStreamer(stream_callback) if stream_callback else None
             stream_enabled = os.getenv("MUNDOIA_LLM_STREAM", "1").lower() in {
                 "1",
                 "true",
@@ -1927,11 +2242,8 @@ Responde ÚNICAMENTE con el objeto JSON válido. NO incluyas preámbulos, explic
                             piece = msg.get("content") or data.get("response") or ""
                             if piece:
                                 parts.append(piece)
-                                if stream_callback:
-                                    try:
-                                        stream_callback(piece, False)
-                                    except Exception:
-                                        pass
+                                if msg_streamer:
+                                    msg_streamer.feed(piece)
 
                             if data.get("done") is True:
                                 break
@@ -1985,39 +2297,38 @@ Responde ÚNICAMENTE con el objeto JSON válido. NO incluyas preámbulos, explic
                         completion_params_stream["stream"] = True
                         stream_iter = completion(**completion_params_stream)
                         parts = []
+                        reasoning_parts = []
                         for chunk in stream_iter:
-                            piece = _extract_stream_piece(chunk)
+                            piece, reas_piece = _extract_stream_piece(chunk)
                             if piece:
                                 parts.append(piece)
-                                if stream_callback:
-                                    try:
-                                        stream_callback(piece, False)
-                                    except Exception:
-                                        pass
+                                if msg_streamer:
+                                    msg_streamer.feed(piece)
+                            if reas_piece:
+                                reasoning_parts.append(reas_piece)
                         raw_content = "".join(parts)
-                    if stream_callback:
-                        try:
-                            stream_callback("", True)
-                        except Exception:
-                            pass
+                        stream_reasoning_content = "".join(reasoning_parts)
                 except Exception as stream_e:
                     print(f"⚠️ [LLM STREAM FALLBACK] {agente_yo.unique_id}: {stream_e}")
 
-            if raw_content is None:
+            # Si el stream devolvió contenido vacío pero sí hubo razonamiento con JSON válido, rescatarlo
+            if (not raw_content or not raw_content.strip()) and stream_reasoning_content.strip():
+                if self._extract_json(stream_reasoning_content):
+                    print(
+                        f"🔍 [LLM STREAM ALT] {agente_yo.unique_id}: Rescatando JSON desde stream de razonamiento ({len(stream_reasoning_content)} chars)"
+                    )
+                    raw_content = stream_reasoning_content
+
+            if not raw_content or not raw_content.strip():
                 response = completion(**completion_params)
                 if response and response.choices and response.choices[0].message:
                     raw_content = response.choices[0].message.content
-                    if stream_callback and raw_content:
-                        try:
-                            stream_callback(raw_content, True)
-                        except Exception:
-                            pass
 
             print(
                 f"📥 [LLM RAW] Agente {agente_yo.unique_id} model={self.model} | content_len={len(raw_content) if raw_content else 0}"
             )
 
-            # --- Si content es None, intentar extraer de campos alternativos ---
+            # --- Si content es None o vacío, intentar extraer de campos alternativos ---
             if not raw_content or not raw_content.strip():
                 if response and response.choices and response.choices[0].message:
                     msg_obj = response.choices[0].message
@@ -2029,23 +2340,14 @@ Responde ÚNICAMENTE con el objeto JSON válido. NO incluyas preámbulos, explic
                     }
                     print(f"🔍 [LLM MSG FIELDS] {msg_fields}")
 
-                    # Intentar campos alternativos que algunos modelos usan
-                    for alt_field in [
-                        "reasoning_content",
-                        "thinking",
-                        "thought",
-                        "chain_of_thought",
-                    ]:
-                        alt_val = getattr(msg_obj, alt_field, None)
-                        if alt_val and isinstance(alt_val, str) and alt_val.strip():
-                            print(
-                                f"🔍 [LLM ALT] Encontrado contenido en campo '{alt_field}': {alt_val[:200]}"
-                            )
-                            # Intentar extraer JSON del contenido alternativo
-                            decision = self._extract_json(alt_val)
-                            if decision:
-                                raw_content = alt_val
-                                break
+                    alt_text = _extract_message_text(response)
+                    if alt_text:
+                        print(
+                            f"🔍 [LLM ALT] Encontrado contenido alternativo: {alt_text[:200]}"
+                        )
+                        decision = self._extract_json(alt_text)
+                        if decision:
+                            raw_content = alt_text
 
                 # Si sigue vacío, usar fallback
                 if not raw_content or not raw_content.strip():
@@ -2069,6 +2371,10 @@ Responde ÚNICAMENTE con el objeto JSON válido. NO incluyas preámbulos, explic
                         new_obj["accion"] = new_obj["action"]
                     if "tools" in new_obj and "herramientas" not in new_obj:
                         new_obj["herramientas"] = new_obj["tools"]
+                    if "message" in new_obj and "mensaje" not in new_obj:
+                        new_obj["mensaje"] = new_obj["message"]
+                    if "thought" in new_obj and "pensamiento" not in new_obj:
+                        new_obj["pensamiento"] = new_obj["thought"]
                     
                     # Normalizar argumentos/params (usado por el validador y el router)
                     # El validador busca 'argumentos', el router busca 'parametros' o 'argumentos'
@@ -2113,6 +2419,9 @@ Responde ÚNICAMENTE con el objeto JSON válido. NO incluyas preámbulos, explic
                     "nombre": "HABLAR",
                     "argumentos": {"mensaje": decision["mensaje"]},
                 }
+
+            if msg_streamer:
+                msg_streamer.finish(str(decision.get("mensaje", "")))
 
             # Normalizar acción a mayúsculas
             if "accion" in decision and "nombre" in decision["accion"]:
@@ -2347,11 +2656,7 @@ Responde ÚNICAMENTE con el objeto JSON válido. NO incluyas preámbulos, explic
             response = completion(**completion_params)
 
             try:
-                raw = (
-                    response.choices[0].message.content
-                    if response.choices and response.choices[0].message
-                    else None
-                )
+                raw = _extract_message_text(response)
                 if not raw or not raw.strip():
                     print(
                         f"⚠️ [PLAN EMPTY] Contenido vacío del modelo para plan. Usando fallback."
@@ -2366,7 +2671,7 @@ Responde ÚNICAMENTE con el objeto JSON válido. NO incluyas preámbulos, explic
                 return plan
             except Exception as e:
                 print(f"❌ [JSON ERROR] Error generando plan: {e}")
-                print(f"📄 [RAW RESPONSE] {response.choices[0].message.content}")
+                print(f"📄 [RAW RESPONSE] {_extract_message_text(response)}")
                 return {"objetivo": "Adaptarse", "pasos": ["Explorar", "Interactuar"]}
         except Exception as e:
             print(f"🔥 Error generando plan: {e}")
@@ -2433,11 +2738,7 @@ Responde ÚNICAMENTE con el objeto JSON válido. NO incluyas preámbulos, explic
             response = completion(**completion_params)
 
             try:
-                raw = (
-                    response.choices[0].message.content
-                    if response.choices and response.choices[0].message
-                    else None
-                )
+                raw = _extract_message_text(response)
                 if not raw or not raw.strip():
                     print(
                         f"⚠️ [LEY EMPTY] Contenido vacío del modelo para síntesis de ley."
@@ -2452,7 +2753,7 @@ Responde ÚNICAMENTE con el objeto JSON válido. NO incluyas preámbulos, explic
                 return res
             except Exception as e:
                 print(f"❌ [JSON ERROR] Error en síntesis de ley: {e}")
-                print(f"📄 [RAW RESPONSE] {response.choices[0].message.content}")
+                print(f"📄 [RAW RESPONSE] {_extract_message_text(response)}")
                 return {
                     "titulo": "Estatuto de Orden",
                     "contenido": "Regulación para mantener la paz social.",
@@ -2531,7 +2832,7 @@ No envíes texto fuera del JSON.
 
             response = completion(**completion_params)
             # Extracción robusta de JSON list
-            content = response.choices[0].message.content
+            content = _extract_message_text(response)
             # Intentar encontrar corchetes
             start = content.find("[")
             end = content.rfind("]") + 1
@@ -2588,7 +2889,7 @@ Respuesta en JSON (solo JSON):
                 api_key=self.api_key if self.api_key else None,
                 api_base=getattr(self, "base_url", None) or None,
             )
-            content = response.choices[0].message.content
+            content = _extract_message_text(response)
             data = self._extract_json(content)
             if data and 'reflexion' in data and 'conclusion' in data:
                 return data['reflexion'], data['conclusion']

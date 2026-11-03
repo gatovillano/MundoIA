@@ -46,7 +46,7 @@ def test_comments():
 
     # Verificar payload de stats
     sm = SessionManager()
-    stats = sm._build_stats_payload(sim, "test_user")
+    stats = sm._build_stats_payload(sim, "test_user", include_logs=False, include_map=False)
     
     feed = stats.get("socialFeed", [])
     test_post = next((p for p in feed if p["id"] == post_id), None)

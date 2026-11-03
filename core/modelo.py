@@ -198,6 +198,15 @@ class SocialRecSys:
             else:
                 comentarios = []
 
+            comentarios = [
+                c for c in (comentarios or [])
+                if isinstance(c, dict)
+                and (
+                    str(c.get("autor_id", "")).startswith("arquitecto_")
+                    or not self._es_comentario_hardcodeado(c.get("contenido", ""))
+                )
+            ]
+
             post = Post(post_id, autor_id, contenido, tipo, temas, timestamp)
             try:
                 post.partida_id = self.user_id
@@ -360,7 +369,36 @@ class SocialRecSys:
             return True
         return False
 
+    @staticmethod
+    def _es_comentario_hardcodeado(contenido: str) -> bool:
+        """Detecta comentarios provenientes de plantillas hardcodeadas o fallbacks antiguos."""
+        if not contenido or not isinstance(contenido, str):
+            return True
+        txt = contenido.strip()
+        if not txt:
+            return True
+        exactos = {
+            "Interesante reflexión.",
+            "Coincido con tu punto de vista.",
+        }
+        if txt in exactos:
+            return True
+        patrones = [
+            ("Coincido contigo,", "es clave en este turno", "para nuestra comunidad."),
+            ("Interesante perspectiva,", "creo que debemos coordinar esfuerzos pronto."),
+            ("Te leo atentamente,", "todos saldremos fortalecidos."),
+            ("Buen punto,", "Desde mi posición veo los mismos desafíos; contemos los unos con los otros."),
+        ]
+        for grupo in patrones:
+            if all(fragmento in txt for fragmento in grupo):
+                return True
+        return False
+
     def agregar_comentario(self, post_id, autor_id, contenido):
+        if not contenido or not isinstance(contenido, str) or not contenido.strip():
+            return None
+        if not str(autor_id or "").startswith("arquitecto_") and self._es_comentario_hardcodeado(contenido):
+            return None
         post = self.interest_recsys.posts.get(post_id)
         if not post:
             return None
@@ -499,6 +537,15 @@ class SocialRecSys:
                 seguidores.append(follower_id)
         return seguidores
 
+    @property
+    def seguidores(self):
+        """Mapa inverso followed_id -> set(follower_ids)."""
+        mapa = {}
+        for follower_id, seguidos_set in self.seguidos.items():
+            for followed_id in seguidos_set:
+                mapa.setdefault(followed_id, set()).add(follower_id)
+        return mapa
+
     def get_interacciones_usuario(self, user_id):
         """Retorna lista de interacciones (likes/comentarios) hechas en los posts de este usuario."""
         interacciones = []
@@ -542,7 +589,17 @@ class SocialRecSys:
             if "interest_recsys" in data:
                 ir_data = data["interest_recsys"]
                 if "comentarios" in ir_data and isinstance(ir_data["comentarios"], dict):
-                    inst.interest_recsys.comentarios = ir_data["comentarios"]
+                    inst.interest_recsys.comentarios = {
+                        pid: [
+                            c for c in (clist or [])
+                            if isinstance(c, dict)
+                            and (
+                                str(c.get("autor_id", "")).startswith("arquitecto_")
+                                or not cls._es_comentario_hardcodeado(c.get("contenido", ""))
+                            )
+                        ]
+                        for pid, clist in ir_data["comentarios"].items()
+                    }
                 if "posts" in ir_data and isinstance(ir_data["posts"], dict):
                     for pid, p_data in ir_data["posts"].items():
                         try:
@@ -561,15 +618,22 @@ class SocialRecSys:
                                 or inst.interest_recsys.comentarios.get(pid, [])
                                 or []
                             )
+                            comentarios_post = [
+                                c for c in comentarios_post
+                                if isinstance(c, dict)
+                                and (
+                                    str(c.get("autor_id", "")).startswith("arquitecto_")
+                                    or not cls._es_comentario_hardcodeado(c.get("contenido", ""))
+                                )
+                            ]
                             post.comentarios_detalle = list(comentarios_post)
-                            post.comentarios = p_data.get("comentarios", len(post.comentarios_detalle))
+                            post.comentarios = len(post.comentarios_detalle)
                             try:
                                 post.partida_id = user_id
                             except Exception:
                                 pass
                             inst.interest_recsys.posts[pid] = post
-                            if pid not in inst.interest_recsys.comentarios:
-                                inst.interest_recsys.comentarios[pid] = list(comentarios_post)
+                            inst.interest_recsys.comentarios[pid] = list(comentarios_post)
                         except Exception as e:
                             print(f"⚠️ [SOCIAL] Error reconstruyendo post {pid}: {e}")
             if "seguidos" in data and isinstance(data["seguidos"], dict):
@@ -1978,7 +2042,7 @@ class ModeloRelacional:
                     except Exception:
                         pass
                     try:
-                        self.notificar_cambio_estado()
+                        self.notificar_cambio_estado(force=True)
                     except Exception:
                         pass
             else:
@@ -2914,11 +2978,14 @@ class ModeloRelacional:
         finally:
             self._is_logging = False
 
-    def notificar_cambio_estado(self):
+    def notificar_cambio_estado(self, force: bool = False):
         """Notifica al frontend que ha habido un cambio de estado importante."""
         if self.state_change_callback and not getattr(self, "_stopped", False):
             try:
-                self.state_change_callback()
+                try:
+                    self.state_change_callback(force=force)
+                except TypeError:
+                    self.state_change_callback()
             except Exception as e:
                 logger.error(f"Error en state_change_callback: {e}")
 
@@ -3107,6 +3174,8 @@ class ModeloRelacional:
                     otro = self.get_agent_by_id(id_amigo)
                     if otro and otro.grupo_id is not None:
                         agente.grupo_id = otro.grupo_id
+                        agente.civilizacion_id = otro.grupo_id
+                        self.notificar_cambio_estado(force=True)
                         break
                 else:
                     # Crear nuevo grupo si tiene amigos o conocidos cercanos
@@ -3132,9 +3201,11 @@ class ModeloRelacional:
                             nombre_clan = f"Clan de {agente.identidad.nombre}"
                             desc_clan = f"Un grupo fundado por {agente.identidad.nombre}."
 
-                        color_clan = self.colores_paleta[
-                            hash(nuevo_id) % len(self.colores_paleta)
-                        ]
+                        colores_en_uso = [c.color for c in self.civilizaciones.values()]
+                        color_clan = next(
+                            (c for c in self.colores_paleta if c not in colores_en_uso),
+                            self.colores_paleta[hash(nuevo_id) % len(self.colores_paleta)],
+                        )
 
                         self.civilizaciones[nuevo_id] = Civilizacion(
                             id=nuevo_id,
@@ -3155,7 +3226,7 @@ class ModeloRelacional:
                             f"🚩 [CLAN] Se ha formado un nuevo clan: '{nombre_clan}' representado por {agente.unique_id}.",
                             categoria="consenso",
                         )
-                        self.notificar_cambio_estado()
+                        self.notificar_cambio_estado(force=True)
                         self.grupos_creados_este_paso += 1
 
     def ejecutar(self, pasos=50):
