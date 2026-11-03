@@ -526,6 +526,16 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
         const enter = agentSelection.enter().append("g").attr("class", "agent").attr("cursor", "pointer").on("click", (event, d) => { event.stopPropagation(); selectAgent(d.id); });
         enter.append("ellipse").attr("class", "agent-shadow").attr("cx", 0).attr("cy", 0).attr("rx", 10).attr("ry", 5).attr("fill", "rgba(0,0,0,0.25)");
         
+        // Aura de Avatar de Jugador / Posesión
+        enter.append("path").attr("class", "player-aura-ring")
+            .attr("d", "M 0 -14 L 21 0 L 0 14 L -21 0 Z")
+            .attr("fill", "rgba(16, 185, 129, 0.14)")
+            .attr("stroke", "#ffd54f")
+            .attr("stroke-width", 2)
+            .attr("stroke-dasharray", "4,2")
+            .attr("opacity", 0)
+            .style("filter", "drop-shadow(0 0 6px #10b981)");
+
         // Indicador de Selección: Un rombo brillante debajo del agente
         enter.append("path").attr("class", "selection-ring")
             .attr("d", "M 0 -12 L 18 0 L 0 12 L -18 0 Z")
@@ -540,6 +550,7 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
         bodyGroup.each(function(d) {
             const g = d3.select(this);
             const seed = (d.id || "0").split('').reduce((a: number, b: string) => a + b.charCodeAt(0), 0);
+            const isAvatar = Boolean(d.is_player_avatar || String(d.id || "").startsWith("av_"));
             
             // Aplicar variabilidad no uniforme mediante variables CSS
             const duration = 2.5 + (Math.sin(seed * 0.5) + 1) * 1.5; // Entre 2.5s y 5.5s
@@ -558,10 +569,13 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
             // --- DISEÑO HUMANOIDE FLOTANTE SIN PIERNAS ---
             
             // Torso con base redondeada (estilo fantasma/flotante)
-            g.append("path").attr("d", "M -4.5 -16 L 4.5 -16 Q 5.5 -16 5.5 -13 L 5.5 -6 Q 5.5 -2 0 -2 Q -5.5 -2 -5.5 -6 L -5.5 -13 Q -5.5 -16 -4.5 -16")
-                .attr("fill", d.color || "#EF5350")
-                .attr("stroke", "rgba(255,255,255,0.1)")
-                .attr("stroke-width", 1);
+            const defaultBodyColor = isAvatar ? "#10b981" : "#EF5350";
+            const torsoColor = (d.color && d.color !== "#ffffff") ? d.color : defaultBodyColor;
+            g.append("path").attr("class", "agent-torso")
+                .attr("d", "M -4.5 -16 L 4.5 -16 Q 5.5 -16 5.5 -13 L 5.5 -6 Q 5.5 -2 0 -2 Q -5.5 -2 -5.5 -6 L -5.5 -13 Q -5.5 -16 -4.5 -16")
+                .attr("fill", torsoColor)
+                .attr("stroke", isAvatar ? "#ffd54f" : "rgba(255,255,255,0.1)")
+                .attr("stroke-width", isAvatar ? 1.5 : 1);
             
             // Cabeza redondeada
             g.append("rect").attr("x", -5.5).attr("y", -26).attr("width", 11).attr("height", 11).attr("rx", 5).attr("fill", skin);
@@ -582,14 +596,21 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
             // Brazos
             g.append("rect").attr("x", -6.5).attr("y", -15).attr("width", 2).attr("height", 6).attr("rx", 1).attr("fill", skin);
             g.append("rect").attr("x", 4.5).attr("y", -15).attr("width", 2).attr("height", 6).attr("rx", 1).attr("fill", skin);
+
+            // Corona de Avatar de Jugador
+            g.append("text")
+                .attr("class", "player-crown-badge")
+                .attr("x", 0)
+                .attr("y", -33)
+                .attr("text-anchor", "middle")
+                .attr("font-size", "10px")
+                .attr("opacity", isAvatar ? 1 : 0)
+                .text("👑");
         });
 
-        const nameGroup = enter.append("g").attr("transform", "translate(0, 10)");
-        nameGroup.append("rect").attr("x", -30).attr("y", 0).attr("width", 60).attr("height", 12).attr("rx", 2).attr("fill", "rgba(0,0,0,0.7)");
-        nameGroup.append("text").attr("y", 9).attr("text-anchor", "middle").attr("font-size", "9px").attr("fill", "#ffffff").attr("font-weight", "500").attr("font-family", "monospace").text((d) => { 
-            const name = d.identidad?.nombre || d.alma?.nombre_propio || d.id || "???"; 
-            return name.length > 10 ? name.substring(0, 8) + ".." : name;
-        });
+        const nameGroup = enter.append("g").attr("class", "agent-name-group").attr("transform", "translate(0, 10)");
+        nameGroup.append("rect").attr("class", "agent-name-bg").attr("x", -34).attr("y", 0).attr("width", 68).attr("height", 13).attr("rx", 3).attr("fill", "rgba(0,0,0,0.75)");
+        nameGroup.append("text").attr("class", "agent-name-text").attr("y", 9.5).attr("text-anchor", "middle").attr("font-size", "8.5px").attr("fill", "#ffffff").attr("font-weight", "600").attr("font-family", "monospace");
 
         const merged = enter.merge(agentSelection);
         
@@ -600,10 +621,36 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
                 const seed = (d.id || "0").split('').reduce((a: number, b: string) => a + b.charCodeAt(0), 0);
                 const duration = 2.5 + (Math.sin(seed * 0.5) + 1) * 1.5;
                 const delay = -(Math.sin(seed * 0.8) + 1) * 2;
+                const isAvatar = Boolean(d.is_player_avatar || String(d.id || "").startsWith("av_"));
+                const defaultBodyColor = isAvatar ? "#10b981" : "#EF5350";
+                const torsoColor = (d.color && d.color !== "#ffffff") ? d.color : defaultBodyColor;
                 
-                d3.select(this)
+                const g = d3.select(this)
                     .style("--float-duration", `${duration}s`)
                     .style("--float-delay", `${delay}s`);
+
+                g.select(".agent-torso")
+                    .attr("fill", torsoColor)
+                    .attr("stroke", isAvatar ? "#ffd54f" : "rgba(255,255,255,0.1)")
+                    .attr("stroke-width", isAvatar ? 1.5 : 1);
+
+                g.select(".player-crown-badge")
+                    .attr("opacity", (isAvatar || d.is_possessed) ? 1 : 0)
+                    .text(isAvatar ? "👑" : "⚡");
+            });
+
+        merged.select(".agent-name-bg")
+            .attr("fill", (d) => (d.is_player_avatar || String(d.id || "").startsWith("av_")) ? "rgba(6, 78, 59, 0.9)" : "rgba(0,0,0,0.75)")
+            .attr("stroke", (d) => (d.is_player_avatar || String(d.id || "").startsWith("av_")) ? "#ffd54f" : "none")
+            .attr("stroke-width", (d) => (d.is_player_avatar || String(d.id || "").startsWith("av_")) ? 1 : 0);
+
+        merged.select(".agent-name-text")
+            .attr("fill", (d) => (d.is_player_avatar || String(d.id || "").startsWith("av_")) ? "#ffd54f" : "#ffffff")
+            .text((d) => {
+                const isAvatar = Boolean(d.is_player_avatar || String(d.id || "").startsWith("av_"));
+                const rawName = d.identidad?.nombre || d.alma?.nombre_propio || d.id || "???";
+                const shortName = rawName.length > 9 ? rawName.substring(0, 8) + ".." : rawName;
+                return isAvatar ? `👑${shortName}` : shortName;
             });
 
         merged.each(function(d) {
@@ -612,10 +659,11 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
             
             // Eliminar delay para evitar que actualizaciones frecuentes cancelen la transición
             node.transition()
-                .duration(800)
-                .ease(d3.easeCubicInOut)
+                .duration(400)
+                .ease(d3.easeCubicOut)
                 .attr("transform", `translate(${currentPos.x}, ${currentPos.y})`);
         });
+        merged.select(".player-aura-ring").transition().duration(200).attr("opacity", (d) => (d.is_player_avatar || String(d.id || "").startsWith("av_") || d.is_possessed) ? 1 : 0);
         merged.select(".selection-ring").transition().duration(200).attr("opacity", (d) => d.id === selectedAgentId ? 1 : 0);
         agentSelection.exit().remove();
 

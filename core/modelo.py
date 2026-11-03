@@ -108,6 +108,482 @@ def synchronized(func):
     return wrapper
 
 
+class Post:
+    def __init__(self, id, autor_id, contenido, tipo, temas, timestamp):
+        self.id = id
+        self.autor_id = autor_id
+        self.contenido = contenido
+        self.tipo = tipo
+        self.temas = temas or []
+        self.likes = 0
+        self.likes_por = []
+        self.comentarios = 0
+        self.comentarios_detalle = []
+
+        # Estandarizar timestamp a float (Unix) para evitar TypeErrors al ordenar
+        if isinstance(timestamp, datetime):
+            self.timestamp = timestamp.timestamp()
+        elif isinstance(timestamp, str):
+            try:
+                self.timestamp = datetime.fromisoformat(timestamp).timestamp()
+            except Exception:
+                self.timestamp = 0.0
+        else:
+            try:
+                self.timestamp = float(timestamp if timestamp is not None else 0.0)
+            except Exception:
+                self.timestamp = 0.0
+
+
+class InterestRecSys:
+    def __init__(self):
+        self.posts = {}  # id -> Post
+        self.comentarios = {}  # post_id -> list of comments
+
+
+class SocialRecSys:
+    def __init__(self, db, user_id, load_from_db: bool = True, modelo=None):
+        self.db = db
+        self.user_id = user_id
+        self.modelo = modelo
+        self.interest_recsys = InterestRecSys()
+        self.seguidos = {}  # follower_id -> set(followed_ids)
+        if load_from_db:
+            self._cargar_posts_desde_db()
+
+    def _cargar_posts_desde_db(self):
+        """Carga posts desde la base de datos."""
+        if not self.db:
+            return
+        rows = self.db.execute(
+            """
+            SELECT id, autor_id, contenido, tipo, temas, timestamp, likes, likes_por, comentarios
+            FROM posts_sociales
+            WHERE user_id = %s
+            ORDER BY timestamp DESC
+            """,
+            (self.user_id,),
+        )
+        if not rows:
+            return
+        for row in rows:
+            post_id, autor_id, contenido, tipo, temas_json, timestamp, likes, likes_por_json, comentarios_json = row
+            if isinstance(temas_json, list):
+                temas = temas_json
+            elif temas_json:
+                try:
+                    temas = json.loads(temas_json)
+                except (json.JSONDecodeError, TypeError):
+                    temas = []
+            else:
+                temas = []
+
+            if isinstance(likes_por_json, list):
+                likes_por = likes_por_json
+            elif likes_por_json:
+                try:
+                    likes_por = json.loads(likes_por_json)
+                except (json.JSONDecodeError, TypeError):
+                    likes_por = []
+            else:
+                likes_por = []
+
+            if isinstance(comentarios_json, list):
+                comentarios = comentarios_json
+            elif comentarios_json:
+                try:
+                    comentarios = json.loads(comentarios_json)
+                except (json.JSONDecodeError, TypeError):
+                    comentarios = []
+            else:
+                comentarios = []
+
+            post = Post(post_id, autor_id, contenido, tipo, temas, timestamp)
+            try:
+                post.partida_id = self.user_id
+            except Exception:
+                pass
+            post.likes = likes or 0
+            post.likes_por = likes_por
+            post.comentarios = len(comentarios) if comentarios is not None else 0
+            post.comentarios_detalle = comentarios
+            self.interest_recsys.posts[post_id] = post
+            self.interest_recsys.comentarios[post_id] = comentarios
+
+    def crear_post(self, user_id, autor_id, contenido, tipo, temas, timestamp=None):
+        post_id = f"post_{uuid.uuid4().hex[:12]}"
+        temas = temas or []
+        post = Post(post_id, autor_id, contenido, tipo, temas, timestamp if timestamp is not None else time.time())
+        try:
+            post.partida_id = user_id
+        except Exception:
+            pass
+        self.interest_recsys.posts[post_id] = post
+        self.interest_recsys.comentarios[post_id] = []
+
+        if self.db:
+            result = self.db.execute(
+                """
+                INSERT INTO posts_sociales (id, user_id, autor_id, contenido, tipo, temas, timestamp, likes, likes_por, comentarios)
+                VALUES (%s, %s, %s, %s, %s, %s, TO_TIMESTAMP(%s), %s, %s, %s)
+                ON CONFLICT (id, user_id) DO UPDATE SET
+                    contenido = EXCLUDED.contenido,
+                    timestamp = EXCLUDED.timestamp
+                """,
+                (
+                    post_id,
+                    user_id,
+                    autor_id,
+                    contenido,
+                    tipo,
+                    json.dumps(temas),
+                    post.timestamp,
+                    0,
+                    json.dumps([]),
+                    json.dumps([]),
+                ),
+            )
+            if result is False:
+                print(f"❌ [SOCIAL] Error persistiendo post {post_id} en DB")
+            else:
+                print(f"✅ [SOCIAL] Post {post_id} de {autor_id} persistido en DB")
+
+        try:
+            if hasattr(self, "modelo") and self.modelo and hasattr(self.modelo, "_emit_realtime_event"):
+                payload_post = {
+                    "id": post.id,
+                    "autor_id": post.autor_id,
+                    "contenido": post.contenido,
+                    "tipo": post.tipo,
+                    "temas": post.temas,
+                    "likes": getattr(post, "likes", 0),
+                    "likes_por": getattr(post, "likes_por", []),
+                    "comentarios": getattr(post, "comentarios", 0),
+                    "comentarios_detalle": getattr(post, "comentarios_detalle", []),
+                    "timestamp": getattr(post, "timestamp", 0),
+                    "partida_id": getattr(post, "partida_id", self.user_id),
+                }
+                self.modelo._emit_realtime_event("social_event", {"action": "new_post", "post": payload_post})
+        except Exception:
+            pass
+
+        return post
+
+    def publicar(self, **kwargs):
+        """Alias para crear_post con mapeo de argumentos si es necesario."""
+        uid = kwargs.get("user_id", self.user_id)
+        aid = kwargs.get("autor_id") or kwargs.get("agente_id")
+        cont = kwargs.get("contenido")
+        tipo = kwargs.get("tipo", "opinion")
+        temas = kwargs.get("temas", [])
+        return self.crear_post(uid, aid, cont, tipo, temas)
+
+    def likear_post(self, post_id, liker_id):
+        post = self.interest_recsys.posts.get(post_id)
+        if post and liker_id and liker_id not in post.likes_por:
+            post.likes += 1
+            post.likes_por.append(liker_id)
+            if self.db:
+                self.db.execute(
+                    """
+                    UPDATE posts_sociales
+                    SET likes = %s, likes_por = %s
+                    WHERE id = %s AND user_id = %s
+                    """,
+                    (post.likes, json.dumps(post.likes_por), post_id, self.user_id),
+                )
+            print(f"✅ [LIKE] Post {post_id} liked by {liker_id}. Total likes: {post.likes}")
+
+            try:
+                if hasattr(self, "modelo") and self.modelo:
+                    if hasattr(self.modelo, "_emit_realtime_event"):
+                        payload_like = {
+                            "action": "like",
+                            "post_id": post_id,
+                            "liker_id": liker_id,
+                            "likes": post.likes,
+                            "likes_por": post.likes_por,
+                        }
+                        self.modelo._emit_realtime_event("social_event", payload_like)
+                    if hasattr(self.modelo, "difundir_social_feed"):
+                        self.modelo.difundir_social_feed()
+            except Exception:
+                pass
+
+            return True
+        return False
+
+    def unlikear_post(self, post_id, liker_id):
+        post = self.interest_recsys.posts.get(post_id)
+        if post and liker_id in post.likes_por:
+            post.likes = max(0, post.likes - 1)
+            post.likes_por.remove(liker_id)
+            if self.db:
+                self.db.execute(
+                    """
+                    UPDATE posts_sociales
+                    SET likes = %s, likes_por = %s
+                    WHERE id = %s AND user_id = %s
+                    """,
+                    (post.likes, json.dumps(post.likes_por), post_id, self.user_id),
+                )
+            print(f"✅ [UNLIKE] Post {post_id} unliked by {liker_id}. Total likes: {post.likes}")
+            return True
+        return False
+
+    def likear(self, post_id, agente_id=None, liker_id=None):
+        """Alias para likear_post."""
+        uid = liker_id or agente_id
+        return self.likear_post(post_id, uid)
+
+    def follow(self, follower_id, followed_id):
+        if not follower_id or not followed_id or follower_id == followed_id:
+            return False
+        if follower_id not in self.seguidos:
+            self.seguidos[follower_id] = set()
+        if followed_id in self.seguidos[follower_id]:
+            return False
+        self.seguidos[follower_id].add(followed_id)
+        try:
+            if hasattr(self, "modelo") and self.modelo and hasattr(self.modelo, "_emit_realtime_event"):
+                self.modelo._emit_realtime_event(
+                    "social_event",
+                    {"action": "follow", "follower_id": follower_id, "followed_id": followed_id},
+                )
+        except Exception:
+            pass
+        return True
+
+    def unfollow(self, follower_id, followed_id):
+        if follower_id in self.seguidos and followed_id in self.seguidos[follower_id]:
+            self.seguidos[follower_id].remove(followed_id)
+            return True
+        return False
+
+    def agregar_comentario(self, post_id, autor_id, contenido):
+        post = self.interest_recsys.posts.get(post_id)
+        if not post:
+            return None
+        if post_id not in self.interest_recsys.comentarios:
+            self.interest_recsys.comentarios[post_id] = []
+        comentario_data = {
+            "id": f"comment_{len(self.interest_recsys.comentarios[post_id])}",
+            "autor_id": autor_id,
+            "contenido": contenido,
+            "timestamp": time.time(),
+        }
+        self.interest_recsys.comentarios[post_id].append(comentario_data)
+
+        post.comentarios = (getattr(post, "comentarios", 0) or 0) + 1
+        if not hasattr(post, "comentarios_detalle") or post.comentarios_detalle is None:
+            post.comentarios_detalle = []
+        if comentario_data not in post.comentarios_detalle:
+            post.comentarios_detalle.append(comentario_data)
+
+        if hasattr(self, "modelo") and self.modelo and hasattr(self.modelo, "difundir_social_feed"):
+            self.modelo.difundir_social_feed()
+
+        if self.db:
+            try:
+                self.db.execute(
+                    """
+                    UPDATE posts_sociales
+                    SET comentarios = %s
+                    WHERE id = %s AND user_id = %s
+                    """,
+                    (json.dumps(self.interest_recsys.comentarios[post_id]), post_id, self.user_id),
+                )
+            except Exception as e:
+                print(f"Error actualizando comentarios en DB: {e}")
+
+        try:
+            if hasattr(self, "modelo") and self.modelo and hasattr(self.modelo, "_emit_realtime_event"):
+                payload_comment = {
+                    "action": "comment",
+                    "post_id": post_id,
+                    "autor_id": autor_id,
+                    "contenido": contenido,
+                    "comentarios": post.comentarios,
+                    "comment_id": comentario_data["id"],
+                    "post": {
+                        "id": post.id,
+                        "comentarios": post.comentarios,
+                        "comentarios_detalle": post.comentarios_detalle,
+                    },
+                }
+                self.modelo._emit_realtime_event("social_event", payload_comment)
+        except Exception as e:
+            print(f"Error emitiendo evento social: {e}")
+
+        class Comentario:
+            def __init__(self, data):
+                self.id = data["id"]
+                self.autor_id = data["autor_id"]
+                self.contenido = data["contenido"]
+                self.timestamp = data["timestamp"]
+
+        return Comentario(comentario_data)
+
+    def comentar(self, post_id, autor_id=None, contenido="", agente_id=None):
+        """Alias para agregar_comentario."""
+        aid = autor_id or agente_id
+        return self.agregar_comentario(post_id, aid, contenido)
+
+    def get_feed_hibrido(self, agente, paso_actual, limite=10):
+        posts = list(self.interest_recsys.posts.values())
+        siguiendo_set = set(self.seguidos.get(getattr(agente, "unique_id", ""), set()))
+        intereses_raw = getattr(agente, "intereses", [])
+        if isinstance(intereses_raw, dict):
+            agent_intereses = {str(k).lower() for k, v in intereses_raw.items() if v > 0.2}
+        elif isinstance(intereses_raw, (list, set)):
+            agent_intereses = {str(x).lower() for x in intereses_raw}
+        else:
+            agent_intereses = set()
+
+        if hasattr(agente, "identidad") and agente.identidad and getattr(agente.identidad, "interests", None):
+            for it in agente.identidad.interests:
+                agent_intereses.add(str(it).lower())
+
+        def relevance_score(post):
+            post_temas = {str(t).lower() for t in getattr(post, "temas", [])}
+            topic_overlap = len(post_temas & agent_intereses) * 3.0
+            in_network_bonus = 2.5 if getattr(post, "autor_id", None) in siguiendo_set else 0.0
+            engagement_score = min(3.0, (getattr(post, "likes", 0) * 0.4) + (getattr(post, "comentarios", 0) * 0.6))
+            other_author_bonus = 1.0 if getattr(post, "autor_id", None) != getattr(agente, "unique_id", None) else -2.0
+            return topic_overlap + in_network_bonus + engagement_score + other_author_bonus
+
+        posts.sort(key=lambda p: (-relevance_score(p), -getattr(p, "timestamp", 0)))
+        in_network = [p for p in posts if getattr(p, "autor_id", None) in siguiendo_set][:limite]
+        trending = sorted(posts, key=lambda p: -(getattr(p, "likes", 0) + getattr(p, "comentarios", 0) * 2))[:limite]
+        recommended = [p for p in posts if getattr(p, "autor_id", None) != getattr(agente, "unique_id", None)][:limite]
+        return {
+            "in_network": in_network or recommended[:limite],
+            "recommended": recommended,
+            "trending": trending,
+            "all_posts": posts,
+        }
+
+    def to_dict(self):
+        return {
+            "interest_recsys": {
+                "posts": {
+                    pid: {
+                        "id": p.id,
+                        "autor_id": p.autor_id,
+                        "contenido": p.contenido,
+                        "tipo": p.tipo,
+                        "temas": p.temas,
+                        "likes": p.likes,
+                        "likes_por": p.likes_por,
+                        "comentarios": p.comentarios,
+                        "comentarios_detalle": getattr(p, "comentarios_detalle", []) or [],
+                        "timestamp": p.timestamp,
+                        "partida_id": getattr(p, "partida_id", None),
+                    }
+                    for pid, p in self.interest_recsys.posts.items()
+                },
+                "comentarios": self.interest_recsys.comentarios,
+            },
+            "seguidos": {k: list(v) for k, v in self.seguidos.items()},
+        }
+
+    def get_siguiendo(self, user_id):
+        """Retorna lista de usuarios que sigue este usuario."""
+        return list(self.seguidos.get(user_id, set()))
+
+    def get_seguidores(self, user_id):
+        """Retorna lista de usuarios que siguen a este usuario."""
+        seguidores = []
+        for follower_id, seguidos in self.seguidos.items():
+            if user_id in seguidos:
+                seguidores.append(follower_id)
+        return seguidores
+
+    def get_interacciones_usuario(self, user_id):
+        """Retorna lista de interacciones (likes/comentarios) hechas en los posts de este usuario."""
+        interacciones = []
+        for post_id, post in self.interest_recsys.posts.items():
+            if post.autor_id == user_id:
+                for liker in post.likes_por:
+                    interacciones.append(
+                        {
+                            "tipo": "like",
+                            "post_id": post_id,
+                            "usuario": liker,
+                            "autor_interaccion": liker,
+                            "contenido_post": post.contenido,
+                        }
+                    )
+                if post_id in self.interest_recsys.comentarios:
+                    for comentario in self.interest_recsys.comentarios[post_id]:
+                        interacciones.append(
+                            {
+                                "tipo": "comentario",
+                                "post_id": post_id,
+                                "usuario": comentario["autor_id"],
+                                "autor_interaccion": comentario["autor_id"],
+                                "contenido_post": post.contenido,
+                                "contenido": comentario["contenido"],
+                                "contenido_interaccion": comentario["contenido"],
+                            }
+                        )
+        return interacciones
+
+    @classmethod
+    def from_dict(cls, data, db=None, user_id=None, modelo=None):
+        inst = cls.__new__(cls)
+        inst.db = db
+        inst.user_id = user_id
+        inst.modelo = modelo
+        inst.interest_recsys = InterestRecSys()
+        inst.seguidos = {}
+
+        if isinstance(data, dict):
+            if "interest_recsys" in data:
+                ir_data = data["interest_recsys"]
+                if "comentarios" in ir_data and isinstance(ir_data["comentarios"], dict):
+                    inst.interest_recsys.comentarios = ir_data["comentarios"]
+                if "posts" in ir_data and isinstance(ir_data["posts"], dict):
+                    for pid, p_data in ir_data["posts"].items():
+                        try:
+                            post = Post(
+                                p_data.get("id", pid),
+                                p_data.get("autor_id", "unknown"),
+                                p_data.get("contenido", ""),
+                                p_data.get("tipo", "general"),
+                                p_data.get("temas", []),
+                                p_data.get("timestamp", 0),
+                            )
+                            post.likes = p_data.get("likes", 0)
+                            post.likes_por = p_data.get("likes_por", [])
+                            comentarios_post = (
+                                p_data.get("comentarios_detalle")
+                                or inst.interest_recsys.comentarios.get(pid, [])
+                                or []
+                            )
+                            post.comentarios_detalle = list(comentarios_post)
+                            post.comentarios = p_data.get("comentarios", len(post.comentarios_detalle))
+                            try:
+                                post.partida_id = user_id
+                            except Exception:
+                                pass
+                            inst.interest_recsys.posts[pid] = post
+                            if pid not in inst.interest_recsys.comentarios:
+                                inst.interest_recsys.comentarios[pid] = list(comentarios_post)
+                        except Exception as e:
+                            print(f"⚠️ [SOCIAL] Error reconstruyendo post {pid}: {e}")
+            if "seguidos" in data and isinstance(data["seguidos"], dict):
+                inst.seguidos = {k: set(v) for k, v in data["seguidos"].items()}
+
+        # Complementar con posts de la base de datos si existen
+        if db and user_id:
+            try:
+                inst._cargar_posts_desde_db()
+            except Exception:
+                pass
+        return inst
+
+
 class ModeloRelacional:
     """Clase principal del modelo de simulación multi-agente."""
 
@@ -342,6 +818,13 @@ class ModeloRelacional:
             if not agente.esta_vivo:
                 return
 
+            # Actualizar contexto de la red social Oasis para este turno
+            if hasattr(agente, "actualizar_contexto_social_oasis"):
+                try:
+                    agente.actualizar_contexto_social_oasis()
+                except Exception:
+                    pass
+
             # 1. ACTUALIZAR METABOLISMO
             # MECANISMO DE DESCANSO AUTOMÁTICO (SOLICITUD USUARIO)
             # Si el descanso llega a 0, el agente salta el turno y recupera descanso.
@@ -364,6 +847,15 @@ class ModeloRelacional:
                 # Auto-alimentación si es crítico y tiene comida a mano
                 if agente.necesidades["alimento"] < 3.0 and agente.inventario.get("comida", 0) > 0:
                     agente.comer()
+
+                # Interacción obligatoria en la red social Oasis incluso en turno de descanso físico
+                try:
+                    if hasattr(agente, "social_force_action"):
+                        agente.social_force_action(self.paso_actual)
+                    else:
+                        agente._ejecutar_accion_social_automatica(self.paso_actual)
+                except Exception as e:
+                    self.log(f"⚠️ Error en acción social de descanso para {agente.unique_id}: {e}", categoria="sistema")
                 
                 # Notificar cambio para que se vea el estado 'Zzz' en la UI si aplica
                 if hasattr(self, "notificar_cambio_estado"):
@@ -488,6 +980,14 @@ class ModeloRelacional:
                         self.log(f"❌ [CONTROL ERROR] Fallo en acción {i+1}: {e}", categoria="error")
                 
                 agente._ejecutando_decreto = False
+                if getattr(agente, "ultimo_turno_oasis", -1) != self.paso_actual:
+                    try:
+                        if hasattr(agente, "social_force_action"):
+                            agente.social_force_action(self.paso_actual)
+                        else:
+                            agente._ejecutar_accion_social_automatica(self.paso_actual)
+                    except Exception as e:
+                        self.log(f"⚠️ Error en acción social forzada (control) de {agente.unique_id}: {e}", categoria="sistema")
                 return  # Terminar turno controlado aquí
 
             # 2.5. RESPUESTA A NECESIDADES CRÍTICAS (Forzar antes del cerebro)
@@ -649,14 +1149,15 @@ class ModeloRelacional:
                     except Exception:
                         pass
 
-            # 5. ACCIÓN SOCIAL (OBLIGATORIA)
-            # Forzar al menos una acción social por turno (post/like/comment/follow)
+            # 5. ACCIÓN SOCIAL EN OASIS (OBLIGATORIA EN TODOS LOS TURNOS)
+            # Garantizar que cada agente interactúe con Oasis en cada turno (post/comment/like/follow).
+            # Si en el paso 4 aún no realizó una interacción válida en Oasis para este turno, ejecutarla ahora.
             try:
-                if hasattr(agente, "social_force_action"):
-                    agente.social_force_action(self.paso_actual)
-                else:
-                    # Fallback al comportamiento automático existente
-                    agente._ejecutar_accion_social_automatica(self.paso_actual)
+                if getattr(agente, "ultimo_turno_oasis", -1) != self.paso_actual:
+                    if hasattr(agente, "social_force_action"):
+                        agente.social_force_action(self.paso_actual)
+                    else:
+                        agente._ejecutar_accion_social_automatica(self.paso_actual)
             except Exception as e:
                 self.log(f"⚠️ Error en acción social forzada de {agente.unique_id}: {e}", categoria="sistema")
 
@@ -1536,12 +2037,17 @@ class ModeloRelacional:
 
         # 2. Paso de los agentes
         if getattr(self, "asamblea_bloqueante_activa", False):
-            # Durante una asamblea bloqueante, los agentes no actúan normalmente.
-            # Solo procesamos mantenimiento vital básico.
+            # Durante una asamblea bloqueante, los agentes no actúan físicamente en el mapa,
+            # pero mantienen metabolismo e interactúan en la red social Oasis.
             self.log("🗳️ [BLOQUEO] Simulación pausada por asamblea activa (Votación en curso).", categoria="sistema")
             for agente in self.agentes:
                 if agente.esta_vivo:
                     agente.actualizar_necesidades()
+                    try:
+                        if hasattr(agente, "social_force_action"):
+                            agente.social_force_action(self.paso_actual)
+                    except Exception:
+                        pass
         elif getattr(self, "modo_control_total", False):
             # En modo Control Total, los agentes no actúan por sí solos.
             # Solo procesamos mantenimiento vital básico.
@@ -2133,6 +2639,86 @@ class ModeloRelacional:
 
         return agente
 
+    def ensure_player_avatar(self, player_id: str, username: str = "Jugador"):
+        """Garantiza que el jugador humano tenga un avatar físico en el tablero con todas las capacidades de un Agente."""
+        if not player_id:
+            return None
+
+        clean_id = "".join(c for c in str(player_id) if c.isalnum())[:10] or "player"
+        avatar_id = f"av_{clean_id}"
+        clean_name = (username or "").strip() or f"Viajero {clean_id[:4]}"
+
+        # Verificar si ya existe el avatar en la lista de agentes
+        avatar = next(
+            (
+                a
+                for a in self.agentes
+                if a.unique_id == avatar_id or getattr(a, "player_owner_id", None) == player_id
+            ),
+            None,
+        )
+
+        if avatar:
+            avatar.is_player_avatar = True
+            avatar.player_owner_id = player_id
+            avatar.esta_vivo = True
+            if hasattr(avatar, "identidad") and avatar.identidad:
+                avatar.identidad.nombre = clean_name
+                avatar.identidad.emoji = "👑"
+                avatar.identidad.titulo = "Avatar de Jugador"
+            if hasattr(avatar, "alma") and avatar.alma:
+                avatar.alma.nombre_propio = clean_name
+        else:
+            limit_x = self.mapa_size if hasattr(self, "mapa_size") else 20
+            limit_y = self.mapa_size if hasattr(self, "mapa_size") else 20
+            center_x = max(0, min(limit_x - 1, (limit_x // 2) + random.randint(-2, 2)))
+            center_y = max(0, min(limit_y - 1, (limit_y // 2) + random.randint(-2, 2)))
+
+            avatar = self.spawn_agent(
+                {
+                    "unique_id": avatar_id,
+                    "recursos": 150,
+                    "rol": "Avatar Jugador",
+                    "x": center_x,
+                    "y": center_y,
+                }
+            )
+            avatar.dinero = 250.0
+            avatar.profesion = "Arquitecto Encarnado"
+            avatar.rol = "Avatar Jugador"
+            avatar.is_player_avatar = True
+            avatar.player_owner_id = player_id
+            avatar.pensamiento_actual = f"Encarnado en el tablero por {clean_name}."
+            if hasattr(avatar, "identidad") and avatar.identidad:
+                avatar.identidad.nombre = clean_name
+                avatar.identidad.emoji = "👑"
+                avatar.identidad.titulo = "Avatar de Jugador"
+            if hasattr(avatar, "alma") and avatar.alma:
+                avatar.alma.nombre_propio = clean_name
+
+            self.log(
+                f"👑 [AVATAR] El jugador {clean_name} se ha materializado en el tablero en ({avatar.x}, {avatar.y}).",
+                categoria="sistema",
+            )
+
+        if not hasattr(self, "agentes_poseidos") or self.agentes_poseidos is None:
+            self.agentes_poseidos = {}
+
+        # Si el jugador no está poseyendo activamente a otro agente, vincularlo a su avatar
+        current_possessed = self.agentes_poseidos.get(player_id)
+        if not current_possessed or not any(a.unique_id == current_possessed for a in self.agentes):
+            self.agentes_poseidos[player_id] = avatar.unique_id
+            self.agente_poseido_id = avatar.unique_id
+
+        if self.db_active and getattr(self, "db", None):
+            try:
+                self.db.save_agent(avatar, self.user_id)
+            except Exception:
+                pass
+
+        self.notificar_cambio_estado()
+        return avatar
+
     def crear_mision(
         self,
         titulo,
@@ -2335,6 +2921,10 @@ class ModeloRelacional:
                 self.state_change_callback()
             except Exception as e:
                 logger.error(f"Error en state_change_callback: {e}")
+
+    def difundir_social_feed(self):
+        """Notifica cambios inmediatos en el feed social Oasis."""
+        self.notificar_cambio_estado()
 
     def _emit_realtime_event(self, event_type: str, payload: dict):
         """Emite eventos en tiempo real al frontend, opcionalmente con un pequeño retraso
@@ -3096,11 +3686,7 @@ class ModeloRelacional:
                                 self.relaciones_grupos[tuple(parts)] = v
 
                     # Restaurar social_feed (posts, comentarios, seguidores)
-                    if (
-                        social_feed_data
-                        and hasattr(self, "social_recsys")
-                        and self.social_recsys
-                    ):
+                    if social_feed_data:
                         try:
                             self.social_recsys = SocialRecSys.from_dict(
                                 social_feed_data,
@@ -4100,6 +4686,8 @@ class ModeloRelacional:
 
         return True, inst_id
 
+
+Simulation = ModeloRelacional
 
 if __name__ == "__main__":
     # Configuración desde .env

@@ -91,6 +91,7 @@ export default function GamePage() {
         userScore,
         recentCompletedMissions,
         agentePoseidoId,
+        sendGodAction,
         connectedPlayers,
         roomInfo,
         setRoomInfo,
@@ -397,6 +398,15 @@ export default function GamePage() {
                                     <span className="w-2 h-2 rounded-full bg-[#00e676] animate-pulse" />
                                     <Users className="w-3.5 h-3.5 text-[#00e676]" />
                                     <span>{Math.max(1, connectedPlayers?.length || 1)}</span>
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        await sendGodAction("SPAWN_PLAYER_AVATAR", {});
+                                    }}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-[10px] font-mono font-bold text-amber-300 transition-all"
+                                    title="Encarnar / Centrar mi Avatar en el tablero"
+                                >
+                                    <span>👑 MI AVATAR</span>
                                 </button>
 
                                 {showPlayersMenu && (

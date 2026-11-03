@@ -544,8 +544,14 @@ class SessionManager:
                         for pid, aid in (getattr(sim, "agentes_poseidos", {}) or {}).items()
                         if aid == a.unique_id
                     ),
-                    None,
+                    getattr(a, "player_owner_id", None)
+                    if (getattr(a, "is_player_avatar", False) or str(a.unique_id).startswith("av_"))
+                    else None,
                 ),
+                "is_player_avatar": bool(
+                    getattr(a, "is_player_avatar", False) or str(a.unique_id).startswith("av_")
+                ),
+                "player_owner_id": getattr(a, "player_owner_id", None),
                 "creencias": getattr(a, "creencias", None).to_dict()
                 if hasattr(a, "creencias") and getattr(a, "creencias", None)
                 else None,
@@ -1033,6 +1039,20 @@ async def god_mode(user_id: str, req: dict = Body(...)):
     if not hasattr(sim, "agentes_poseidos") or sim.agentes_poseidos is None:
         sim.agentes_poseidos = {}
 
+    if action_type == "SPAWN_PLAYER_AVATAR":
+        avatar = sim.ensure_player_avatar(player_id, player_username)
+        if avatar:
+            sim.agentes_poseidos[player_id] = avatar.unique_id
+            sim.agente_poseido_id = avatar.unique_id
+        await session_manager.broadcast_state(user_id, force=True, include_logs=True)
+        return {
+            "status": "success",
+            "avatar_id": avatar.unique_id if avatar else None,
+            "agente_poseido": avatar.unique_id if avatar else None,
+            "agente_poseido_id": avatar.unique_id if avatar else None,
+            "agentes_poseidos": sim.agentes_poseidos,
+        }
+
     if action_type == "POSSESS_AGENT":
         agent_id = params.get("agent_id")
         if not agent_id:
@@ -1199,10 +1219,54 @@ async def god_mode(user_id: str, req: dict = Body(...)):
             await session_manager.broadcast_state(user_id)
             return {"status": "success"}
 
-        # Modo autónomo / fallback: ejecución directa garantizada como Decreto Divino
+        # Modo autónomo / fallback: ejecución directa garantizada para Avatar de Jugador o Decreto Divino
         agent._ejecutando_decreto = True
         try:
-            # 1. Generar narrativa rápida (opcional, no debe impedir la ejecución física)
+            act_lower = action.lower().strip()
+            es_avatar_o_poseido = bool(
+                getattr(agent, "is_player_avatar", False)
+                or str(agent.unique_id).startswith("av_")
+                or agent.is_possessed
+            )
+
+            # Si es comunicación directa con mensaje explícito, no sobreescribir con frase genérica ni bloquear en LLM
+            if act_lower in ["decir", "hablar", "comunicar", "mensaje_privado"]:
+                msg_texto = payload.get("mensaje") or payload.get("contenido")
+                if msg_texto:
+                    agent.pensamiento_actual = f"Expresando: {str(msg_texto)[:60]}"
+                    exito = agent.ejecutar_accion_final(user_action)
+                    if sim.db_active and getattr(sim, "db", None):
+                        try:
+                            sim.db.save_agent(agent, user_id)
+                        except Exception:
+                            pass
+                    await session_manager.broadcast_state(user_id, force=True, include_logs=True)
+                    return {"status": "success", "executed": exito}
+
+            # Si es un Avatar de Jugador o Agente Poseído, ejecutar la acción de forma inmediata y reactiva
+            if es_avatar_o_poseido:
+                if act_lower in ["mover", "moverse"]:
+                    agent.pensamiento_actual = f"Desplazándome por el mundo ({payload.get('x', agent.x)}, {payload.get('y', agent.y)})."
+                else:
+                    agent.pensamiento_actual = f"Ejecutando acción voluntaria: {action}."
+
+                exito = agent.ejecutar_accion_final(user_action)
+                if not exito:
+                    exito = agent.ejecutar_accion_final({"tipo": action, "parametros": payload})
+
+                if sim.db_active and getattr(sim, "db", None):
+                    try:
+                        sim.db.save_agent(agent, user_id)
+                    except Exception:
+                        pass
+
+                include_map = act_lower in ["construir", "fundar_pueblo", "mover", "moverse"]
+                await session_manager.broadcast_state(
+                    user_id, force=True, include_logs=True, include_map=include_map
+                )
+                return {"status": "success", "executed": exito}
+
+            # 1. Generar narrativa rápida para agentes NPC forzados (opcional, no debe impedir la ejecución física)
             decision = None
             if hasattr(sim, "cerebro_llm") and sim.cerebro_llm:
                 try:
@@ -1217,14 +1281,17 @@ async def god_mode(user_id: str, req: dict = Body(...)):
                 agent.decir(f"Ejecutando orden del Arquitecto: {action}", pensamiento="Es mi destino.")
 
             # 2. EJECUCIÓN FÍSICA REAL E INMEDIATA
-            # Usamos user_action directamente para evitar que el LLM cambie la intención
             exito = agent.ejecutar_accion_final(user_action)
             
             if not exito:
-                # Si falló, intentar con el nombre de la acción en el diccionario
                 exito = agent.ejecutar_accion_final({"tipo": action, "parametros": payload})
             
-            await session_manager.broadcast_state(user_id)
+            await session_manager.broadcast_state(
+                user_id,
+                force=True,
+                include_logs=True,
+                include_map=(act_lower in ["construir", "fundar_pueblo"]),
+            )
             return {"status": "success", "executed": exito}
         finally:
             agent._ejecutando_decreto = False
@@ -1424,6 +1491,9 @@ async def create_multiplayer_room(req: CreateMultiplayerRoomRequest):
         except Exception:
             pass
 
+    # Materializar el Avatar del jugador anfitrión en el tablero
+    host_avatar = sim.ensure_player_avatar(req.host_user_id, req.host_username)
+
     if sim.db_active:
         try:
             sim.guardar_estado()
@@ -1456,7 +1526,11 @@ async def create_multiplayer_room(req: CreateMultiplayerRoomRequest):
         "modo_juego": req.modo_juego,
         "max_jugadores": req.max_jugadores,
     }
-    return {"status": "success", "room": _enrich_room_with_live_data(room)}
+    return {
+        "status": "success",
+        "room": _enrich_room_with_live_data(room),
+        "avatar_id": host_avatar.unique_id if host_avatar else None,
+    }
 
 @app.post("/multiplayer/rooms/join")
 async def join_multiplayer_room(req: JoinMultiplayerRoomRequest):
@@ -1484,7 +1558,15 @@ async def join_multiplayer_room(req: JoinMultiplayerRoomRequest):
     if not sim:
         sim = session_manager.create_simulation(game_id, start_empty=False)
 
-    return {"status": "success", "room": _enrich_room_with_live_data(room)}
+    # Materializar el Avatar del jugador en el tablero al unirse a la sala
+    player_avatar = sim.ensure_player_avatar(req.user_id, req.username)
+    await session_manager.broadcast_state(game_id, force=True, include_logs=True)
+
+    return {
+        "status": "success",
+        "room": _enrich_room_with_live_data(room),
+        "avatar_id": player_avatar.unique_id if player_avatar else None,
+    }
 
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(
@@ -1498,6 +1580,13 @@ async def websocket_endpoint(
     sim = session_manager.get_simulation(user_id)
     if not sim:
         sim = session_manager.create_simulation(user_id)
+
+    # Si es una sala multijugador, asegurar que el jugador tenga su Avatar en el tablero
+    if player_id and str(user_id).startswith("mp_"):
+        try:
+            sim.ensure_player_avatar(player_id, username or "Viajero")
+        except Exception as e:
+            print(f"⚠️ [AVATAR] Error asegurando avatar en WS para {player_id}: {e}")
 
     # Notificar presencia actualizada a todos los clientes de la sala
     await session_manager.send_to_user(
@@ -1641,84 +1730,211 @@ async def quickplay(req: QuickPlayRequest):
 
 # === CONFIGURATION ENDPOINTS ===
 
+AI_CONFIG_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config_ai.json"))
+
+
+def _read_persisted_ai_config() -> dict:
+    """Lee config_ai.json si existe y devuelve su contenido como diccionario."""
+    for candidate in (AI_CONFIG_FILE, "config_ai.json"):
+        if os.path.exists(candidate):
+            try:
+                with open(candidate, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+            except Exception as e:
+                print(f"⚠️ Error leyendo {candidate}: {e}")
+    return {}
+
+
 @app.get("/config/ai")
 async def get_ai_config():
-    """Retorna la configuración actual del LLM."""
-    return {
-        "provider": os.getenv("AI_PROVIDER", "openrouter"),
-        "model": os.getenv("MODEL_NAME", "google/gemini-2.0-flash-exp:free"),
-        "base_url": os.getenv("AI_BASE_URL", ""),
-        "has_openrouter_key": bool(os.getenv("OPENROUTER_API_KEY")),
-        "has_openai_key": bool(os.getenv("OPENAI_API_KEY")),
-        "has_ollama_key": bool(os.getenv("OLLAMA_API_KEY") or os.getenv("OLLAMA_API_BASE")),
-        "has_kilocode_key": bool(os.getenv("KILOCODE_API_KEY")),
-        "tavily_api_key": os.getenv("TAVILY_API_KEY", ""),
+    """Retorna la configuración actual del LLM (priorizando config_ai.json persistido)."""
+    persisted = _read_persisted_ai_config()
+
+    # Sincronizar variables de entorno con lo persistido si existen en config_ai.json
+    if persisted.get("model"):
+        os.environ["MODEL_NAME"] = persisted["model"]
+    if persisted.get("provider"):
+        os.environ["AI_PROVIDER"] = str(persisted["provider"]).lower()
+
+    persisted_keys = persisted.get("api_keys") if isinstance(persisted.get("api_keys"), dict) else {}
+    env_key_map = {
+        "openrouter": "OPENROUTER_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "ollama": "OLLAMA_API_KEY",
+        "kilocode": "KILOCODE_API_KEY",
     }
+    for prov_name, env_var in env_key_map.items():
+        if persisted_keys.get(prov_name):
+            os.environ[env_var] = persisted_keys[prov_name]
+
+    provider = (persisted.get("provider") or os.getenv("AI_PROVIDER", "openrouter")).lower()
+    model = persisted.get("model") or os.getenv("MODEL_NAME", "google/gemini-2.0-flash-exp:free")
+
+    if persisted.get("api_key") and provider in env_key_map:
+        os.environ[env_key_map[provider]] = persisted["api_key"]
+
+    api_keys = {
+        "openrouter": os.getenv("OPENROUTER_API_KEY", ""),
+        "openai": os.getenv("OPENAI_API_KEY", ""),
+        "ollama": os.getenv("OLLAMA_API_KEY", ""),
+        "kilocode": os.getenv("KILOCODE_API_KEY", ""),
+    }
+    active_api_key = persisted.get("api_key") or api_keys.get(provider, "")
+
+    persisted_base_urls = persisted.get("base_urls") if isinstance(persisted.get("base_urls"), dict) else {}
+    base_urls = {
+        "ollama": persisted_base_urls.get("ollama") or os.getenv("OLLAMA_API_BASE", ""),
+        "kilocode": persisted_base_urls.get("kilocode") or (
+            os.getenv("AI_BASE_URL", "") if os.getenv("AI_PROVIDER", "").lower() == "kilocode" else "https://api.kilo.ai/api/gateway"
+        ),
+    }
+    if "base_url" in persisted and provider in ("ollama", "kilocode"):
+        active_base_url = persisted.get("base_url") or base_urls.get(provider, "")
+    elif provider in ("ollama", "kilocode"):
+        active_base_url = os.getenv("AI_BASE_URL", "") or base_urls.get(provider, "")
+    else:
+        active_base_url = ""
+
+    tavily_key = persisted.get("tavily_api_key") or os.getenv("TAVILY_API_KEY", "")
+    if tavily_key:
+        os.environ["TAVILY_API_KEY"] = tavily_key
+
+    models_by_provider = persisted.get("models_by_provider") if isinstance(persisted.get("models_by_provider"), dict) else {}
+    if model and provider:
+        models_by_provider.setdefault(provider, model)
+
+    return {
+        "provider": provider,
+        "model": model,
+        "api_key": active_api_key,
+        "api_keys": api_keys,
+        "base_url": active_base_url,
+        "base_urls": base_urls,
+        "models_by_provider": models_by_provider,
+        "has_openrouter_key": bool(api_keys["openrouter"]),
+        "has_openai_key": bool(api_keys["openai"]),
+        "has_ollama_key": bool(api_keys["ollama"] or os.getenv("OLLAMA_API_BASE")),
+        "has_kilocode_key": bool(api_keys["kilocode"]),
+        "tavily_api_key": tavily_key,
+    }
+
+
 @app.post("/config/ai")
 async def set_ai_config(req: AIConfig):
-    """Actualiza la configuración del LLM en caliente."""
+    """Actualiza la configuración del LLM en caliente y la persiste en config_ai.json."""
+    provider_clean = (req.provider or "openrouter").strip().lower()
     os.environ["MODEL_NAME"] = req.model
-    os.environ["AI_PROVIDER"] = req.provider
-    # Guardar API key por proveedor
-    if req.provider == "openrouter" and req.api_key:
-        os.environ["OPENROUTER_API_KEY"] = req.api_key
-    elif req.provider == "openai" and req.api_key:
-        os.environ["OPENAI_API_KEY"] = req.api_key
-    elif req.provider == "ollama" and req.api_key:
-        os.environ["OLLAMA_API_KEY"] = req.api_key
-    elif req.provider == "kilocode" and req.api_key:
-        os.environ["KILOCODE_API_KEY"] = req.api_key
-        
-    if req.base_url and req.provider in ("ollama", "kilocode"):
-        os.environ["AI_BASE_URL"] = req.base_url
-    elif req.provider not in ("ollama", "kilocode"):
+    os.environ["AI_PROVIDER"] = provider_clean
+
+    # Cargar configuración previa para preservar llaves/URLs de otros proveedores
+    existing = _read_persisted_ai_config()
+    api_keys = existing.get("api_keys") if isinstance(existing.get("api_keys"), dict) else {
+        "openrouter": os.getenv("OPENROUTER_API_KEY", ""),
+        "openai": os.getenv("OPENAI_API_KEY", ""),
+        "ollama": os.getenv("OLLAMA_API_KEY", ""),
+        "kilocode": os.getenv("KILOCODE_API_KEY", ""),
+    }
+    base_urls = existing.get("base_urls") if isinstance(existing.get("base_urls"), dict) else {
+        "ollama": os.getenv("OLLAMA_API_BASE", ""),
+        "kilocode": "https://api.kilo.ai/api/gateway",
+    }
+    models_by_provider = existing.get("models_by_provider") if isinstance(existing.get("models_by_provider"), dict) else {}
+
+    # Guardar API key por proveedor (si no se envía, conservar la existente del proveedor)
+    effective_api_key = req.api_key or api_keys.get(provider_clean, "")
+    if provider_clean == "openrouter" and effective_api_key:
+        os.environ["OPENROUTER_API_KEY"] = effective_api_key
+    elif provider_clean == "openai" and effective_api_key:
+        os.environ["OPENAI_API_KEY"] = effective_api_key
+    elif provider_clean == "ollama" and effective_api_key:
+        os.environ["OLLAMA_API_KEY"] = effective_api_key
+    elif provider_clean == "kilocode" and effective_api_key:
+        os.environ["KILOCODE_API_KEY"] = effective_api_key
+
+    if effective_api_key:
+        api_keys[provider_clean] = effective_api_key
+
+    effective_base_url = (req.base_url or "") if provider_clean in ("ollama", "kilocode") else ""
+    if provider_clean in ("ollama", "kilocode"):
+        if effective_base_url:
+            os.environ["AI_BASE_URL"] = effective_base_url
+            base_urls[provider_clean] = effective_base_url
+        else:
+            os.environ.pop("AI_BASE_URL", None)
+    else:
         # Limpiar AI_BASE_URL al cambiar a otros proveedores para evitar conflictos
         os.environ.pop("AI_BASE_URL", None)
-        os.environ.pop("OLLAMA_API_BASE", None)
-        
-    if req.tavily_api_key:
-        os.environ["TAVILY_API_KEY"] = req.tavily_api_key
+
+    effective_tavily = req.tavily_api_key if req.tavily_api_key is not None else existing.get("tavily_api_key", os.getenv("TAVILY_API_KEY", ""))
+    if effective_tavily:
+        os.environ["TAVILY_API_KEY"] = effective_tavily
+
+    models_by_provider[provider_clean] = req.model
+
     # Persistir en config_ai.json para que sobreviva a reinicios
     try:
-        import json
         config_data = {
             "model": req.model,
-            "provider": req.provider,
-            "api_key": req.api_key,
-            "base_url": req.base_url if req.provider in ("ollama", "kilocode") else "",
-            "tavily_api_key": req.tavily_api_key or ""
+            "provider": provider_clean,
+            "api_key": effective_api_key,
+            "base_url": effective_base_url,
+            "tavily_api_key": effective_tavily or "",
+            "api_keys": api_keys,
+            "base_urls": base_urls,
+            "models_by_provider": models_by_provider,
         }
-        with open("config_ai.json", "w") as f:
+        with open(AI_CONFIG_FILE, "w") as f:
             json.dump(config_data, f, indent=2)
-        print(f"✅ Configuración guardada en config_ai.json: {req.provider}/{req.model}")
+        print(f"✅ Configuración guardada en {AI_CONFIG_FILE}: {provider_clean}/{req.model}")
     except Exception as e:
         print(f"⚠️ Error guardando config_ai.json: {e}")
+
     # Recargar configuración en el cerebro LLM global
     try:
         from agents.cerebro_llm import cerebro_llm
         cerebro_llm.reload_config()
     except Exception as e:
         print(f"⚠️ Error recargando config en cerebro_llm: {e}")
-    return {"status": "success", "message": "Configuración actualizada"}
+    return {
+        "status": "success",
+        "message": "Configuración actualizada",
+        "provider": provider_clean,
+        "model": req.model,
+    }
+
+
 @app.get("/config/models/{provider}")
 async def get_provider_models(provider: str, api_key: Optional[str] = None, base_url: Optional[str] = None):
-    """Retorna la lista de modelos disponibles para un proveedor (OpenRouter, Ollama).
+    """Retorna la lista de modelos disponibles para un proveedor (OpenRouter, Ollama, KiloCode).
     Parámetros opcionales: `api_key`, `base_url` (sobrescribe el de entorno).
     La respuesta siempre contiene la clave `models` con una lista (posiblemente vacía).
     """
     prov = (provider or "").strip().lower()
     models = []
+    persisted = _read_persisted_ai_config()
+    persisted_keys = persisted.get("api_keys") if isinstance(persisted.get("api_keys"), dict) else {}
+    persisted_urls = persisted.get("base_urls") if isinstance(persisted.get("base_urls"), dict) else {}
 
     try:
         if prov == "ollama":
-            # Determinar base_url: prioridad: query param -> AI_BASE_URL -> OLLAMA_API_BASE -> host.docker.internal
-            base = base_url or os.getenv("AI_BASE_URL") or os.getenv("OLLAMA_API_BASE") or "http://host.docker.internal:11434"
+            effective_key = api_key or persisted_keys.get("ollama") or os.getenv("OLLAMA_API_KEY", "")
+            # Determinar base_url: prioridad: query param -> base_urls['ollama'] -> AI_BASE_URL (si proveedor es ollama) -> OLLAMA_API_BASE -> host.docker.internal
+            env_ai_base = os.getenv("AI_BASE_URL") if os.getenv("AI_PROVIDER", "").lower() == "ollama" else None
+            base = (
+                base_url
+                or persisted_urls.get("ollama")
+                or env_ai_base
+                or os.getenv("OLLAMA_API_BASE")
+                or "http://host.docker.internal:11434"
+            )
             # Intentar endpoints conocidos hasta encontrar uno válido
             candidates = ["/api/tags", "/api/models", "/models", "/api/list"]
             for ep in candidates:
                 url = base.rstrip("/") + ep
                 try:
-                    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+                    headers = {"Authorization": f"Bearer {effective_key}"} if effective_key else {}
                     resp = requests.get(url, timeout=5, headers=headers)
                     if resp.status_code != 200:
                         continue
@@ -1743,15 +1959,16 @@ async def get_provider_models(provider: str, api_key: Optional[str] = None, base
                     continue
 
         elif prov == "openrouter":
-            # Usar base_url si se entregó (posible proxy), sino el endpoint público
-            base = base_url or os.getenv("AI_BASE_URL") or "https://openrouter.ai/api"
+            effective_key = api_key or persisted_keys.get("openrouter") or os.getenv("OPENROUTER_API_KEY", "")
+            env_ai_base = os.getenv("AI_BASE_URL") if os.getenv("AI_PROVIDER", "").lower() == "openrouter" else None
+            base = base_url or env_ai_base or "https://openrouter.ai/api"
             if base.endswith("/v1"):
                 url = base.rstrip("/") + "/models"
             else:
                 url = base.rstrip("/") + "/v1/models"
             headers = {}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
+            if effective_key:
+                headers["Authorization"] = f"Bearer {effective_key}"
             resp = requests.get(url, timeout=6, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
@@ -1770,12 +1987,13 @@ async def get_provider_models(provider: str, api_key: Optional[str] = None, base
                         models.append({"id": str(m), "name": str(m)})
 
         elif prov == "kilocode":
-            # Usar base_url si se entregó (posible proxy), sino el endpoint público de KiloCode
-            base = base_url or os.getenv("AI_BASE_URL") or "https://api.kilo.ai/api/gateway"
+            effective_key = api_key or persisted_keys.get("kilocode") or os.getenv("KILOCODE_API_KEY", "")
+            env_ai_base = os.getenv("AI_BASE_URL") if os.getenv("AI_PROVIDER", "").lower() == "kilocode" else None
+            base = base_url or persisted_urls.get("kilocode") or env_ai_base or "https://api.kilo.ai/api/gateway"
             url = base.rstrip("/") + "/models"
             headers = {}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
+            if effective_key:
+                headers["Authorization"] = f"Bearer {effective_key}"
             resp = requests.get(url, timeout=6, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
