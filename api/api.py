@@ -78,7 +78,10 @@ class _nullcontext:
 
 class SessionManager:
     def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}  # user_id -> WebSocket
+        # user_id (game_id) -> { conn_id: WebSocket }
+        self.active_connections: Dict[str, Dict[str, WebSocket]] = {}
+        # user_id (game_id) -> { conn_id: {"player_id": str, "username": str, "connected_at": float} }
+        self.room_players: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self.simulations: Dict[
             str, ModeloRelacional
         ] = {}  # user_id -> ModeloRelacional
@@ -92,21 +95,63 @@ class SessionManager:
         self.last_stats: Dict[str, dict] = {}
         self.last_agents: Dict[str, dict] = {}
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
-        self._write_locks: Dict[str, asyncio.Lock] = {}  # per-user write lock
+        self._write_locks: Dict[str, asyncio.Lock] = {}  # per-room write lock
 
-    async def connect(self, user_id: str, websocket: WebSocket):
-        self.active_connections[user_id] = websocket
+    async def connect(
+        self,
+        user_id: str,
+        websocket: WebSocket,
+        player_id: Optional[str] = None,
+        username: Optional[str] = None,
+    ) -> str:
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = {}
+        if user_id not in self.room_players:
+            self.room_players[user_id] = {}
         if user_id not in self._write_locks:
             self._write_locks[user_id] = asyncio.Lock()
-        print(f"🔌 Cliente conectado: {user_id}")
+
+        eff_player_id = player_id or user_id
+        eff_username = username or eff_player_id[:12]
+        conn_id = f"{eff_player_id}_{id(websocket)}"
+
+        self.active_connections[user_id][conn_id] = websocket
+        self.room_players[user_id][conn_id] = {
+            "player_id": eff_player_id,
+            "username": eff_username,
+            "connected_at": time.time(),
+        }
+        print(f"🔌 Cliente conectado a sala {user_id}: {eff_username} ({eff_player_id})")
+        return conn_id
 
     def disconnect(self, user_id: str, websocket: WebSocket):
-        if (
-            user_id in self.active_connections
-            and self.active_connections[user_id] == websocket
-        ):
-            del self.active_connections[user_id]
-            print(f"🔌 Cliente desconectado: {user_id}")
+        conns = self.active_connections.get(user_id)
+        if not conns:
+            return
+        to_remove = [cid for cid, ws in conns.items() if ws == websocket]
+        for cid in to_remove:
+            conns.pop(cid, None)
+            if user_id in self.room_players:
+                self.room_players[user_id].pop(cid, None)
+        if not conns:
+            self.active_connections.pop(user_id, None)
+            self.room_players.pop(user_id, None)
+        print(f"🔌 Cliente desconectado de sala: {user_id}")
+
+    def get_connected_players(self, user_id: str) -> list:
+        sim = self.simulations.get(user_id)
+        agentes_poseidos = getattr(sim, "agentes_poseidos", {}) if sim else {}
+        players_by_id: Dict[str, Dict[str, Any]] = {}
+        for info in self.room_players.get(user_id, {}).values():
+            pid = info["player_id"]
+            possessed_id = agentes_poseidos.get(pid)
+            players_by_id[pid] = {
+                "player_id": pid,
+                "username": info["username"],
+                "possessed_agent_id": possessed_id,
+                "possessed_agent_name": display_name_for(sim, possessed_id) if (sim and possessed_id) else None,
+            }
+        return list(players_by_id.values())
 
     def enqueue_message(self, user_id: str, message: dict):
         if self.main_loop:
@@ -117,13 +162,19 @@ class SessionManager:
     async def send_to_user(self, user_id: str, message: dict):
         lock = self._write_locks.get(user_id)
         async with lock if lock else _nullcontext():
-            websocket = self.active_connections.get(user_id)
-            if websocket:
+            conns = list(self.active_connections.get(user_id, {}).items())
+            if not conns:
+                return
+            payload = json.dumps(message, cls=DateTimeEncoder)
+            dead_sockets = []
+            for _cid, websocket in conns:
                 try:
-                    await websocket.send_text(json.dumps(message, cls=DateTimeEncoder))
+                    await websocket.send_text(payload)
                 except Exception as e:
                     print(f"❌ Error enviando mensaje a {user_id}: {e}")
-                    self.disconnect(user_id, websocket)
+                    dead_sockets.append(websocket)
+            for ws in dead_sockets:
+                self.disconnect(user_id, ws)
 
     async def process_message_queue(self):
         """Procesa la cola de mensajes asynchronously."""
@@ -370,7 +421,7 @@ class SessionManager:
 
         # Determinar si enviamos delta o completo (enviar completo cada 50 pasos para sincronización)
         force_full = (
-            include_map or is_first or include_logs or (sim.paso_actual % 50 == 0)
+            include_map or is_first or include_logs or force or (sim.paso_actual % 50 == 0)
         )
 
         # Si es la primera vez, forzar la inclusión del mapa si no viene marcada
@@ -483,7 +534,18 @@ class SessionManager:
                 "color": sim.civilizaciones[a.grupo_id].color
                 if a.grupo_id and a.grupo_id in sim.civilizaciones
                 else "#ffffff",
-                "is_possessed": a.unique_id == getattr(sim, "agente_poseido_id", None),
+                "is_possessed": bool(
+                    a.unique_id == getattr(sim, "agente_poseido_id", None)
+                    or a.unique_id in (getattr(sim, "agentes_poseidos", {}) or {}).values()
+                ),
+                "possessed_by": next(
+                    (
+                        pid
+                        for pid, aid in (getattr(sim, "agentes_poseidos", {}) or {}).items()
+                        if aid == a.unique_id
+                    ),
+                    None,
+                ),
                 "creencias": getattr(a, "creencias", None).to_dict()
                 if hasattr(a, "creencias") and getattr(a, "creencias", None)
                 else None,
@@ -509,7 +571,7 @@ class SessionManager:
             }
 
         last_agents = self.last_agents.get(user_id, {})
-        force_full_agents = is_first or include_map
+        force_full_agents = is_first or include_map or force
 
         if force_full_agents:
             await self.send_to_user(
@@ -726,6 +788,8 @@ class SessionManager:
             "logs": (sim.historial_logs[-log_limit:] if include_logs else []),
             "agente_poseido_id": getattr(sim, "agente_poseido_id", None),
             "agente_poseido": display_name_for(sim, getattr(sim, "agente_poseido_id", None)),
+            "agentes_poseidos": getattr(sim, "agentes_poseidos", {}),
+            "connected_players": self.get_connected_players(user_id),
             "modo_control_total": getattr(sim, "modo_control_total", False),
             "socialFeed": [
                 {
@@ -963,19 +1027,57 @@ async def god_mode(user_id: str, req: dict = Body(...)):
 
     sim = session_manager.get_simulation(user_id)
     if not sim: sim = session_manager.create_simulation(user_id)
-    
+
+    player_id = req.get("player_id") or params.get("player_id") or user_id
+    player_username = req.get("username") or params.get("username") or "ARQUITECTO"
+    if not hasattr(sim, "agentes_poseidos") or sim.agentes_poseidos is None:
+        sim.agentes_poseidos = {}
+
     if action_type == "POSSESS_AGENT":
         agent_id = params.get("agent_id")
+        if not agent_id:
+            # Liberar posesión del jugador actual
+            released_id = sim.agentes_poseidos.pop(player_id, None)
+            if sim.agente_poseido_id == released_id or not sim.agentes_poseidos:
+                sim.agente_poseido_id = next(iter(sim.agentes_poseidos.values()), None)
+            sim.log(f"👻 [POSESIÓN] {player_username} ha liberado el enlace mental.", categoria="sistema")
+            await session_manager.broadcast_state(user_id, force=True)
+            return {
+                "status": "success",
+                "agente_poseido": None,
+                "agente_poseido_id": None,
+                "agentes_poseidos": sim.agentes_poseidos,
+            }
+
         # Resolver si se pasó un nombre en lugar del unique_id
         resolved = resolve_agent_unique_id(sim, agent_id)
         if not resolved:
             return {"status": "error", "message": f"Agente no encontrado: {agent_id}"}
+
+        # Verificar si otro jugador ya está poseyendo a este agente
+        existing_owner = next(
+            (pid for pid, aid in sim.agentes_poseidos.items() if aid == resolved and pid != player_id),
+            None,
+        )
+        if existing_owner:
+            return {
+                "status": "error",
+                "message": f"El agente {resolved} ya está siendo poseído por otro jugador en la sala.",
+            }
+
+        sim.agentes_poseidos[player_id] = resolved
         sim.agente_poseido_id = resolved
         nombre_poseido = next((a.identidad.nombre for a in sim.agentes if a.unique_id == resolved and getattr(a, "identidad", None)), resolved)
-        print(f"👻 [GOD MODE] Poseyendo agente: {resolved} ({nombre_poseido}) (Usuario: {user_id})")
+        sim.log(f"👻 [POSESIÓN] {player_username} ha enlazado su consciencia con {nombre_poseido}.", categoria="sistema")
+        print(f"👻 [GOD MODE] {player_username} ({player_id}) poseyendo agente: {resolved} ({nombre_poseido}) en sala {user_id}")
         # Forzar difusión inmediata para que la UI se actualice
         await session_manager.broadcast_state(user_id, force=True)
-        return {"status": "success", "agente_poseido": nombre_poseido}
+        return {
+            "status": "success",
+            "agente_poseido": nombre_poseido,
+            "agente_poseido_id": resolved,
+            "agentes_poseidos": sim.agentes_poseidos,
+        }
 
     elif action_type == "SPAWN_AGENT":
         count = params.get("count", 1)
@@ -999,14 +1101,15 @@ async def god_mode(user_id: str, req: dict = Body(...)):
         mensaje = params.get("mensaje")
         agent_id = params.get("agent_id")
         
-        # Si no se especifica agente, elegir uno aleatorio o el poseído
+        # Si no se especifica agente, elegir uno aleatorio o el poseído por este jugador
         agent = None
+        player_possessed = sim.agentes_poseidos.get(player_id) or getattr(sim, "agente_poseido_id", None)
         if agent_id:
             # Resolver si se pasó nombre o id
             resolved = resolve_agent_unique_id(sim, agent_id)
             agent = next((a for a in sim.agentes if a.unique_id == resolved), None) if resolved else None
-        elif getattr(sim, "agente_poseido_id", None):
-            agent = next((a for a in sim.agentes if a.unique_id == sim.agente_poseido_id), None)
+        elif player_possessed:
+            agent = next((a for a in sim.agentes if a.unique_id == player_possessed), None)
             
         if not agent and sim.agentes:
             agent = random.choice(sim.agentes)
@@ -1015,19 +1118,20 @@ async def god_mode(user_id: str, req: dict = Body(...)):
             raise HTTPException(status_code=404, detail="No hay agentes disponibles para responder")
             
         # El arquitecto le habla al agente (broadcast global o individual)
+        arch_tag = f"ARQUITECTO {player_username}" if player_username and player_username != "ARQUITECTO" else "ARQUITECTO"
         is_global = agent_id is None
         if is_global:
-            sim.log(f"👤 [ARQUITECTO] -> [TODOS]: {mensaje}", categoria="dialogo")
+            sim.log(f"👤 [{arch_tag}] -> [TODOS]: {mensaje}", categoria="dialogo")
         else:
-            sim.log(f"👤 [ARQUITECTO] -> [{agent.unique_id}]: {mensaje}", categoria="dialogo")
+            sim.log(f"👤 [{arch_tag}] -> [{agent.unique_id}]: {mensaje}", categoria="dialogo")
         # Si es un mensaje global, entregarlo explícitamente a todos los agentes
         # para que lo registren en su memoria y lo procesen en su turno.
         if is_global:
-            packet = {"emisor": "ARQUITECTO", "contenido": mensaje, "tipo": "GLOBAL"}
+            packet = {"emisor": arch_tag, "contenido": mensaje, "tipo": "GLOBAL"}
             for a in sim.agentes:
                 try:
                     a.ultimo_mensaje_recibido = packet
-                    a.memoria.registrar_mensaje("ARQUITECTO", mensaje)
+                    a.memoria.registrar_mensaje(arch_tag, mensaje)
                 except Exception:
                     # No permitir que una memoria falle rompa el flujo
                     continue
@@ -1221,15 +1325,191 @@ async def refresh_game(user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class CreateMultiplayerRoomRequest(BaseModel):
+    nombre: str
+    host_user_id: str
+    host_username: str
+    es_publica: bool = True
+    modo_juego: str = "cooperativo"
+    max_jugadores: int = 8
+    num_agents: int = 12
+
+class JoinMultiplayerRoomRequest(BaseModel):
+    user_id: str
+    username: str
+    codigo_acceso: Optional[str] = None
+    game_id: Optional[str] = None
+
+def _generate_room_code() -> str:
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    prefix = "".join(random.choice(chars) for _ in range(3))
+    suffix = "".join(random.choice(chars) for _ in range(3))
+    return f"{prefix}-{suffix}"
+
+def _enrich_room_with_live_data(room: Dict[str, Any]) -> Dict[str, Any]:
+    game_id = room["game_id"]
+    players = session_manager.get_connected_players(game_id)
+    sim = session_manager.get_simulation(game_id)
+    enriched = dict(room)
+    enriched["online_count"] = len(players)
+    enriched["online_players"] = players
+    if sim:
+        enriched["paso_actual"] = getattr(sim, "paso_actual", enriched.get("paso_actual", 0))
+        enriched["num_agentes"] = len(getattr(sim, "agentes", []))
+    return enriched
+
+@app.get("/multiplayer/rooms")
+async def list_multiplayer_rooms(user_id: Optional[str] = None):
+    db = DatabaseManager()
+    if not db.connect():
+        return {"rooms": []}
+    rooms = db.list_multiplayer_rooms(user_id=user_id)
+    return {"rooms": [_enrich_room_with_live_data(r) for r in rooms]}
+
+@app.get("/multiplayer/rooms/{game_id}")
+async def get_multiplayer_room_info(game_id: str):
+    db = DatabaseManager()
+    room = None
+    if db.connect():
+        room = db.get_multiplayer_room(game_id)
+    if not room:
+        # Si es una partida compartida sin registro explícito en salas_multijugador, devolver presencia en vivo
+        players = session_manager.get_connected_players(game_id)
+        return {
+            "room": {
+                "game_id": game_id,
+                "nombre": f"Realidad {game_id[-6:]}",
+                "host_user_id": game_id.split("_")[0],
+                "host_username": "Arquitecto",
+                "codigo_acceso": game_id[-6:].upper(),
+                "es_publica": False,
+                "modo_juego": "cooperativo",
+                "max_jugadores": 8,
+                "online_count": len(players),
+                "online_players": players,
+            }
+        }
+    return {"room": _enrich_room_with_live_data(room)}
+
+@app.post("/multiplayer/rooms/create")
+async def create_multiplayer_room(req: CreateMultiplayerRoomRequest):
+    db = DatabaseManager()
+    if not db.connect():
+        raise HTTPException(status_code=500, detail="Error conectando a PostgreSQL")
+
+    short_host = (req.host_user_id or "host")[:8]
+    game_id = f"mp_{short_host}_{int(time.time() * 1000) % 100000000:x}"
+    codigo_acceso = _generate_room_code()
+    for _ in range(5):
+        if not db.get_multiplayer_room_by_code(codigo_acceso):
+            break
+        codigo_acceso = _generate_room_code()
+
+    nombre_sala = (req.nombre or "").strip() or f"Nexo de {req.host_username}"
+
+    # Inicializar simulación de la sala
+    sim = session_manager.create_simulation(game_id, start_empty=True)
+    sim.paso_actual = 1
+
+    num_agents = max(0, min(int(req.num_agents or 0), 50))
+    for _ in range(num_agents):
+        sim.spawn_agent()
+
+    if sim.agentes and not getattr(sim.historia, "historiador_id", None):
+        try:
+            elegido = sim.historia.asignar_historiador(sim.agentes, aleatorio=True)
+            if elegido:
+                elegido.profesion = "Historiador"
+                elegido.rol = "Historiador"
+        except Exception:
+            pass
+
+    if sim.db_active:
+        try:
+            sim.guardar_estado()
+        except Exception as e:
+            print(f"⚠️ [MULTIPLAYER] Error guardando estado inicial de sala {game_id}: {e}")
+
+    db.create_multiplayer_room(
+        game_id=game_id,
+        nombre=nombre_sala,
+        host_user_id=req.host_user_id,
+        host_username=req.host_username,
+        codigo_acceso=codigo_acceso,
+        es_publica=req.es_publica,
+        modo_juego=req.modo_juego,
+        max_jugadores=req.max_jugadores,
+    )
+
+    sim.log(
+        f"🌐 [MULTIJUGADOR] Sala '{nombre_sala}' (Código: {codigo_acceso}) creada por {req.host_username}.",
+        categoria="sistema",
+    )
+
+    room = db.get_multiplayer_room(game_id) or {
+        "game_id": game_id,
+        "nombre": nombre_sala,
+        "host_user_id": req.host_user_id,
+        "host_username": req.host_username,
+        "codigo_acceso": codigo_acceso,
+        "es_publica": req.es_publica,
+        "modo_juego": req.modo_juego,
+        "max_jugadores": req.max_jugadores,
+    }
+    return {"status": "success", "room": _enrich_room_with_live_data(room)}
+
+@app.post("/multiplayer/rooms/join")
+async def join_multiplayer_room(req: JoinMultiplayerRoomRequest):
+    db = DatabaseManager()
+    if not db.connect():
+        raise HTTPException(status_code=500, detail="Error conectando a PostgreSQL")
+
+    room = None
+    if req.codigo_acceso:
+        room = db.get_multiplayer_room_by_code(req.codigo_acceso.strip())
+    elif req.game_id:
+        room = db.get_multiplayer_room(req.game_id.strip())
+
+    if not room:
+        raise HTTPException(status_code=404, detail="No se encontró ninguna sala con ese código o identificador")
+
+    game_id = room["game_id"]
+    players = session_manager.get_connected_players(game_id)
+    already_in = any(p["player_id"] == req.user_id for p in players)
+    if not already_in and len(players) >= int(room.get("max_jugadores", 8)):
+        raise HTTPException(status_code=403, detail="La sala ha alcanzado el límite máximo de jugadores conectados")
+
+    # Asegurar que la simulación esté cargada en memoria
+    sim = session_manager.get_simulation(game_id)
+    if not sim:
+        sim = session_manager.create_simulation(game_id, start_empty=False)
+
+    return {"status": "success", "room": _enrich_room_with_live_data(room)}
+
 @app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    user_id: str,
+    player_id: Optional[str] = None,
+    username: Optional[str] = None,
+):
     await websocket.accept()
-    await session_manager.connect(user_id, websocket)
+    await session_manager.connect(user_id, websocket, player_id=player_id, username=username)
     sim = session_manager.get_simulation(user_id)
-    if not sim: sim = session_manager.create_simulation(user_id)
-    
-    # Enviar estado inicial
-    await session_manager.broadcast_state(user_id, include_logs=True, include_map=True)
+    if not sim:
+        sim = session_manager.create_simulation(user_id)
+
+    # Notificar presencia actualizada a todos los clientes de la sala
+    await session_manager.send_to_user(
+        user_id,
+        {
+            "type": "players_update",
+            "connected_players": session_manager.get_connected_players(user_id),
+        },
+    )
+
+    # Enviar estado inicial completo (forzando mapa, logs y agentes para el nuevo participante)
+    await session_manager.broadcast_state(user_id, include_logs=True, include_map=True, force=True)
     
     try:
         while True:
@@ -1237,9 +1517,23 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         session_manager.disconnect(user_id, websocket)
+        await session_manager.send_to_user(
+            user_id,
+            {
+                "type": "players_update",
+                "connected_players": session_manager.get_connected_players(user_id),
+            },
+        )
     except Exception as e:
         print(f"⚠️ [WS] Error en socket de {user_id}: {e}")
         session_manager.disconnect(user_id, websocket)
+        await session_manager.send_to_user(
+            user_id,
+            {
+                "type": "players_update",
+                "connected_players": session_manager.get_connected_players(user_id),
+            },
+        )
 
 @app.get("/games/list/{user_id}")
 async def list_games(user_id: str):

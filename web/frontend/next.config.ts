@@ -36,6 +36,10 @@ const nextConfig: NextConfig = {
               destination: `${backendInternalUrl}/games/:path*`,
             },
             {
+              source: "/multiplayer/:path*",
+              destination: `${backendInternalUrl}/multiplayer/:path*`,
+            },
+            {
               source: "/config/:path*",
               destination: `${backendInternalUrl}/config/:path*`,
             },

@@ -37,6 +37,8 @@ function isBackendPath(url = "") {
   if (
     pathname.startsWith("/games/") ||
     pathname === "/games" ||
+    pathname.startsWith("/multiplayer/") ||
+    pathname === "/multiplayer" ||
     pathname.startsWith("/config/") ||
     pathname === "/config" ||
     pathname.startsWith("/chat/") ||

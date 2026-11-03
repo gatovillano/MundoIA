@@ -91,6 +91,9 @@ export default function GamePage() {
         userScore,
         recentCompletedMissions,
         agentePoseidoId,
+        connectedPlayers,
+        roomInfo,
+        setRoomInfo,
         modoControlTotal,
         setModoControlTotal
     } = useGameStore();
@@ -122,6 +125,27 @@ export default function GamePage() {
     const [protocolStep, setProtocolStep] = useState<'intervention' | 'operation'>('intervention');
     const [loadingAction, setLoading] = useState(false);
     const [savedGames, setSavedGames] = useState<any[]>([]);
+    const [showPlayersMenu, setShowPlayersMenu] = useState(false);
+    const [copiedCode, setCopiedCode] = useState(false);
+
+    // Sincronizar metadatos de sala multijugador si aplica
+    useEffect(() => {
+        if (!uid) return;
+        if (uid.startsWith('mp_') || roomInfo) {
+            fetch(getHttpUrl(`/multiplayer/rooms/${encodeURIComponent(uid)}`))
+                .then((r) => (r.ok ? r.json() : null))
+                .then((data) => {
+                    if (data?.room) {
+                        setRoomInfo(data.room);
+                        // Si el jugador se une como invitado a una sala activa, entrar directo al mapa
+                        if (data.room.host_user_id && data.room.host_user_id !== userId) {
+                            setShowModeSelection(false);
+                        }
+                    }
+                })
+                .catch(() => {});
+        }
+    }, [uid, userId, setRoomInfo]);
 
     // Initial connection and auth check
     useEffect(() => {
@@ -348,7 +372,86 @@ export default function GamePage() {
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-8 pointer-events-auto">
+                    <div className="flex items-center gap-6 pointer-events-auto">
+                        {/* Badge Multijugador (Código de Nexo + Jugadores Conectados) */}
+                        {(roomInfo || (uid && uid.startsWith('mp_')) || (connectedPlayers && connectedPlayers.length > 1)) && (
+                            <div className="relative flex items-center gap-2 py-1.5 px-3.5 glass-panel rounded-2xl border border-[#00e676]/30 bg-[#00e676]/5 backdrop-blur-md">
+                                {roomInfo?.codigo_acceso && (
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard?.writeText(roomInfo.codigo_acceso);
+                                            setCopiedCode(true);
+                                            setTimeout(() => setCopiedCode(false), 2000);
+                                        }}
+                                        className="px-2.5 py-1 rounded-xl bg-black/40 hover:bg-black/60 border border-white/10 text-[10px] font-mono font-bold text-[#00e676] tracking-wider transition-all"
+                                        title="Clic para copiar código de invitación"
+                                    >
+                                        {copiedCode ? '✓ COPIADO' : `NEXO: ${roomInfo.codigo_acceso}`}
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => setShowPlayersMenu(!showPlayersMenu)}
+                                    className="flex items-center gap-2 px-2 py-1 rounded-xl hover:bg-white/5 text-xs font-mono font-bold text-white transition-all"
+                                    title="Ver jugadores conectados en esta sala"
+                                >
+                                    <span className="w-2 h-2 rounded-full bg-[#00e676] animate-pulse" />
+                                    <Users className="w-3.5 h-3.5 text-[#00e676]" />
+                                    <span>{Math.max(1, connectedPlayers?.length || 1)}</span>
+                                </button>
+
+                                {showPlayersMenu && (
+                                    <div className="absolute top-14 right-0 w-72 p-4 glass-panel rounded-2xl border border-white/15 bg-[#0a0c12]/95 backdrop-blur-xl shadow-2xl z-50 space-y-3">
+                                        <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                                            <div>
+                                                <p className="text-[10px] font-mono uppercase tracking-widest text-[#00e676] font-bold">
+                                                    {roomInfo?.nombre || 'Realidad Compartida'}
+                                                </p>
+                                                {roomInfo?.codigo_acceso && (
+                                                    <p className="text-[9px] font-mono text-gray-400">
+                                                        Código: {roomInfo.codigo_acceso}
+                                                    </p>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={() => setShowPlayersMenu(false)}
+                                                className="text-gray-400 hover:text-white"
+                                            >
+                                                <X className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                                            {(connectedPlayers && connectedPlayers.length > 0
+                                                ? connectedPlayers
+                                                : [{ player_id: userId || 'local', username: username || 'Arquitecto' }]
+                                            ).map((p: any) => (
+                                                <div
+                                                    key={p.player_id}
+                                                    className="flex items-center justify-between p-2 rounded-xl bg-white/5 border border-white/5 text-xs"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="w-2 h-2 rounded-full bg-[#00e676]" />
+                                                        <span className="font-mono font-bold text-white">
+                                                            {p.username}
+                                                            {p.player_id === userId ? ' (Tú)' : ''}
+                                                        </span>
+                                                    </div>
+                                                    {p.possessed_agent_name ? (
+                                                        <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 font-mono text-[9px]">
+                                                            👻 {p.possessed_agent_name}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-[9px] font-mono text-gray-500 uppercase">
+                                                            Arquitecto
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         <div className="hidden xl:flex items-center gap-6 py-2 px-6 glass-panel rounded-2xl border border-white/5 bg-black/20 backdrop-blur-md">
                             <HeaderStat icon={Clock} label="Turno" value={step.toString()} />
                             <div className="w-px h-4 bg-white/5" />

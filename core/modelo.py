@@ -184,6 +184,7 @@ class ModeloRelacional:
         self.infraestructura = []
         self.civilizaciones = {}
         self.agente_poseido_id = None  # Seguimiento global del agente bajo control del usuario
+        self.agentes_poseidos: Dict[str, str] = {}  # player_id -> agent_id (modo multijugador)
         self.colores_paleta = [
             "#7c4dff",  # Cyber Violet
             "#00e676",  # Neon Mint
@@ -389,7 +390,7 @@ class ModeloRelacional:
             # 1.5. CHEQUEO DE POSESIÓN (Saltar autonomía si el Arquitecto tiene el control)
             # Precomputar `acciones_plan` para evitar UnboundLocalError si se asigna más abajo.
             acciones_plan = getattr(agente, "acciones_control_usuario", [])
-            if getattr(self, "agente_poseido_id", None) == agente.unique_id and not acciones_plan:
+            if getattr(agente, "is_possessed", False) and not acciones_plan:
                 # Si está poseído pero NO tiene acciones de control manual este turno, no hace nada autónomo.
                 # Excepto metabolismo y auto-alimentación que ya se procesaron arriba.
                 agente.pensamiento_actual = "Consciencia enlazada con el Arquitecto. Esperando órdenes..."

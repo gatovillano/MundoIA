@@ -38,6 +38,15 @@ interface GameState {
     ranking: any[];
     instituciones: Record<string, any>;
     agentePoseidoId: string | null;
+    agentesPoseidos: Record<string, string>;
+    connectedPlayers: Array<{
+        player_id: string;
+        username: string;
+        possessed_agent_id?: string | null;
+        possessed_agent_name?: string | null;
+    }>;
+    roomInfo: any | null;
+    setRoomInfo: (room: any | null) => void;
     socialMode: 'twitter' | 'reddit';
     modoControlTotal: boolean;
     startupOperationDone: boolean;
@@ -156,6 +165,10 @@ const useGameStore = create(
             ranking: [],
             instituciones: {},
             agentePoseidoId: null,
+            agentesPoseidos: {},
+            connectedPlayers: [],
+            roomInfo: null,
+            setRoomInfo: (room) => set({ roomInfo: room }),
             // Flag temporal para indicar que la operación (new/load/quick) ya se ejecutó
             // desde la pantalla de inicio y por lo tanto el modal de operación
             // en /game debe evitar volver a preguntar.
@@ -245,10 +258,14 @@ const useGameStore = create(
             },
 
             connect: () => {
-                const { userId, gameId, socket } = get();
+                const { userId, gameId, username, socket } = get();
                 if (!userId || !gameId || socket) return;
 
-                const wsUrl = getWsUrl(`/ws/${gameId}`);
+                const query = new URLSearchParams({
+                    player_id: userId,
+                    username: username || userId.slice(0, 8),
+                }).toString();
+                const wsUrl = `${getWsUrl(`/ws/${gameId}`)}?${query}`;
                 console.log(`🔌 Intentando conectar a WebSocket en: ${wsUrl}`);
                 const newSocket = new WebSocket(wsUrl);
 
@@ -265,6 +282,11 @@ const useGameStore = create(
                         if (data.mapa) {
                             console.log(`🗺️ [WS] Dimensiones del mapa recibido: ${data.mapa.length}x${data.mapa[0]?.length || 0}`);
                         }
+                    }
+
+                    if (data.type === 'players_update') {
+                        set({ connectedPlayers: data.connected_players || [] });
+                        return;
                     }
 
                     if (data.type === 'clear_logs') {
@@ -318,6 +340,15 @@ const useGameStore = create(
                             }).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
                         };
 
+                        const myUserId = get().userId;
+                        const mapPossessed = data.agentes_poseidos || {};
+                        const resolvedMyPossessed =
+                            myUserId && Object.prototype.hasOwnProperty.call(mapPossessed, myUserId)
+                                ? mapPossessed[myUserId]
+                                : Object.keys(mapPossessed).length > 0
+                                ? null
+                                : data.agente_poseido_id || null;
+
                         const updates: any = {
                                 step: data.step,
                                 economy: data.economy,
@@ -332,7 +363,9 @@ const useGameStore = create(
                                 historia: data.historia || { historiador_id: null, entradas: [], num_entradas: 0 },
                                 ranking: data.ranking || [],
                                 instituciones: data.instituciones || {},
-                                agentePoseidoId: data.agente_poseido_id || null,
+                                agentePoseidoId: resolvedMyPossessed,
+                                agentesPoseidos: mapPossessed,
+                                connectedPlayers: data.connected_players || get().connectedPlayers || [],
                                 socialFeed: normalizeFeed(data.socialFeed),  // === RED SOCIAL OASIS ===
                             };
 
@@ -435,6 +468,17 @@ const useGameStore = create(
                             };
 
                             const mergedDelta = mergeRecursive(state, deltaToApply);
+                            if (deltaToApply.connected_players) {
+                                mergedDelta.connectedPlayers = deltaToApply.connected_players;
+                            }
+                            if (deltaToApply.agentes_poseidos) {
+                                mergedDelta.agentesPoseidos = deltaToApply.agentes_poseidos;
+                                const myUid = state.userId;
+                                mergedDelta.agentePoseidoId =
+                                    myUid && deltaToApply.agentes_poseidos[myUid]
+                                        ? deltaToApply.agentes_poseidos[myUid]
+                                        : null;
+                            }
                             return { ...mergedDelta, step: data.step };
                         });
                     }
@@ -777,6 +821,8 @@ const useGameStore = create(
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             action_type: 'ARCHITECT_MESSAGE',
+                            player_id: get().userId,
+                            username: get().username,
                             params: {
                                 mensaje: message,
                                 agent_id: agentId
@@ -809,6 +855,8 @@ const useGameStore = create(
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             action_type: type,
+                            player_id: get().userId,
+                            username: get().username,
                             params: params
                         })
                     });
@@ -817,7 +865,9 @@ const useGameStore = create(
                         return false;
                     }
 
-                    return response.ok;
+                    if (!response.ok) return false;
+                    const resData = await response.json().catch(() => ({}));
+                    return resData.status !== 'error';
                 } catch (error) {
                     console.error("Error ejecutando acción divina:", error);
                     return false;

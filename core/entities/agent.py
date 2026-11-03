@@ -227,7 +227,11 @@ class Agente:
 
     @property
     def is_possessed(self):
-        return getattr(self.modelo, "agente_poseido_id", None) == self.unique_id
+        agentes_poseidos = getattr(self.modelo, "agentes_poseidos", {}) or {}
+        return (
+            getattr(self.modelo, "agente_poseido_id", None) == self.unique_id
+            or self.unique_id in agentes_poseidos.values()
+        )
 
     @property
     def display_name(self):

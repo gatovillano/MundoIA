@@ -122,6 +122,21 @@ class DatabaseManager:
                     except Exception as e:
                         logger.warning(f"Error asegurando default en propuestas.id: {e}")
 
+                    # Tabla de salas multijugador
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS salas_multijugador (
+                            game_id VARCHAR(100) PRIMARY KEY,
+                            nombre VARCHAR(120) NOT NULL,
+                            host_user_id VARCHAR(100) NOT NULL,
+                            host_username VARCHAR(100) NOT NULL,
+                            codigo_acceso VARCHAR(20) UNIQUE NOT NULL,
+                            es_publica BOOLEAN DEFAULT TRUE,
+                            modo_juego VARCHAR(50) DEFAULT 'cooperativo',
+                            max_jugadores INT DEFAULT 8,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+
                     self.conn.commit()
                     DatabaseManager._initialized = True
             except Exception as e:
@@ -414,3 +429,115 @@ class DatabaseManager:
     def get_institutions(self, user_id):
         query = "SELECT id, nombre, tipo, fundador_id, vocero_id, miembros, x, y, recursos, puntos, nivel, descripcion FROM instituciones WHERE user_id = %s;"
         return self.execute(query, (user_id,))
+
+    # --- SALAS MULTIJUGADOR ---
+    def create_multiplayer_room(
+        self,
+        game_id: str,
+        nombre: str,
+        host_user_id: str,
+        host_username: str,
+        codigo_acceso: str,
+        es_publica: bool = True,
+        modo_juego: str = "cooperativo",
+        max_jugadores: int = 8,
+    ):
+        query = """
+        INSERT INTO salas_multijugador (game_id, nombre, host_user_id, host_username, codigo_acceso, es_publica, modo_juego, max_jugadores)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (game_id) DO UPDATE SET
+            nombre = EXCLUDED.nombre,
+            es_publica = EXCLUDED.es_publica,
+            modo_juego = EXCLUDED.modo_juego,
+            max_jugadores = EXCLUDED.max_jugadores;
+        """
+        return self.execute(
+            query,
+            (
+                game_id,
+                nombre,
+                host_user_id,
+                host_username,
+                codigo_acceso.upper(),
+                es_publica,
+                modo_juego,
+                max_jugadores,
+            ),
+        )
+
+    def _row_to_room_dict(self, r) -> Dict[str, Any]:
+        return {
+            "game_id": r[0],
+            "nombre": r[1],
+            "host_user_id": r[2],
+            "host_username": r[3],
+            "codigo_acceso": r[4],
+            "es_publica": bool(r[5]),
+            "modo_juego": r[6] or "cooperativo",
+            "max_jugadores": int(r[7] or 8),
+            "created_at": r[8].isoformat() if hasattr(r[8], "isoformat") else str(r[8]),
+            "paso_actual": int(r[9] or 0) if len(r) > 9 else 0,
+            "num_agentes": int(r[10] or 0) if len(r) > 10 else 0,
+        }
+
+    def get_multiplayer_room(self, game_id: str) -> Optional[Dict[str, Any]]:
+        query = """
+        SELECT s.game_id, s.nombre, s.host_user_id, s.host_username, s.codigo_acceso,
+               s.es_publica, s.modo_juego, s.max_jugadores, s.created_at,
+               COALESCE(e.paso_actual, 0) AS paso_actual,
+               (SELECT COUNT(*) FROM agentes a WHERE a.user_id = s.game_id) AS num_agentes
+        FROM salas_multijugador s
+        LEFT JOIN estado_mundo e ON e.user_id = s.game_id
+        WHERE s.game_id = %s;
+        """
+        rows = self.execute(query, (game_id,))
+        if rows and isinstance(rows, list):
+            return self._row_to_room_dict(rows[0])
+        return None
+
+    def get_multiplayer_room_by_code(self, codigo_acceso: str) -> Optional[Dict[str, Any]]:
+        query = """
+        SELECT s.game_id, s.nombre, s.host_user_id, s.host_username, s.codigo_acceso,
+               s.es_publica, s.modo_juego, s.max_jugadores, s.created_at,
+               COALESCE(e.paso_actual, 0) AS paso_actual,
+               (SELECT COUNT(*) FROM agentes a WHERE a.user_id = s.game_id) AS num_agentes
+        FROM salas_multijugador s
+        LEFT JOIN estado_mundo e ON e.user_id = s.game_id
+        WHERE UPPER(s.codigo_acceso) = UPPER(%s);
+        """
+        rows = self.execute(query, (codigo_acceso.strip(),))
+        if rows and isinstance(rows, list):
+            return self._row_to_room_dict(rows[0])
+        return None
+
+    def list_multiplayer_rooms(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        if user_id:
+            query = """
+            SELECT s.game_id, s.nombre, s.host_user_id, s.host_username, s.codigo_acceso,
+                   s.es_publica, s.modo_juego, s.max_jugadores, s.created_at,
+                   COALESCE(e.paso_actual, 0) AS paso_actual,
+                   (SELECT COUNT(*) FROM agentes a WHERE a.user_id = s.game_id) AS num_agentes
+            FROM salas_multijugador s
+            LEFT JOIN estado_mundo e ON e.user_id = s.game_id
+            WHERE s.es_publica = TRUE OR s.host_user_id = %s
+            ORDER BY s.created_at DESC
+            LIMIT 50;
+            """
+            rows = self.execute(query, (user_id,))
+        else:
+            query = """
+            SELECT s.game_id, s.nombre, s.host_user_id, s.host_username, s.codigo_acceso,
+                   s.es_publica, s.modo_juego, s.max_jugadores, s.created_at,
+                   COALESCE(e.paso_actual, 0) AS paso_actual,
+                   (SELECT COUNT(*) FROM agentes a WHERE a.user_id = s.game_id) AS num_agentes
+            FROM salas_multijugador s
+            LEFT JOIN estado_mundo e ON e.user_id = s.game_id
+            WHERE s.es_publica = TRUE
+            ORDER BY s.created_at DESC
+            LIMIT 50;
+            """
+            rows = self.execute(query)
+        if rows and isinstance(rows, list):
+            return [self._row_to_room_dict(r) for r in rows]
+        return []
+
