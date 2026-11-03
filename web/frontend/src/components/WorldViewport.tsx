@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import * as d3 from "d3";
 import useGameStore from "@/store/useGameStore";
-import { CloudRain, Sun, Link, Link2Off } from "lucide-react";
+import { CloudRain, Sun, Link, Link2Off, Minimize2, Maximize2, ChevronDown, ChevronUp, Map } from "lucide-react";
 import { replaceIdsWithNames } from "@/utils/nameUtils";
 
 export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: boolean }) {
@@ -12,6 +12,8 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
     const { agents, mapa, relationships, speechBubbles, selectAgent, selectedAgentId, weather } = useGameStore();
     const [showLinks, setShowLinks] = useState(true);
     const [showGrid, setShowGrid] = useState(true);
+    const [isBoardMinimized, setIsBoardMinimized] = useState(false);
+    const [isLegendCollapsed, setIsLegendCollapsed] = useState(false);
     const initializedRef = useRef(false);
     const prevAgentsRef = useRef<any[]>([]);
 
@@ -707,8 +709,43 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
 
     return (
         <div ref={containerRef} className="w-full h-full relative bg-[#1c2128] overflow-hidden" style={{ imageRendering: "pixelated" }}>
-            <svg ref={svgRef} className="w-full h-full block" />
+            {/* Contenedor del Tablero Isométrico (replegable/minimizable) */}
+            <div
+                className={`transition-all duration-300 ${
+                    isBoardMinimized
+                        ? "absolute top-20 left-6 w-72 h-44 rounded-2xl border-2 border-emerald-500/40 shadow-2xl overflow-hidden z-40 bg-[#14181f]"
+                        : "w-full h-full relative"
+                }`}
+            >
+                <svg ref={svgRef} className="w-full h-full block" />
+                {isBoardMinimized && (
+                    <div className="absolute top-2 left-2 right-2 flex items-center justify-between px-2.5 py-1 rounded-lg bg-black/75 border border-white/10 backdrop-blur-md pointer-events-auto">
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase flex items-center gap-1.5">
+                            <Map className="w-3 h-3" /> Tablero ({mapWidth}×{mapHeight})
+                        </span>
+                        <button
+                            onClick={() => setIsBoardMinimized(false)}
+                            className="p-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 transition-all"
+                            title="Expandir Tablero a pantalla completa"
+                        >
+                            <Maximize2 className="w-3 h-3" />
+                        </button>
+                    </div>
+                )}
+            </div>
+
             <div className="absolute top-20 right-6 flex flex-col gap-2 z-50">
+                <button
+                    onClick={() => setIsBoardMinimized(!isBoardMinimized)}
+                    title={isBoardMinimized ? "Expandir Tablero" : "Minimizar / Replegar Tablero"}
+                    className="glass-panel p-2.5 rounded-xl border border-white/10 hover:border-emerald-500/50 transition-all"
+                >
+                    {isBoardMinimized ? (
+                        <Maximize2 className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                        <Minimize2 className="w-4 h-4 text-gray-300" />
+                    )}
+                </button>
                 <button onClick={() => setShowLinks(!showLinks)} title="Relaciones" className="glass-panel p-2.5 rounded-xl border border-white/10 hover:border-purple-500/50 transition-all">
                     {showLinks ? <Link className="w-4 h-4 text-emerald-400" /> : <Link2Off className="w-4 h-4 text-gray-400" />}
                 </button>
@@ -718,33 +755,36 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
                     </svg>
                 </button>
             </div>
-            <div className="absolute top-20 left-6 flex flex-col gap-3">
-                {/* Leyenda de Biomas */}
-                <div className="p-3 rounded-xl border-2 border-[#424242] text-[9px] space-y-2 pointer-events-none w-36 bg-[#212121]/90 shadow-[2px_2px_0px_#000]">
-                    <div className="text-[#E0E0E0] font-bold uppercase mb-1 border-b-2 border-[#424242] pb-1.5 font-monospace">Biomas</div>
-                    <div className="grid grid-cols-1 gap-y-1.5 px-1 font-monospace text-[#BDBDBD]">
-                        <LegendBox top="#7CB342" left="#558B2F" right="#689F38" label="Hierba" />
-                        <LegendBox top="#B0BEC5" left="#546E7A" right="#37474F" label="Montaña" />
-                        <LegendBox top="#29B6F6" left="#0288D1" right="#039BE5" label="Lago" />
-                        <LegendBox top="#558B2F" left="#33691E" right="#417A27" label="Bosque" />
-                        <LegendBox top="#FFE082" left="#FFB300" right="#FFCA28" label="Desierto" />
+            {!isBoardMinimized && (
+                <div className="absolute top-20 left-6 flex flex-col gap-2 z-40">
+                    {/* Leyenda de Biomas y Dimensiones (replegable) */}
+                    <div className="p-2.5 rounded-xl border-2 border-[#424242] text-[9px] w-40 bg-[#212121]/90 shadow-[2px_2px_0px_#000]">
+                        <button
+                            onClick={() => setIsLegendCollapsed(!isLegendCollapsed)}
+                            className="w-full flex items-center justify-between text-[#E0E0E0] font-bold uppercase font-monospace"
+                        >
+                            <span>Biomas ({mapWidth}×{mapHeight})</span>
+                            {isLegendCollapsed ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
+                        </button>
+                        {!isLegendCollapsed && (
+                            <div className="mt-2 pt-2 border-t-2 border-[#424242] space-y-2">
+                                <div className="grid grid-cols-1 gap-y-1.5 px-1 font-monospace text-[#BDBDBD]">
+                                    <LegendBox top="#7CB342" left="#558B2F" right="#689F38" label="Hierba" />
+                                    <LegendBox top="#B0BEC5" left="#546E7A" right="#37474F" label="Montaña" />
+                                    <LegendBox top="#29B6F6" left="#0288D1" right="#039BE5" label="Lago" />
+                                    <LegendBox top="#558B2F" left="#33691E" right="#417A27" label="Bosque" />
+                                    <LegendBox top="#FFE082" left="#FFB300" right="#FFCA28" label="Desierto" />
+                                </div>
+                                {mapa && mapa.length > 0 && (
+                                    <div className="pt-1.5 border-t border-[#424242] text-[8px] font-monospace text-gray-400">
+                                        {mapWidth * mapHeight} casillas totales
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
-                {/* Dimensiones del Mundo */}
-                {mapa && mapa.length > 0 && (
-                    <div className="p-3 rounded-xl border-2 border-[#424242] text-[9px] pointer-events-none bg-[#212121]/90 shadow-[2px_2px_0px_#000]">
-                        <div className="text-[#E0E0E0] font-bold uppercase mb-2 border-b-2 border-[#424242] pb-1 font-monospace">Dimensiones</div>
-                        <div className="font-monospace text-[#BDBDBD] flex items-center gap-2">
-                            <span className="text-yellow-500 font-bold">{mapWidth}</span>
-                            <span className="text-gray-600">×</span>
-                            <span className="text-emerald-400 font-bold">{mapHeight}</span>
-                        </div>
-                        <div className="text-[7px] text-gray-500 mt-1 font-monospace">
-                            {mapWidth * mapHeight} casillas totales
-                        </div>
-                    </div>
-                )}
-            </div>
+            )}
             {weather === 'rainy' && <div className="absolute inset-0 pointer-events-none bg-[url('/rain.png')] opacity-15 animate-rain"></div>}
         </div>
     );

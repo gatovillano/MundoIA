@@ -8,7 +8,7 @@ import {
     Users2, Globe, Ghost, Heart,
     Coffee, Compass, Crosshair, Book, Microscope,
     Shield, TrendingUp, Handshake, Crown, Sparkles,
-    Share2, Sprout, Flame, Building2, LogOut
+    Share2, Sprout, Flame, Building2, LogOut, Minimize2, Maximize2
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import useGameStore from "@/store/useGameStore";
@@ -17,6 +17,7 @@ export default function PossessionPanel() {
     const { agents, factions, institutions, agentePoseidoId, sendGodAction, selectAgent } = useGameStore();
     const agent = agents.find((a) => a.id === agentePoseidoId);
 
+    const [isMinimized, setIsMinimized] = useState(false);
     const [activeTab, setActiveTab] = useState<'move' | 'chat' | 'vital' | 'social' | 'construction' | 'reglas'>('move');
     const [message, setMessage] = useState("");
     const [scope, setScope] = useState<'global' | 'group' | 'direct' | 'social_post'>('global');
@@ -103,11 +104,15 @@ export default function PossessionPanel() {
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-2 sm:bottom-5 left-1/2 -translate-x-1/2 w-[96vw] sm:w-[680px] max-w-[96vw] z-[100]"
+            className={`fixed bottom-2 sm:bottom-5 left-1/2 -translate-x-1/2 z-[100] transition-all duration-300 ${
+                isMinimized
+                    ? "w-auto max-w-[95vw]"
+                    : "w-[96vw] sm:w-[680px] max-w-[96vw]"
+            }`}
         >
             <div className="bg-[#0a0b10]/95 backdrop-blur-xl border border-emerald-500/35 rounded-3xl shadow-2xl shadow-emerald-500/10 overflow-hidden">
                 {/* Header con estado del Avatar / Agente */}
-                <div className="bg-gradient-to-r from-emerald-500/15 via-yellow-500/10 to-transparent border-b border-white/10 px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                <div className={`bg-gradient-to-r from-emerald-500/15 via-yellow-500/10 to-transparent ${isMinimized ? "" : "border-b border-white/10"} px-4 sm:px-5 py-2.5 flex flex-wrap items-center justify-between gap-3`}>
                     <div className="flex items-center gap-2.5">
                         <button
                             onClick={() => selectAgent(agent.id)}
@@ -116,7 +121,10 @@ export default function PossessionPanel() {
                         >
                             {isPlayerAvatar ? <Crown className="w-4 h-4 text-yellow-400" /> : <Ghost className="w-4 h-4" />}
                         </button>
-                        <div>
+                        <div
+                            onClick={() => isMinimized && setIsMinimized(false)}
+                            className={isMinimized ? "cursor-pointer" : ""}
+                        >
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-black tracking-wide text-white">
                                     {isPlayerAvatar ? `👑 ${agentDisplayName}` : `⚡ ${agentDisplayName}`}
@@ -125,28 +133,81 @@ export default function PossessionPanel() {
                                     {isPlayerAvatar ? "Tu Avatar" : "Poseído"}
                                 </span>
                             </div>
-                            <div className="flex items-center gap-3 text-[10px] font-mono text-gray-400 mt-0.5">
+                            <div className="flex items-center gap-2.5 text-[10px] font-mono text-gray-400 mt-0.5">
                                 <span>📍({agent.x},{agent.y})</span>
                                 <span>❤️ {(agent.necesidades?.salud ?? 10).toFixed(1)}</span>
                                 <span>🍖 {(agent.necesidades?.alimento ?? 10).toFixed(1)}</span>
-                                <span>💤 {(agent.necesidades?.descanso ?? 10).toFixed(1)}</span>
+                                {!isMinimized && <span>💤 {(agent.necesidades?.descanso ?? 10).toFixed(1)}</span>}
                                 <span className="text-yellow-400">💰 {Number(agent.dinero ?? 0).toFixed(0)} MC</span>
-                                <span className="text-emerald-400">📦 {Number(agent.recursos ?? 0).toFixed(0)}</span>
+                                {!isMinimized && <span className="text-emerald-400">📦 {Number(agent.recursos ?? 0).toFixed(0)}</span>}
                             </div>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar-hide">
-                        <TabBtn active={activeTab === 'move'} icon={Move} label="Mover" onClick={() => setActiveTab('move')} />
-                        <TabBtn active={activeTab === 'vital'} icon={Heart} label="Vital/Saberes" onClick={() => setActiveTab('vital')} />
-                        <TabBtn active={activeTab === 'chat'} icon={MessageSquare} label="Voz/Red" onClick={() => setActiveTab('chat')} />
-                        <TabBtn active={activeTab === 'social'} icon={Users2} label="Social/Lucha" onClick={() => setActiveTab('social')} />
-                        <TabBtn active={activeTab === 'construction'} icon={Construction} label="Obras/Eco" onClick={() => setActiveTab('construction')} />
-                        <TabBtn active={activeTab === 'reglas'} icon={Gavel} label="Política" onClick={() => setActiveTab('reglas')} />
+                    <div className="flex items-center gap-1.5">
+                        {isMinimized ? (
+                            <div className="flex items-center gap-1">
+                                <button
+                                    onClick={() => moveAgent(-1, 0)}
+                                    className="p-1.5 bg-white/5 hover:bg-emerald-500/20 border border-white/10 rounded-lg text-gray-300 hover:text-emerald-400 transition-all"
+                                    title="Mover Oeste (A / ←)"
+                                >
+                                    <ChevronLeft className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                    onClick={() => moveAgent(0, -1)}
+                                    className="p-1.5 bg-white/5 hover:bg-emerald-500/20 border border-white/10 rounded-lg text-gray-300 hover:text-emerald-400 transition-all"
+                                    title="Mover Norte (W / ↑)"
+                                >
+                                    <ChevronUp className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                    onClick={() => moveAgent(0, 1)}
+                                    className="p-1.5 bg-white/5 hover:bg-emerald-500/20 border border-white/10 rounded-lg text-gray-300 hover:text-emerald-400 transition-all"
+                                    title="Mover Sur (S / ↓)"
+                                >
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                    onClick={() => moveAgent(1, 0)}
+                                    className="p-1.5 bg-white/5 hover:bg-emerald-500/20 border border-white/10 rounded-lg text-gray-300 hover:text-emerald-400 transition-all"
+                                    title="Mover Este (D / →)"
+                                >
+                                    <ChevronRight className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar-hide">
+                                <TabBtn active={activeTab === 'move'} icon={Move} label="Mover" onClick={() => setActiveTab('move')} />
+                                <TabBtn active={activeTab === 'vital'} icon={Heart} label="Vital/Saberes" onClick={() => setActiveTab('vital')} />
+                                <TabBtn active={activeTab === 'chat'} icon={MessageSquare} label="Voz/Red" onClick={() => setActiveTab('chat')} />
+                                <TabBtn active={activeTab === 'social'} icon={Users2} label="Social/Lucha" onClick={() => setActiveTab('social')} />
+                                <TabBtn active={activeTab === 'construction'} icon={Construction} label="Obras/Eco" onClick={() => setActiveTab('construction')} />
+                                <TabBtn active={activeTab === 'reglas'} icon={Gavel} label="Política" onClick={() => setActiveTab('reglas')} />
+                            </div>
+                        )}
+
+                        <button
+                            onClick={() => setIsMinimized(!isMinimized)}
+                            className="p-1.5 ml-1 bg-white/5 hover:bg-white/15 border border-white/10 rounded-xl text-gray-300 hover:text-white transition-all shrink-0"
+                            title={isMinimized ? "Desplegar tablero de control" : "Minimizar tablero de control"}
+                        >
+                            {isMinimized ? <Maximize2 className="w-3.5 h-3.5 text-emerald-400" /> : <Minimize2 className="w-3.5 h-3.5" />}
+                        </button>
                     </div>
                 </div>
 
-                {/* Content */}
+                {/* Content (replegable) */}
+                <AnimatePresence initial={false}>
+                {!isMinimized && (
+                <motion.div
+                    key="panel-body"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.22 }}
+                    className="overflow-hidden"
+                >
                 <div className="p-4 sm:p-5 h-56 sm:h-64 overflow-y-auto custom-scrollbar">
                     <AnimatePresence mode="wait">
                         {activeTab === 'move' && (
@@ -605,6 +666,9 @@ export default function PossessionPanel() {
                         )}
                     </AnimatePresence>
                 </div>
+                </motion.div>
+                )}
+                </AnimatePresence>
             </div>
         </motion.div>
     );
