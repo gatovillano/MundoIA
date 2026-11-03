@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import * as d3 from "d3";
 import useGameStore from "@/store/useGameStore";
-import { CloudRain, Sun, Link, Link2Off, Minimize2, Maximize2, ChevronDown, ChevronUp, Map } from "lucide-react";
+import { CloudRain, Sun, Link, Link2Off, Minimize2, Maximize2, ChevronDown, ChevronUp, Map as MapIcon } from "lucide-react";
 import { replaceIdsWithNames } from "@/utils/nameUtils";
 
 export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: boolean }) {
@@ -721,7 +721,7 @@ export default function WorldViewport({ hideBubbles = false }: { hideBubbles?: b
                 {isBoardMinimized && (
                     <div className="absolute top-2 left-2 right-2 flex items-center justify-between px-2.5 py-1 rounded-lg bg-black/75 border border-white/10 backdrop-blur-md pointer-events-auto">
                         <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase flex items-center gap-1.5">
-                            <Map className="w-3 h-3" /> Tablero ({mapWidth}×{mapHeight})
+                            <MapIcon className="w-3 h-3" /> Tablero ({mapWidth}×{mapHeight})
                         </span>
                         <button
                             onClick={() => setIsBoardMinimized(false)}
